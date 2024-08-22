@@ -5,7 +5,7 @@ import { Minus, Square, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-import frontronLogo from "/chat-view.svg";
+import chatViewLogo from "/chat-view.svg";
 
 const buttonVariants = cva(
   "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
@@ -73,7 +73,7 @@ export default function TitleBar() {
           style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
         >
           <div className="flex items-center pl-2">
-            <img src={frontronLogo} alt="Frontron" className="h-6 w-6" />
+            <img src={chatViewLogo} alt="Frontron" className="h-6 w-6" />
             &nbsp;&nbsp;
             <span className="text-lg text-white">Frontron</span>
           </div>

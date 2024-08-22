@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import reactLogo from "./assets/react.svg";
-import ChatViewLogo from "/chat-view.svg";
+import chatViewLogo from "/chat-view.svg";
 import viteLogo from "/vite.svg";
 
 import "./App.css";
@@ -12,7 +12,7 @@ function App() {
   return (
     <div className="app">
       <div>
-        <img src={ChatViewLogo} className="logo frontron" alt="Frontron logo" />
+        <img src={chatViewLogo} className="logo frontron" alt="Frontron logo" />
         <img src={reactLogo} className="logo react" alt="React logo" />
         <img src={viteLogo} className="logo" alt="Vite logo" />
       </div>

@@ -1,6 +1,6 @@
 // 일렉트론 모듈
 const path = require("path");
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } = require("electron");
 
 // 환경 변수 설정
 require("dotenv").config();
@@ -45,7 +45,7 @@ async function createWindow() {
   // 브라우저 창 생성
   mainWindow = new BrowserWindow({
     width: 400,
-    height: 250,
+    height: 270,
     frame: false,
     resizable: isDev,
     icon: path.join(__dirname, "../../public/icon.png"),
@@ -100,7 +100,6 @@ app.whenReady().then(() => {
   tray.on("double-click", () => mainWindow.show());
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "리셋", type: "normal", click: () => { store.clear(); app.quit() }},
       { label: "열기", type: "normal", click: () => mainWindow.show() },
       { label: "종료", type: "normal", click: () => app.quit() },
     ])
@@ -138,10 +137,10 @@ app.whenReady().then(() => {
 const createOverlayWindow = (url) => {
   const mainWindowBounds = mainWindow.getBounds();
   const defaultBounds = {
-    x: mainWindowBounds.x + mainWindowBounds.width + 20, // 메인 윈도우 오른쪽에 20픽셀 떨어진 위치
+    x: mainWindowBounds.x + mainWindowBounds.width + 20,
     y: mainWindowBounds.y,
     width: 400,
-    height: 250,
+    height: 270,
   };
   const storedBounds = store.get('overlayWindowBounds', defaultBounds);
 
@@ -149,8 +148,8 @@ const createOverlayWindow = (url) => {
     ...storedBounds,
     frame: false,
     resizable: isDev,
-    // skipTaskbar: true,
-    alwaysOnTop: store.get('overlayAlwaysOnTop', false),
+    alwaysOnTop: store.get('overlayFixed', false),
+    transparent: store.get('overlayFixed', false),
     icon: path.join(__dirname, "../../public/icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -163,6 +162,7 @@ const createOverlayWindow = (url) => {
   overlayWindow.loadURL(`http://localhost:${PORT}/overlay`);
   overlayWindow.webContents.on('did-finish-load', () => {
     overlayWindow.webContents.send('url', url);
+    overlayWindow.webContents.send('setBackgroundColor', store.get('overlayFixed', false) ? 'transparent' : '#f0f0f0');
   });
   
   // 윈도우 위치 및 크기 변경 감지 및 저장
@@ -180,6 +180,10 @@ const createOverlayWindow = (url) => {
   overlayWindow.webContents.on('context-menu', (e, params) => {
     e.preventDefault();
   });
+
+  if (store.get('overlayFixed', false)) {
+    overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  }
 };
 
 function saveBounds() {
@@ -191,31 +195,31 @@ function saveBounds() {
 
 ipcMain.handle('get-store-value', (event, key) => {
   const value = store.get(key);
-  if (key === 'chatUrl') {
+  if (key === 'chatUrl' && value) {
     createOverlayWindow(value);
   }
   return value;
 });
 
 ipcMain.handle('set-store-value', (event, key, value) => {
-  overlayWindow?.close();
   if (key === 'chatUrl') {
+    overlayWindow?.close();
     createOverlayWindow(value);
   }
   store.set(key, value);
 });
 
-// 오버레이 윈도우 토글
-ipcMain.handle('toggle-overlay', (event, shouldShow) => {
-  if (shouldShow) {
-    overlayWindow?.show();
-  } else {
-    overlayWindow?.hide();
+// 오버레이 고정 모드 설정
+ipcMain.handle('set-fixed-mode', (event, isFixed) => {
+  store.set('overlayFixed', isFixed);
+  if (overlayWindow) {
+    overlayWindow.setAlwaysOnTop(isFixed);
+    overlayWindow.setIgnoreMouseEvents(isFixed, { forward: true });
+    overlayWindow.webContents.send('setBackgroundColor', isFixed ? 'transparent' : '#f0f0f0');
   }
 });
 
-// 오버레이 윈도우 고정/고정 해제
-ipcMain.handle('set-overlay-always-on-top', (event, alwaysOnTop) => {
-  overlayWindow?.setAlwaysOnTop(alwaysOnTop);
-  store.set('overlayAlwaysOnTop', alwaysOnTop);
+// 리셋 기능
+ipcMain.handle('reset', async () => {
+    store.clear();
 });

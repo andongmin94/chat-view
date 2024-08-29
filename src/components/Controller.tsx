@@ -1,6 +1,17 @@
 import React from "react";
 import { z } from "zod";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   CardContent,
@@ -20,18 +31,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-
 import TitleBar from "@/components/TitleBar";
 
 const urlSchema = z.string().url().startsWith("http://afreehp.kr/page/");
@@ -101,7 +100,13 @@ export default function Component() {
       </CardHeader>
       <CardContent>
         <div className="grid w-full items-center gap-4">
-          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <Dialog
+            open={isDialogOpen}
+            onOpenChange={(e) => {
+              setIsDialogOpen(e);
+              electron.send("reInput");
+            }}
+          >
             <DialogTrigger asChild>
               <Button variant="outline">
                 {isFirstRun ? "URL 입력하기" : "URL 다시 입력하기"}
@@ -133,7 +138,9 @@ export default function Component() {
           </Dialog>
           <div className="mt-2 flex items-center justify-between">
             <div className="flex items-center">
-              <Label htmlFor="fixed-mode" className="mr-2">고정 활성화</Label>
+              <Label htmlFor="fixed-mode" className="mr-2">
+                고정 활성화
+              </Label>
               <Switch
                 id="fixed-mode"
                 checked={isFixed}
@@ -153,7 +160,9 @@ export default function Component() {
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>취소</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleReset}>리셋</AlertDialogAction>
+                  <AlertDialogAction onClick={handleReset}>
+                    리셋
+                  </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>

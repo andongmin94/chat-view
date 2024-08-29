@@ -1,12 +1,6 @@
 // 일렉트론 모듈
 const path = require("path");
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require("electron");
-const fs = require('fs');
-
-// package.json 파일 읽기
-const templateDir = __dirname; // templateDir 경로 설정
-const packageJsonPath = path.join(templateDir, '../../package.json');
-const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
 
 // 환경 변수 설정
 require("dotenv").config();
@@ -15,9 +9,10 @@ let PORT = process.env.NODE_ENV === 'development' ? 3000 : 1994;
 // 로컬 웹 서버 모듈
 const express = require('express');
 const server = express();
+const isDev = process.env.NODE_ENV === 'development';
 
 // 개발 모드가 아닐때 빌드 파일 서빙 로직
-if (process.env.NODE_ENV !== 'development') {
+if (!isDev) {
   // 빌드 파일 서빙
   server.use(express.static(path.join(__dirname, '../../dist')));
 
@@ -43,9 +38,10 @@ let mainWindow;
 const createWindow = () => {
   // 브라우저 창 생성
   mainWindow = new BrowserWindow({
-    width: 1600,
-    height: 900,
+    width: 400,
+    height: 350,
     frame: false,
+    resizable: isDev,
     icon: path.join(__dirname, "../../public/icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -63,6 +59,26 @@ app.whenReady().then(createWindow).then(() => {
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
   });
+  // macOS-specific settings
+  if (process.platform === 'darwin') {
+    app.on('before-quit', () => {
+      tray.destroy();
+    });
+
+    app.on('activate', () => {
+      app.dock.show();
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+
+    mainWindow.on('close', (e) => {
+      if (!app.isQuiting) {
+        e.preventDefault();
+        mainWindow.hide();
+        app.dock.hide();
+      }
+      return false;
+    });
+  }
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -70,13 +86,10 @@ app.whenReady().then(createWindow).then(() => {
   // 타이틀 바 옵션
   ipcMain.on("hidden", () => mainWindow.hide());
   ipcMain.on("minimize", () => mainWindow.minimize());
-  ipcMain.on("maximize", () => {
-    mainWindow.isMaximized() ? mainWindow.restore() : mainWindow.maximize();
-  });
 
   // 트레이 세팅
   const tray = new Tray(nativeImage.createFromPath(path.join(__dirname, "../../public/icon.png")));
-  tray.setToolTip(pkg.build.productName);
+  tray.setToolTip('챗뷰');
   tray.on("double-click", () => mainWindow.show());
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -110,4 +123,6 @@ app.whenReady().then(createWindow).then(() => {
     ]);
     Menu.setApplicationMenu(menu);
   }
+
+  
 });

@@ -36,13 +36,11 @@ export default function Overlay() {
   return (
     <webview
       ref={webviewRef}
-      className="webview"
       style={{
         width: `${dimensions.width}px`,
         height: `${dimensions.height}px`,
         WebkitAppRegion: "drag",
-        backgroundColor: isFixed ? 'transparent' : 'rgba(200, 200, 200, 0.5)',
-        pointerEvents: isFixed ? 'none' : 'auto',
+        backgroundColor: isFixed ? 'transparent' : 'rgba(240, 240, 240, 1)',
       } as React.CSSProperties}
     />
   );

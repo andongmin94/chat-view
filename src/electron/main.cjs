@@ -63,6 +63,9 @@ async function createWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     const isFixed = store.get('overlayFixed', false);
     mainWindow.webContents.send('fixedMode', isFixed);
+    
+    // 업데이트 체크
+    autoUpdater.checkForUpdates();
   });
 
   // 예시 조건: 오버레이 윈도우가 항상 위에 떠 있는 상태일 때만 포커스
@@ -71,9 +74,6 @@ async function createWindow() {
       overlayWindow.focus();
     }
   });
-  
-  // 업데이트 체크
-  autoUpdater.checkForUpdatesAndNotify();
 };
 
 // Electron의 초기화가 완료후 브라우저 윈도우 생성
@@ -298,4 +298,25 @@ ipcMain.handle('reset', async () => {
       overlayWindow.destroy();
     }
     mainWindow.webContents.send('fixedMode', false);
+});
+
+// 업데이트 이벤트 핸들러
+autoUpdater.on('update-available', () => {
+  if (mainWindow) {
+    mainWindow.webContents.send('update_available');
+  }
+});
+
+ipcMain.on('download_update', () => {
+  autoUpdater.downloadUpdate();
+});
+
+autoUpdater.on('update-downloaded', () => {
+  if (mainWindow) {
+    mainWindow.webContents.send('update_downloaded');
+  }
+});
+
+ipcMain.on('install_update', () => {
+  autoUpdater.quitAndInstall();
 });

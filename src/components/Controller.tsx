@@ -21,15 +21,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 
-//////////////// electron components ////////////////
 import TitleBar from "@/components/TitleBar";
-/////////////////////////////////////////////////////
 
 const urlSchema = z.string().url().startsWith("http://afreehp.kr/page/");
 
 export default function Component() {
   const [url, setUrl] = React.useState("");
   const [isFixed, setIsFixed] = React.useState(false);
+  const [isOverlayVisible, setIsOverlayVisible] = React.useState(false);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
   const [urlError, setUrlError] = React.useState<string | null>(null);
   const [isFirstRun, setIsFirstRun] = React.useState(true);
@@ -60,10 +59,14 @@ export default function Component() {
     }
   };
 
-  const handleFixedToggle = (checked: boolean) => {
+  const handleFixedToggle = async (checked: boolean) => {
     setIsFixed(checked);
-    // Here you would typically call electron IPC to update overlay window settings
-    console.log("고정 활성화:", checked);
+    await electron.setOverlayAlwaysOnTop(checked);
+  };
+
+  const handleOverlayToggle = async (checked: boolean) => {
+    setIsOverlayVisible(checked);
+    await electron.toggleOverlay(checked);
   };
 
   const handleApply = () => {
@@ -71,8 +74,6 @@ export default function Component() {
       setIsDialogOpen(false);
       electron.set("chatUrl", url);
       setIsFirstRun(false);
-      // Here you would typically call electron IPC to update the URL
-      console.log("URL 적용:", url);
     }
   };
 
@@ -115,14 +116,23 @@ export default function Component() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <div className="mt-2 flex items-center justify-end">
-            <Label htmlFor="fixed-mode">고정 활성화</Label>
-            <Switch
-              id="fixed-mode"
-              checked={isFixed}
-              onCheckedChange={handleFixedToggle}
-              className="ml-4"
-            />
+          <div className="mt-2 flex items-center justify-between">
+            <div className="flex items-center">
+              <Label htmlFor="overlay-visible" className="mr-2">오버레이 표시</Label>
+              <Switch
+                id="overlay-visible"
+                checked={isOverlayVisible}
+                onCheckedChange={handleOverlayToggle}
+              />
+            </div>
+            <div className="flex items-center">
+              <Label htmlFor="fixed-mode" className="mr-2">항상 위에 표시</Label>
+              <Switch
+                id="fixed-mode"
+                checked={isFixed}
+                onCheckedChange={handleFixedToggle}
+              />
+            </div>
           </div>
         </div>
       </CardContent>

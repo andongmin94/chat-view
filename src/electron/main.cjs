@@ -37,9 +37,11 @@ if (!isDev) {
 let mainWindow;
 let overlayWindow;
 let store;
+
 async function createWindow() {
   const { default: Store } = await import('electron-store');
   store = new Store();
+
   // 브라우저 창 생성
   mainWindow = new BrowserWindow({
     width: 400,
@@ -98,8 +100,9 @@ app.whenReady().then(() => {
   tray.on("double-click", () => mainWindow.show());
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: "Open", type: "normal", click: () => mainWindow.show() },
-      { label: "Quit", type: "normal", click: () => app.quit() },
+      { label: "리셋", type: "normal", click: () => { store.clear(); app.quit() }},
+      { label: "열기", type: "normal", click: () => mainWindow.show() },
+      { label: "종료", type: "normal", click: () => app.quit() },
     ])
   );
 
@@ -131,28 +134,65 @@ app.whenReady().then(() => {
   }
 });
 
+// overlayWindow 생성 및 설정 복원 함수
+const createOverlayWindow = (url) => {
+  const mainWindowBounds = mainWindow.getBounds();
+  const defaultBounds = {
+    x: mainWindowBounds.x + mainWindowBounds.width + 20, // 메인 윈도우 오른쪽에 20픽셀 떨어진 위치
+    y: mainWindowBounds.y,
+    width: 400,
+    height: 250,
+  };
+  const storedBounds = store.get('overlayWindowBounds', defaultBounds);
+
+  overlayWindow = new BrowserWindow({
+    ...storedBounds,
+    frame: false,
+    resizable: isDev,
+    // skipTaskbar: true,
+    alwaysOnTop: store.get('overlayAlwaysOnTop', false),
+    icon: path.join(__dirname, "../../public/icon.png"),
+    webPreferences: {
+      preload: path.join(__dirname, "preload.cjs"),
+      webSecurity: false,
+      nodeIntegration: true,
+      webviewTag: true
+    },
+  });
+
+  overlayWindow.loadURL(`http://localhost:${PORT}/overlay`);
+  overlayWindow.webContents.on('did-finish-load', () => {
+    overlayWindow.webContents.send('url', url);
+  });
+  
+  // 윈도우 위치 및 크기 변경 감지 및 저장
+  overlayWindow.on('moved', saveBounds);
+  overlayWindow.on('resized', saveBounds);
+
+  // 우클릭 메뉴 비활성화
+  overlayWindow.hookWindowMessage(278, function(e) {
+    overlayWindow.setEnabled(false);
+    setTimeout(() => overlayWindow.setEnabled(true), 100);
+    return true;
+  });
+
+  // 웹 컨텐츠에서 우클릭 메뉴 비활성화
+  overlayWindow.webContents.on('context-menu', (e, params) => {
+    e.preventDefault();
+  });
+};
+
+function saveBounds() {
+  if (!overlayWindow.isDestroyed()) {
+    const bounds = overlayWindow.getBounds();
+    store.set('overlayWindowBounds', bounds);
+  }
+}
+
 ipcMain.handle('get-store-value', (event, key) => {
   const value = store.get(key);
   if (key === 'chatUrl') {
-    overlayWindow = new BrowserWindow({
-      width: 1000,
-      height: 600,
-      frame: false,
-      resizable: isDev,
-      // transparent: true,
-      // skipTaskbar: true,
-      icon: path.join(__dirname, "../../public/icon.png"),
-      webPreferences: {
-        preload: path.join(__dirname, "preload.cjs"),
-        webSecurity: false,
-        nodeIntegration: true,
-        webviewTag: true // 웹뷰 활성화
-      },
-    });
-    overlayWindow.loadURL(`http://localhost:${PORT}/overlay`);
-    overlayWindow.webContents.on('did-finish-load', () => {
-      overlayWindow.webContents.send('url', value);
-    });
+    createOverlayWindow(value);
   }
   return value;
 });
@@ -160,25 +200,22 @@ ipcMain.handle('get-store-value', (event, key) => {
 ipcMain.handle('set-store-value', (event, key, value) => {
   overlayWindow?.close();
   if (key === 'chatUrl') {
-    overlayWindow = new BrowserWindow({
-      width: 1000,
-      height: 600,
-      frame: false,
-      resizable: isDev,
-      // transparent: true,
-      skipTaskbar: true,
-      icon: path.join(__dirname, "../../public/icon.png"),
-      webPreferences: {
-        preload: path.join(__dirname, "preload.cjs"),
-        webSecurity: false,
-        nodeIntegration: true,
-        webviewTag: true // 웹뷰 활성화
-      },
-    });
-    overlayWindow.loadURL(`http://localhost:${PORT}/overlay`);
-    overlayWindow.webContents.on('did-finish-load', () => {
-      overlayWindow.webContents.send('url', value);
-    });
+    createOverlayWindow(value);
   }
   store.set(key, value);
+});
+
+// 오버레이 윈도우 토글
+ipcMain.handle('toggle-overlay', (event, shouldShow) => {
+  if (shouldShow) {
+    overlayWindow?.show();
+  } else {
+    overlayWindow?.hide();
+  }
+});
+
+// 오버레이 윈도우 고정/고정 해제
+ipcMain.handle('set-overlay-always-on-top', (event, alwaysOnTop) => {
+  overlayWindow?.setAlwaysOnTop(alwaysOnTop);
+  store.set('overlayAlwaysOnTop', alwaysOnTop);
 });

@@ -1,0 +1,5 @@
+appId: com.andongmin.chatview
+publish:
+  provider: github
+  owner: andongmin94
+  repo: chat-view

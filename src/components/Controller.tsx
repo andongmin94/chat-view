@@ -44,16 +44,18 @@ export default function Component() {
   const [isFirstRun, setIsFirstRun] = React.useState(true);
 
   React.useEffect(() => {
-    const fetchUrl = async () => {
+    const fetchInitialState = async () => {
       const savedUrl = await electron.get("chatUrl");
+      const savedFixedMode = await electron.get("overlayFixed");
       if (savedUrl) {
         setUrl(savedUrl);
         setIsFirstRun(false);
       } else {
         setIsDialogOpen(true);
       }
+      setIsFixed(savedFixedMode || false);
     };
-    fetchUrl();
+    fetchInitialState();
   }, []);
 
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {

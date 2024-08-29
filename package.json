@@ -30,7 +30,6 @@
       "releaseType": "release"
     },
     "generateUpdatesFilesForAllChannels": false,
-    "differentialPackage": false,
     "afterSign": "electron-builder-notarize",
     "compression": "maximum"
   },

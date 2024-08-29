@@ -246,7 +246,7 @@ const createOverlayWindow = (url) => {
 };
 
 function updateFixedMode(isFixed) {
-  if (overlayWindow) {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.setAlwaysOnTop(isFixed);
     overlayWindow.setIgnoreMouseEvents(isFixed, {forward: true});
     overlayWindow.webContents.send('update-style', isFixed);

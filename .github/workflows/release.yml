@@ -15,6 +15,7 @@ jobs:
         with:
           node-version: 16
       - run: npm install
+      - run: npm install -g electron-builder  # electron-builder 설치
       - name: Build and Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

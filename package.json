@@ -1,36 +1,34 @@
 {
   "name": "chat-view",
-  "version": "0.0.2",
+  "version": "0.0.1",
   "type": "module",
   "author": "안동민",
   "main": "src/electron/main.cjs",
   "build": {
-    "appId": "com.yourcompany.chatview",
-    "productName": "ChatView",
+    "appId": "ChatView",
     "mac": {
-      "target": [
-        "dmg"
-      ],
-      "artifactName": "${productName}.${ext}"
+      "icon": "public/icon.png"
     },
     "win": {
-      "target": [
-        "nsis"
-      ],
-      "artifactName": "${productName}.${ext}"
+      "icon": "public/icon.png"
     },
-    "dmg": {
-      "artifactName": "${productName}.${ext}"
-    },
+    "productName": "ChatView",
+    "copyright": "Copyright © andongmin",
     "nsis": {
-      "artifactName": "${productName}Setup.${ext}"
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "uninstallDisplayName": "ChatView"
     },
-    "publish": {
-      "provider": "github",
-      "releaseType": "release"
-    },
-    "generateUpdatesFilesForAllChannels": false,
-    "compression": "maximum"
+    "files": [
+      "node_modules/**/*",
+      "src/electron/**/*",
+      "public/**/*",
+      "dist/**/*"
+    ],
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist_app"
+    }
   },
   "scripts": {
     "dev": "vite",
@@ -40,8 +38,8 @@
     "release": "npm run build && electron-builder build --publish always"
   },
   "repository": {
-    "type": "git",
-    "url": "https://github.com/andongmin94/chat-view.git"
+  "type": "git",
+  "url": "https://github.com/andongmin94/chat-view.git"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

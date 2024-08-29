@@ -1,6 +1,7 @@
 // 일렉트론 모듈
 const path = require("path");
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } = require("electron");
+const { autoUpdater } = require('electron-updater');
 
 // 환경 변수 설정
 require("dotenv").config();
@@ -70,6 +71,9 @@ async function createWindow() {
       overlayWindow.focus();
     }
   });
+  
+  // 업데이트 체크
+  autoUpdater.checkForUpdatesAndNotify();
 };
 
 // Electron의 초기화가 완료후 브라우저 윈도우 생성

@@ -15,8 +15,7 @@ jobs:
         with:
           node-version: 16
       - run: npm ci
-      - run: npm run build
-      - name: Release
+      - name: Build and Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run release

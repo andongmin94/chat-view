@@ -57,6 +57,12 @@ async function createWindow() {
 
   // 포트 연결
   mainWindow.loadURL(`http://localhost:${PORT}`);
+
+  // 메인 윈도우가 로드된 후 고정 활성화 상태 전송
+  mainWindow.webContents.on('did-finish-load', () => {
+    const isFixed = store.get('overlayFixed', false);
+    mainWindow.webContents.send('fixedMode', isFixed);
+  });
 };
 
 // Electron의 초기화가 완료후 브라우저 윈도우 생성
@@ -143,13 +149,14 @@ const createOverlayWindow = (url) => {
     height: 270,
   };
   const storedBounds = store.get('overlayWindowBounds', defaultBounds);
+  const isFixed = store.get('overlayFixed', false);
 
   overlayWindow = new BrowserWindow({
     ...storedBounds,
     frame: false,
-    resizable: isDev,
-    alwaysOnTop: store.get('overlayFixed', false),
-    transparent: store.get('overlayFixed', false),
+    resizable: true,
+    alwaysOnTop: isFixed,
+    transparent: true,
     icon: path.join(__dirname, "../../public/icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -162,7 +169,7 @@ const createOverlayWindow = (url) => {
   overlayWindow.loadURL(`http://localhost:${PORT}/overlay`);
   overlayWindow.webContents.on('did-finish-load', () => {
     overlayWindow.webContents.send('url', url);
-    overlayWindow.webContents.send('setBackgroundColor', store.get('overlayFixed', false) ? 'transparent' : '#f0f0f0');
+    overlayWindow.webContents.send('fixedMode', isFixed);
   });
   
   // 윈도우 위치 및 크기 변경 감지 및 저장
@@ -181,7 +188,7 @@ const createOverlayWindow = (url) => {
     e.preventDefault();
   });
 
-  if (store.get('overlayFixed', false)) {
+  if (isFixed) {
     overlayWindow.setIgnoreMouseEvents(true, { forward: true });
   }
 };
@@ -203,7 +210,9 @@ ipcMain.handle('get-store-value', (event, key) => {
 
 ipcMain.handle('set-store-value', (event, key, value) => {
   if (key === 'chatUrl') {
-    overlayWindow?.close();
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.close();
+    }
     createOverlayWindow(value);
   }
   store.set(key, value);
@@ -215,11 +224,16 @@ ipcMain.handle('set-fixed-mode', (event, isFixed) => {
   if (overlayWindow) {
     overlayWindow.setAlwaysOnTop(isFixed);
     overlayWindow.setIgnoreMouseEvents(isFixed, { forward: true });
-    overlayWindow.webContents.send('setBackgroundColor', isFixed ? 'transparent' : '#f0f0f0');
+    overlayWindow.webContents.send('fixedMode', isFixed);
   }
+  mainWindow.webContents.send('fixedMode', isFixed);
 });
 
 // 리셋 기능
 ipcMain.handle('reset', async () => {
     store.clear();
+    if (overlayWindow) {
+      overlayWindow.close();
+    }
+    mainWindow.webContents.send('fixedMode', false);
 });

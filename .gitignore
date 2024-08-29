@@ -2,6 +2,7 @@
 node_modules
 dist_app
 *.local
+package-lock.json
 
 # Logs
 logs

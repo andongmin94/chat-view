@@ -9,4 +9,5 @@ contextBridge.exposeInMainWorld("electron", {
   set: (key, value) => ipcRenderer.invoke('set-store-value', key, value),
   setFixedMode: (isFixed) => ipcRenderer.invoke('set-fixed-mode', isFixed),
   reset: () => ipcRenderer.invoke('reset'),
+  onUpdateStyle: (callback) => ipcRenderer.on('update-style', (_, isFixed) => callback(isFixed)),
 });

@@ -33,8 +33,9 @@
   "scripts": {
     "dev": "vite",
     "app": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
-    "build": "tsc && vite build && electron-builder",
-    "release": "npm run build --win --mac --linux --publish always"
+    "build": "tsc && vite build",
+    "package": "electron-builder build --publish never",
+    "release": "npm run build && electron-builder build --win --mac --linux --publish always"
   },
   "repository": {
   "type": "git",

@@ -65,9 +65,9 @@ async function createWindow() {
     mainWindow.webContents.send('fixedMode', isFixed);
   });
 
-  // 메인 윈도우가 포커스될 때 오버레이 윈도우도 포커스되도록 설정
+  // 예시 조건: 오버레이 윈도우가 항상 위에 떠 있는 상태일 때만 포커스
   mainWindow.on('focus', () => {
-    if (overlayWindow) {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.focus();
     }
   });
@@ -278,6 +278,12 @@ ipcMain.handle('set-store-value', (event, key, value) => {
   store.set(key, value);
 });
 
+ipcMain.on('reInput', () => {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.destroy();
+  }
+});
+
 // 오버레이 고정 모드 설정
 ipcMain.handle('set-fixed-mode', (event, isFixed) => {
   store.set('overlayFixed', isFixed);
@@ -288,8 +294,8 @@ ipcMain.handle('set-fixed-mode', (event, isFixed) => {
 // 리셋 기능
 ipcMain.handle('reset', async () => {
     store.clear();
-    if (overlayWindow) {
-      overlayWindow.close();
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.destroy();
     }
     mainWindow.webContents.send('fixedMode', false);
 });

@@ -10,4 +10,8 @@ contextBridge.exposeInMainWorld("electron", {
   setFixedMode: (isFixed) => ipcRenderer.invoke('set-fixed-mode', isFixed),
   reset: () => ipcRenderer.invoke('reset'),
   onUpdateStyle: (callback) => ipcRenderer.on('update-style', (_, isFixed) => callback(isFixed)),
+
+  // 업데이터 로직
+  onUpdateAvailable: (callback) => ipcRenderer.on('update_available', callback),
+  onUpdateDownloaded: (callback) => ipcRenderer.on('update_downloaded', callback),
 });

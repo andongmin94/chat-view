@@ -5,19 +5,19 @@
   "author": "안동민",
   "main": "src/electron/main.cjs",
   "build": {
-    "appId": "챗뷰",
+    "appId": "ChatView",
     "mac": {
       "icon": "public/icon.png"
     },
     "win": {
       "icon": "public/icon.png"
     },
-    "productName": "챗뷰",
+    "productName": "ChatView",
     "copyright": "Copyright © andongmin",
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "uninstallDisplayName": "챗뷰"
+      "uninstallDisplayName": "ChatView"
     },
     "files": [
       "node_modules/**/*",

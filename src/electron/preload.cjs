@@ -6,4 +6,6 @@ contextBridge.exposeInMainWorld("electron", {
   removeListener: (channel, func) => ipcRenderer.removeListener(channel, func),
   get: (key) => ipcRenderer.invoke('get-store-value', key),
   set: (key, value) => ipcRenderer.invoke('set-store-value', key, value),
+  toggleOverlay: (shouldShow) => ipcRenderer.invoke('toggle-overlay', shouldShow),
+  setOverlayAlwaysOnTop: (alwaysOnTop) => ipcRenderer.invoke('set-overlay-always-on-top', alwaysOnTop),
 });

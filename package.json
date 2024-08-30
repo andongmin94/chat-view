@@ -6,30 +6,30 @@
   "main": "src/electron/main.cjs",
   "build": {
     "appId": "ChatView",
+    "productName": "ChatView",
+    "copyright": "Copyright © andongmin",
     "mac": {
       "icon": "public/icon.png",
       "target": [
         "dmg"
       ],
-      "artifactName": "${productName}.${ext}"
+      "artifactName": "${productName}-Installer.${ext}"
+    },
+    "dmg": {
+      "artifactName": "${productName}-Installer.${ext}"
     },
     "win": {
       "icon": "public/icon.png",
       "target": [
         "nsis"
       ],
-      "artifactName": "${productName}.${ext}"
+      "artifactName": "${productName}-Setup.${ext}"
     },
-    "dmg": {
-      "artifactName": "${productName}.${ext}"
-    },
-    "productName": "ChatView",
-    "copyright": "Copyright © andongmin",
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "uninstallDisplayName": "ChatView",
-      "artifactName": "${productName}.${ext}"
+      "artifactName": "${productName}-Setup.${ext}"
     },
     "files": [
       "node_modules/**/*",

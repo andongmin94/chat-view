@@ -28,18 +28,7 @@
     "directories": {
       "buildResources": "assets",
       "output": "dist_app"
-    },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "andongmin94",
-        "repo": "chat-view"
-      }
-    ]
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/andongmin94/chat-view.git"
+    }
   },
   "scripts": {
     "dev": "vite",
@@ -81,7 +70,6 @@
     "date-fns": "^3.6.0",
     "dotenv": "^16.4.5",
     "electron-store": "^10.0.0",
-    "electron-updater": "^6.2.1",
     "embla-carousel-react": "^8.1.8",
     "express": "^4.19.2",
     "input-otp": "^1.2.4",

@@ -1,6 +1,6 @@
 // 일렉트론 모듈
 const path = require("path");
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell } = require("electron");
 
 // 환경 변수 설정
 require("dotenv").config();
@@ -44,7 +44,7 @@ async function createWindow() {
 
   // 브라우저 창 생성
   mainWindow = new BrowserWindow({
-    width: 400,
+    width: 416,
     height: 270,
     frame: false,
     resizable: isDev,
@@ -62,9 +62,6 @@ async function createWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     const isFixed = store.get('overlayFixed', false);
     mainWindow.webContents.send('fixedMode', isFixed);
-    
-    // 업데이트 체크
-    autoUpdater.checkForUpdates();
   });
 
   // 예시 조건: 오버레이 윈도우가 항상 위에 떠 있는 상태일 때만 포커스
@@ -72,6 +69,52 @@ async function createWindow() {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.focus();
     }
+  });
+
+  // 광고용 윈도우 생성
+  const adWindowWidth = mainWindow.getSize()[0];
+  const adWindowHeight = 120;
+  adWindow = new BrowserWindow({
+    width: adWindowWidth,
+    height: adWindowHeight,
+    frame: false,
+    resizable: false,
+    skipTaskbar: true,
+    show: false,
+    parent: mainWindow, // 메인 윈도우를 부모로 설정
+    webPreferences: {
+      webSecurity: false,
+    },
+  });
+
+  adWindow.loadURL('https://www.andongmin.com/ad/chat-view');
+
+  const updateAdWindowPosition = () => {
+    const mainBounds = mainWindow.getBounds();
+    adWindow.setBounds({
+      x: mainBounds.x,
+      y: mainBounds.y + mainBounds.height,
+      width: mainBounds.width,
+      height: adWindowHeight,
+    });
+  };
+
+  // 메인 윈도우가 로드된 후 광고용 윈도우를 보여줌
+  mainWindow.webContents.on('did-finish-load', () => {
+    updateAdWindowPosition();
+    adWindow.show();
+  });
+
+  // 메인 윈도우가 이동할 때 광고용 윈도우의 위치를 업데이트
+  mainWindow.on('move', updateAdWindowPosition);
+  mainWindow.on('resize', updateAdWindowPosition);
+  mainWindow.on('show', () => {
+    adWindow.show();
+  })
+
+  adWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
   });
 };
 
@@ -103,11 +146,16 @@ app.whenReady().then(() => {
     });
   } else {
     // 윈도우가 닫힐 때 발생하는 이벤트
-    mainWindow.on('closed', () => {
-      if (overlayWindow && !overlayWindow.isDestroyed()) {
-        overlayWindow.destroy();
-      }
-    });
+    if (mainWindow) {
+      mainWindow.on('close', () => {
+        if (overlayWindow && !overlayWindow.isDestroyed()) {
+          overlayWindow.destroy();
+        }
+        if (!adWindow.isDestroyed()) {
+          adWindow.close();
+        }
+      });
+    }
   }
   
   app.on("activate", () => {
@@ -115,8 +163,12 @@ app.whenReady().then(() => {
   });
 
   // 타이틀 바 옵션
-  ipcMain.on("hidden", () => mainWindow.hide());
   ipcMain.on("minimize", () => mainWindow.minimize());
+  ipcMain.on("hidden", () => {
+      adWindow.hide();
+      mainWindow.hide();
+    }
+  );
 
   // 트레이 세팅
   const tray = new Tray(nativeImage.createFromPath(path.join(__dirname, "../../public/icon.png")));

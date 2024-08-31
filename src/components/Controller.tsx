@@ -1,4 +1,4 @@
-import React from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
 
 import {
@@ -33,18 +33,27 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import TitleBar from "@/components/TitleBar";
 
-const urlSchema = z.string().url().refine((url) => {
-  return url.startsWith("http://afreehp.kr/page/") || url.startsWith("https://chzzk.naver.com/chat/");
-});
+// URL 검증 스키마 정의
+const urlSchema = z
+  .string()
+  .url()
+  .refine((url) => {
+    return (
+      url.startsWith("http://afreehp.kr/page/") ||
+      url.startsWith("https://chzzk.naver.com/chat/")
+    );
+  });
 
 export default function Component() {
-  const [url, setUrl] = React.useState("");
-  const [isFixed, setIsFixed] = React.useState(false);
-  const [isDialogOpen, setIsDialogOpen] = React.useState(false);
-  const [urlError, setUrlError] = React.useState<string | null>(null);
-  const [isFirstRun, setIsFirstRun] = React.useState(true);
+  // 상태 변수 정의
+  const [url, setUrl] = useState("");
+  const [isFixed, setIsFixed] = useState(false);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [urlError, setUrlError] = useState<string | null>(null);
+  const [isFirstRun, setIsFirstRun] = useState(true);
 
-  React.useEffect(() => {
+  // 초기 상태를 가져오는 useEffect
+  useEffect(() => {
     const fetchInitialState = async () => {
       const savedUrl = await electron.get("chatUrl");
       const savedFixedMode = await electron.get("overlayFixed");
@@ -59,6 +68,7 @@ export default function Component() {
     fetchInitialState();
   }, []);
 
+  // URL 변경 핸들러
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newUrl = e.target.value;
     setUrl(newUrl);
@@ -67,16 +77,20 @@ export default function Component() {
       setUrlError(null);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        setUrlError("http://afreehp.kr/page/ 또는 https://chzzk.naver.com/chat/ 로 시작해야 합니다.");
+        setUrlError(
+          "http://afreehp.kr/page/ 또는 https://chzzk.naver.com/chat/ 로 시작해야 합니다.",
+        );
       }
     }
   };
 
+  // 고정 모드 토글 핸들러
   const handleFixedToggle = async (checked: boolean) => {
     setIsFixed(checked);
     await electron.setFixedMode(checked);
   };
 
+  // 적용 버튼 핸들러
   const handleApply = () => {
     if (!urlError) {
       setIsDialogOpen(false);
@@ -85,6 +99,7 @@ export default function Component() {
     }
   };
 
+  // 리셋 버튼 핸들러
   const handleReset = async () => {
     await electron.reset();
     setUrl("");
@@ -94,7 +109,7 @@ export default function Component() {
   };
 
   return (
-    <div>
+    <>
       <TitleBar />
 
       <CardHeader className="flex justify-center">
@@ -172,6 +187,6 @@ export default function Component() {
           </div>
         </div>
       </CardContent>
-    </div>
+    </>
   );
 }

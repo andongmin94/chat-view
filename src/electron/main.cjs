@@ -71,6 +71,29 @@ async function createWindow() {
     }
   });
 
+  // 우클릭 메뉴 비활성화
+  mainWindow.hookWindowMessage(278, function(e) {
+    mainWindow.setEnabled(false);
+    setTimeout(() => mainWindow.setEnabled(true), 100);
+    return true;
+  });
+
+  // 종료 설정
+  if (process.platform === 'darwin') {
+    mainWindow.on('close', (e) => {
+      if (!app.isQuiting) {
+        e.preventDefault();
+        mainWindow.hide();
+        app.dock.hide();
+      }
+      return false;
+    });
+  } else {
+    mainWindow.on('close', () => {
+      app.quit();
+    });
+  }
+  
   // 광고용 윈도우 생성
   const adWindowWidth = mainWindow.getSize()[0];
   const adWindowHeight = 120;
@@ -135,29 +158,8 @@ app.whenReady().then(() => {
       app.dock.show();
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
-
-    mainWindow.on('close', (e) => {
-      if (!app.isQuiting) {
-        e.preventDefault();
-        mainWindow.hide();
-        app.dock.hide();
-      }
-      return false;
-    });
-  } else {
-    // 윈도우가 닫힐 때 발생하는 이벤트
-    if (mainWindow) {
-      mainWindow.on('close', () => {
-        if (overlayWindow && !overlayWindow.isDestroyed()) {
-          overlayWindow.destroy();
-        }
-        if (!adWindow.isDestroyed()) {
-          adWindow.close();
-        }
-      });
-    }
   }
-  
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -178,10 +180,7 @@ app.whenReady().then(() => {
     Menu.buildFromTemplate([
       { label: "열기", type: "normal", click: () => mainWindow.show() },
       { label: "종료", type: "normal", click: () => {
-          if (overlayWindow && !overlayWindow.isDestroyed()) {
-          overlayWindow.destroy();
-          }
-          app.quit();
+          mainWindow.close();
         }
       },
     ])
@@ -300,11 +299,6 @@ const createOverlayWindow = (url) => {
     overlayWindow.setEnabled(false);
     setTimeout(() => overlayWindow.setEnabled(true), 100);
     return true;
-  });
-
-  // 웹 컨텐츠에서 우클릭 메뉴 비활성화
-  overlayWindow.webContents.on('context-menu', (e, params) => {
-    e.preventDefault();
   });
 
   updateFixedMode(isFixed);

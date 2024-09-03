@@ -179,10 +179,7 @@ app.whenReady().then(() => {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "열기", type: "normal", click: () => mainWindow.show() },
-      { label: "종료", type: "normal", click: () => {
-          mainWindow.close();
-        }
-      },
+      { label: "종료", type: "normal", click: () => mainWindow.close()},
     ])
   );
 

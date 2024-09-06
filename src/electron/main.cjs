@@ -167,7 +167,7 @@ app.whenReady().then(() => {
   // 타이틀 바 옵션
   ipcMain.on("minimize", () => mainWindow.minimize());
   ipcMain.on("hidden", () => {
-      adWindow.hide();
+      if (adWindow) adWindow.hide();
       mainWindow.hide();
     }
   );

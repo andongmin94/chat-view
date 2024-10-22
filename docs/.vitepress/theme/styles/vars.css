@@ -18,24 +18,13 @@
  * -------------------------------------------------------------------------- */
 
 :root {
-  --vp-c-brand: #00bb96;
-  --vp-c-brand-1: #00bb96;
-  --vp-c-brand-light: #00bb96;
-  --vp-c-brand-lighter: #00bb96;
-  --vp-c-brand-lightest: #00bb96;
-  --vp-c-brand-dark: #00bb96;
-  --vp-c-brand-darker: #00bb96;
-  --vp-c-brand-dimm: rgba(100, 108, 255, 0.08);
-}
-
-.dark {
-  --vp-c-brand: #00E4B8;
-  --vp-c-brand-1: #00E4B8;
-  --vp-c-brand-light: #00E4B8;
-  --vp-c-brand-lighter: #00E4B8;
-  --vp-c-brand-lightest: #00E4B8;
-  --vp-c-brand-dark: #00E4B8;
-  --vp-c-brand-darker: #00E4B8;
+  --vp-c-brand: #00c79f;
+  --vp-c-brand-1: #00c79f;
+  --vp-c-brand-light: #00c79f;
+  --vp-c-brand-lighter: #00c79f;
+  --vp-c-brand-lightest: #00c79f;
+  --vp-c-brand-dark: #00c79f;
+  --vp-c-brand-darker: #00c79f;
   --vp-c-brand-dimm: rgba(100, 108, 255, 0.08);
 }
 

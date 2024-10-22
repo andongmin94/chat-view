@@ -28,6 +28,17 @@
   --vp-c-brand-dimm: rgba(100, 108, 255, 0.08);
 }
 
+.dark {
+  --vp-c-brand: #00E4B8;
+  --vp-c-brand-1: #00E4B8;
+  --vp-c-brand-light: #00E4B8;
+  --vp-c-brand-lighter: #00E4B8;
+  --vp-c-brand-lightest: #00E4B8;
+  --vp-c-brand-dark: #00E4B8;
+  --vp-c-brand-darker: #00E4B8;
+  --vp-c-brand-dimm: rgba(100, 108, 255, 0.08);
+}
+
 /**
  * Component: Button
  * -------------------------------------------------------------------------- */

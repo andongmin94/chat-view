@@ -72,7 +72,7 @@ export default function TitleBar() {
           <div className="flex items-center pl-2">
             <img src={chatviewLogo} alt="kersor" className="size-6" />
             &nbsp;&nbsp;
-            <span className="text-lg text-white">챗뷰 v0.0.3</span>
+            <span className="text-lg text-white">챗뷰 v0.0.4</span>
           </div>
           <div
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}

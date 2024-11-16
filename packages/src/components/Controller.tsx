@@ -171,7 +171,7 @@ export default function Component() {
               <AlertDialogTrigger asChild>
                 <Button variant="destructive">리셋</Button>
               </AlertDialogTrigger>
-              <AlertDialogContent>
+              <AlertDialogContent className="mt-5 max-w-[355px] rounded-md p-4">
                 <AlertDialogHeader>
                   <AlertDialogTitle>정말로 리셋하시겠습니까?</AlertDialogTitle>
                   <AlertDialogDescription>

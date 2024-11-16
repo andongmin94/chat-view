@@ -85,6 +85,14 @@ export default defineConfig({
           text: "릴리즈 노트",
           items: [
             {
+              text: "v0.0.5",
+              link: "/guide/release/v0.0.5",
+            },
+            {
+              text: "v0.0.4",
+              link: "/guide/release/v0.0.4",
+            },
+            {
               text: "v0.0.3",
               link: "/guide/release/v0.0.3",
             },

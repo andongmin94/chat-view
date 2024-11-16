@@ -13,8 +13,8 @@ hero:
     alt: chat-view
   actions:
     - theme: brand
-      text: 챗뷰 v0.0.3 다운로드
-      link: https://github.com/andongmin94/andongmin94/releases/download/chat-view-v0.0.3/Setup.0.0.3.exe
+      text: 챗뷰 v0.0.4 다운로드
+      link: https://github.com/andongmin94/andongmin94/releases/download/chat-view-v0.0.4/Setup.0.0.4.exe
     - theme: alt
       text: 챗뷰 가이드
       link: /guide/

@@ -33,6 +33,8 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import TitleBar from "@/components/TitleBar";
 
+import packageJson from "../../package.json";
+
 // URL 검증 스키마 정의
 const urlSchema = z
   .string()
@@ -187,6 +189,10 @@ export default function Component() {
           </div>
         </div>
       </CardContent>
+
+      <div className="pointer-events-none mr-1 flex justify-end text-xs">
+        v{packageJson.version}
+      </div>
     </>
   );
 }

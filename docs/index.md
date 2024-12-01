@@ -18,4 +18,17 @@ hero:
     - theme: alt
       text: 챗뷰 가이드
       link: /guide/
+
+# features:
+#   - icon: 🛠️
+#     title: Simple and minimal, always
+#     details: Lorem ipsum...
+#   - icon:
+#       src: /chat-view.svg
+#     title: Another cool feature
+#     details: Lorem ipsum...
+#   - icon:
+#       src: /chat-view.svg
+#     title: Another cool feature
+#     details: Lorem ipsum...
 ---

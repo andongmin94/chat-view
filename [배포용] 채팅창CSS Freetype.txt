@@ -1,0 +1,177 @@
+ /* 너비는 800px로 설정해야합니다. */
+ /* 너비는 800px로 설정해야합니다. */
+ /* 너비는 800px로 설정해야합니다. */
+ /* 너비는 800px로 설정해야합니다. */
+ /* 너비는 800px로 설정해야합니다. */
+
+
+
+
+:root {
+    /* 설정 */
+    ;--폰트_사이즈: 30px
+    ;--폰트_사이즈90: 27px
+    ;--닉폰트_사이즈: 12px
+
+    ;--chzzk-color: #00FFAF
+    ;--twitch-color: #A970FF
+    ;--youtube-color: #FF0000
+    ;--afreeca-color: #0545B1
+}
+
+/* 채팅창 페이드아웃 */
+#log,
+body,
+html {
+  -webkit-mask-image: -webkit-gradient(linear, left 20%, left top, from(rgba(255, 255, 255, 1)), to(rgba(255, 255, 255, 0)));
+}
+
+/* 폰트 */
+
+@font-face {
+    font-family: 'GmarketSans';
+    font-weight: 500;
+    font-style: normal;
+    src: url('https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_2001@1.1/GmarketSansMedium.woff') format('woff');
+    font-display: swap;
+} 
+
+/* 채팅 메세지 */
+#log > div[data-from] {
+    position: relative;
+    font-family: 'Gmarketsans'!important;
+    font-weight: 200;
+    background: transperent!important;
+    margin: 0.1em;
+    padding: 0.6em 0.2em 0.4em 0.8em!important;
+    text-shadow: none!important;
+    color: ★!important; /* 채팅 메세지 폰트 컬러 */
+    font-size: var(--폰트_사이즈)!important;
+    text-align: var(--텍스트_정렬)!important;
+    width: fit-content!important;
+    animation: open .5s cubic-bezier(0, 0.62, 0, 0.98) forwards!important;
+    line-height: 160%;
+    border-radius: 0.9em;
+}
+
+@keyframes open {
+	0% { 
+        margin: 0.4em 0.4em -1em 0.4em;
+        transform: translateY(2em);
+        opacity: 0;
+    }
+	100% {
+        margin: 0.4em 0.4em 0.4em 0.4em;
+        transform: translateY(0em);
+        opacity: 1;
+    }
+}
+
+#log > div[data-from] > .message {
+    box-shadow: 0px 0px 15px 0px rgba(0, 0, 0, 0.3);
+    border-radius: 0px 50px 50px 50px;
+    border-left: 5px dotted ★; /* 채팅 점선 컬러 */
+    padding: 10px 20px;
+    padding-top: 20px;
+    margin-left: 30px!important;
+    background: #fff!important;
+}
+
+
+/* 스트리머 채팅 */
+#log > div.streamer > .message {
+    font-family: 'GmarketSans'!important;
+    background: ★!important; /* 스트리머 채팅 배경 컬러 */
+    color: #fff!important;
+    font-weight: 200!important;
+    font-style: bold;!important;
+    text-align: right!important;
+    font-size: var(--폰트_사이즈90)!important;
+    width: 600px!important;
+    height: min-content!important;
+    line-height: 140%!important;
+    margin-right: 50px!important;
+    margin-bottom: 10px;
+    box-shadow: 0px 0px 15px 0px rgba(0, 0, 0, 0.3);
+    border-radius: 50px 50px 0px 50px;
+    border-right: 5px dotted ★;/* 스트리머 채팅 점선 컬러 */
+    padding: 10px 20px;
+    padding-top: 20px;
+}
+
+#log > div.streamer::after {
+content: none!important;
+}
+#log > div.streamer::before {
+content: none!important;
+}
+
+/* 스트리머 닉네임 */
+#log > div.streamer > .meta {
+    display: none;
+}
+
+/* 시청자 닉네임 */
+#log > div > .meta {
+    background: linear-gradient(to right, ★, ☆); /* 닉네임 배경 그라데이션 컬러 2가지 */
+    margin-bottom: var(--닉폰트_사이즈);
+    font-family: 'GmarketSans';
+    color: #fff!important;
+    font-size: 20px!important;
+    font-weight: 300!important;
+    display: block;
+    line-height: 170%!important;
+    border-radius: 50px 50px 50px 50px;
+    text-align: center!important;
+    padding: 5px 25px!important;
+    width: fit-content!important;
+    height: 35px;
+    left: 0px;
+    top: 30px
+}
+
+.colon {
+  display: none;
+}
+
+/* 치즈후원 메세지 */
+.donation {
+    background: transparent!important;
+    border-radius: 8px!important;
+    box-shadow: none!important;
+    margin-bottom: 15px!important;
+    padding: 15px 10px!important;
+    margin-left: 50px!important;
+}
+
+
+.donation-meta {
+    font-size: 20px;
+    color: ★!important; /* 님께서 후원하셨습니다 폰트 컬러 */
+    word-wrap: break-word!important;
+    word-break: break-word!important;
+    text-align: center!important;
+    width: fit-content!important;
+    margin-left: 50px!important;
+}
+
+.donation-name, .cheese-amount {
+    color: #FF4F8B !important;
+    font-weight: 500!important;
+    font-size: var(--폰트_사이즈90)!important;
+}
+
+.donation-message {
+    color: #fff!important;
+    font-weight: 700!important;
+    letter-spacing: -.3px!important;
+    margin-top: 6px!important;
+    text-align: center!important;
+    background: linear-gradient(to right, ★, ☆)!important; /* 후원메시지 그라데이션 컬러 2가지 */
+    border-radius: 50px 50px 50px 50px!important;
+    text-shadow: 0px 0px 4px black!important;
+    padding: 10px!important;
+    margin-top: 10px!important;
+    margin-bottom: 20px!important;
+    width: 650px!important;
+}

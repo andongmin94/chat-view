@@ -21,14 +21,16 @@ hero:
 
 features:
   - icon:
-     src: windows-brands-solid.svg
-     width: 43.75px
+     dark: windows-white.svg
+     light: windows-black.svg
+     width: 100px
     title: Windows 다운로드
     linkText: 챗뷰.exe
     link: https://github.com/andongmin94/andongmin94/releases/download/chat-view-v0.0.5/Setup.0.0.5.exe
   - icon:
-     src: apple-brands-solid.svg
-     width: 37.5px
+     dark: apple-white.svg
+     light: apple-black.svg
+     width: 100px
     title: (준비 중) Mac 다운로드
     linkText: 챗뷰.dmg
 ---

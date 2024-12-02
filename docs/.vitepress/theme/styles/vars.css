@@ -63,8 +63,8 @@
   --vp-home-hero-name-color: transparent;
   --vp-home-hero-name-background: -webkit-linear-gradient(
     120deg,
-    #00E4B8 0%,
-    #67e8f9
+    #00e4c6 0%,
+    #60ebcd
   );
 
   --vp-home-hero-image-background-image: linear-gradient(
@@ -85,6 +85,12 @@
   :root {
     --vp-home-hero-image-filter: blur(80px);
   }
+}
+
+/* 메인 페이지 윈도우랑 맥 박스 가운데 정렬 */
+.box {
+  display: flex;
+  align-items: center;
 }
 
 /**

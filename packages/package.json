@@ -8,7 +8,7 @@
     "appId": "챗뷰",
     "productName": "챗뷰",
     "copyright": "Copyright © andongmin",
-    "artifactName": "${productName}.${ext}",
+    "artifactName": "ChatView.${ext}",
     "icon": "public/icon.png",
     "mac": { "target": [ "dir" ] },
     "win": { "target": [ "portable" ] },

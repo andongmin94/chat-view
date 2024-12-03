@@ -5,10 +5,10 @@
   "author": "안동민",
   "main": "src/electron/main.cjs",
   "build": {
-    "appId": "챗뷰",
-    "productName": "챗뷰",
+    "appId": "ChatView",
+    "productName": "ChatView",
     "copyright": "Copyright © andongmin",
-    "artifactName": "ChatView.${ext}",
+    "artifactName": "${productName}.${ext}",
     "icon": "public/icon.png",
     "mac": { "target": [ "dir" ] },
     "win": { "target": [ "portable" ] },

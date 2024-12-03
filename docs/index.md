@@ -25,8 +25,8 @@ features:
      light: windows-black.svg
      width: 100px
     title: Windows 다운로드
-    linkText: ChatView.exe (77.5 MB)
-    link: https://github.com/andongmin94/andongmin94/releases/download/chat-view-v0.0.6/ChatView.exe
+    linkText: chat-view-v0.0.6.zip (77.6 MB)
+    link: https://github.com/andongmin94/andongmin94/releases/download/chat-view-v0.0.6/chat-view-v0.0.6.zip
   - icon:
      dark: apple-white.svg
      light: apple-black.svg

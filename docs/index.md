@@ -21,15 +21,15 @@ hero:
 
 features:
   - icon:
-     dark: windows-white.svg
-     light: windows-black.svg
+     dark: /windows-white.svg
+     light: /windows-black.svg
      width: 100px
     title: Windows 다운로드
-    linkText: ChatView.exe (77.5 MB)
+    linkText: ChatView.exe (77.6 MB)
     link: https://github.com/andongmin94/andongmin94/releases/download/chat-view-v0.0.6/ChatView.exe
   - icon:
-     dark: apple-white.svg
-     light: apple-black.svg
+     dark: /apple-white.svg
+     light: /apple-black.svg
      width: 100px
     title: (준비 중) Mac 다운로드
     linkText: ChatView.dmg

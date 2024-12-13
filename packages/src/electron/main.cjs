@@ -274,10 +274,10 @@ const createOverlayWindow = (url) => {
         </div>
       </body>
       <script>
-        electron.onUpdateStyle((isFixed) => {
-          document.body.style.backgroundColor = isFixed ? 'rgba(0,0,0,0)' : 'rgba(70, 130, 180, 0.7)';
-          document.querySelector('webview').style.pointerEvents = isFixed ? 'none' : 'auto';
-        });
+        electron.on('update-style', (isFixed) => {
+        document.body.style.backgroundColor = isFixed ? 'rgba(0,0,0,0)' : 'rgba(70, 130, 180, 0.7)';
+        document.querySelector('webview').style.pointerEvents = isFixed ? 'none' : 'auto';
+      });
       </script>
     </html>
   `;
@@ -342,14 +342,14 @@ ipcMain.on('reInput', () => {
 });
 
 // 오버레이 고정 모드 설정
-ipcMain.handle('set-fixed-mode', (event, isFixed) => {
+ipcMain.on('set-fixed-mode', (event, isFixed) => {
   store.set('overlayFixed', isFixed);
   updateFixedMode(isFixed);
   mainWindow.webContents.send('fixedMode', isFixed);
 });
 
 // 리셋 기능
-ipcMain.handle('reset', async () => {
+ipcMain.on('reset', async () => {
     store.clear();
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.destroy();

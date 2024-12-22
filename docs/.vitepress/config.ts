@@ -74,22 +74,26 @@ export default defineConfig({
               link: "/guide/",
             },
             {
-              text: "숲 설정",
-              link: "/guide/soop",
+              text: "위플랩 설정",
+              link: "/guide/weflab",
             },
             {
               text: "치지직 설정",
               link: "/guide/chzzk",
             },
             {
-              text: "아프리카도우미 설정",
-              link: "/guide/afhp",
+              text: "숲 설정",
+              link: "/guide/soop",
             },
           ],
         },
         {
           text: "릴리즈 노트",
           items: [
+            {
+              text: "v0.0.8",
+              link: "/guide/release/v0.0.8",
+            },
             {
               text: "v0.0.7",
               link: "/guide/release/v0.0.7",

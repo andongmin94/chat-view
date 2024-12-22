@@ -41,7 +41,7 @@ const urlSchema = z
   .url()
   .refine((url) => {
     return (
-      url.startsWith("http://afreehp.kr/page/") ||
+      url.startsWith("https://weflab.com/page/") ||
       url.startsWith("https://chzzk.naver.com/chat/")
     );
   });
@@ -74,13 +74,17 @@ export default function Component() {
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newUrl = e.target.value;
     setUrl(newUrl);
+    if (!newUrl) {
+      setUrlError("URL을 입력하세요.");
+      return;
+    }
     try {
       urlSchema.parse(newUrl);
       setUrlError(null);
     } catch (error) {
       if (error instanceof z.ZodError) {
         setUrlError(
-          "http://afreehp.kr/page/ 또는 https://chzzk.naver.com/chat/ 로 시작해야 합니다.",
+          "https://weflab.com/page/ 또는 https://chzzk.naver.com/chat/ 로 시작해야 합니다.",
         );
       }
     }
@@ -143,7 +147,7 @@ export default function Component() {
                 <div className="grid items-center">
                   <Input id="url" value={url} onChange={handleUrlChange} />
                 </div>
-                {urlError && <p className="text-sm text-red-500">{urlError}</p>}
+                {urlError && <p className="mt-2 text-sm text-red-500">{urlError}</p>}
               </div>
               <DialogFooter className="grid grid-cols-4">
                 <Button

@@ -1,32 +1,9 @@
-import { useState } from "react";
+import Controller from "@/components/Controller";
 
-import reactLogo from "./assets/react.svg";
-import chatViewLogo from "/chat-view.svg";
-import viteLogo from "/vite.svg";
-
-import "./App.css";
-
-function App() {
-  const [count, setCount] = useState(0);
-
+export default function App() {
   return (
-    <div className="app">
-      <div>
-        <img src={chatViewLogo} className="logo frontron" alt="Frontron logo" />
-        <img src={reactLogo} className="logo react" alt="React logo" />
-        <img src={viteLogo} className="logo" alt="Vite logo" />
-      </div>
-      <h1>Frontron React TS</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
+    <div className="flex flex-col h-full">
+      <Controller />
     </div>
   );
 }
-
-export default App;

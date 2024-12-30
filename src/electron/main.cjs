@@ -35,16 +35,20 @@ if (!isDev) {
 
 // 일렉트론 생성 함수
 let mainWindow;
-const createWindow = () => {
+let overlayWindow;
+let store;
+async function createWindow() {
+  const { default: Store } = await import('electron-store');
+  store = new Store();
   // 브라우저 창 생성
   mainWindow = new BrowserWindow({
     width: 400,
-    height: 350,
+    height: 250,
     frame: false,
     resizable: isDev,
     icon: path.join(__dirname, "../../public/icon.png"),
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: path.join(__dirname, "preload.cjs"),
       webSecurity: false,
     },
   });
@@ -54,7 +58,8 @@ const createWindow = () => {
 };
 
 // Electron의 초기화가 완료후 브라우저 윈도우 생성
-app.whenReady().then(createWindow).then(() => {
+app.whenReady().then(() => {
+  createWindow();
   // 기본 생성 세팅
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
@@ -99,7 +104,7 @@ app.whenReady().then(createWindow).then(() => {
   );
 
   // F5 새로고침, F12 개발자 도구 열기
-  if (process.env.NODE_ENV === "development") {
+  if (isDev) {
     const menu = Menu.buildFromTemplate([
       {
         label: "File",
@@ -116,6 +121,7 @@ app.whenReady().then(createWindow).then(() => {
             accelerator: "F12",
             click: () => {
               mainWindow.webContents.toggleDevTools();
+              overlayWindow?.webContents.toggleDevTools();
             },
           },
         ],
@@ -123,6 +129,56 @@ app.whenReady().then(createWindow).then(() => {
     ]);
     Menu.setApplicationMenu(menu);
   }
+});
 
-  
+ipcMain.handle('get-store-value', (event, key) => {
+  const value = store.get(key);
+  if (key === 'chatUrl') {
+    overlayWindow = new BrowserWindow({
+      width: 1000,
+      height: 600,
+      frame: false,
+      resizable: isDev,
+      // transparent: true,
+      // skipTaskbar: true,
+      icon: path.join(__dirname, "../../public/icon.png"),
+      webPreferences: {
+        preload: path.join(__dirname, "preload.cjs"),
+        webSecurity: false,
+        nodeIntegration: true,
+        webviewTag: true // 웹뷰 활성화
+      },
+    });
+    overlayWindow.loadURL(`http://localhost:${PORT}/overlay`);
+    overlayWindow.webContents.on('did-finish-load', () => {
+      overlayWindow.webContents.send('url', value);
+    });
+  }
+  return value;
+});
+
+ipcMain.handle('set-store-value', (event, key, value) => {
+  overlayWindow?.close();
+  if (key === 'chatUrl') {
+    overlayWindow = new BrowserWindow({
+      width: 1000,
+      height: 600,
+      frame: false,
+      resizable: isDev,
+      // transparent: true,
+      skipTaskbar: true,
+      icon: path.join(__dirname, "../../public/icon.png"),
+      webPreferences: {
+        preload: path.join(__dirname, "preload.cjs"),
+        webSecurity: false,
+        nodeIntegration: true,
+        webviewTag: true // 웹뷰 활성화
+      },
+    });
+    overlayWindow.loadURL(`http://localhost:${PORT}/overlay`);
+    overlayWindow.webContents.on('did-finish-load', () => {
+      overlayWindow.webContents.send('url', value);
+    });
+  }
+  store.set(key, value);
 });

@@ -20,6 +20,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 import TitleBar from "@/components/TitleBar";
 
@@ -28,7 +39,6 @@ const urlSchema = z.string().url().startsWith("http://afreehp.kr/page/");
 export default function Component() {
   const [url, setUrl] = React.useState("");
   const [isFixed, setIsFixed] = React.useState(false);
-  const [isOverlayVisible, setIsOverlayVisible] = React.useState(false);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
   const [urlError, setUrlError] = React.useState<string | null>(null);
   const [isFirstRun, setIsFirstRun] = React.useState(true);
@@ -61,12 +71,7 @@ export default function Component() {
 
   const handleFixedToggle = async (checked: boolean) => {
     setIsFixed(checked);
-    await electron.setOverlayAlwaysOnTop(checked);
-  };
-
-  const handleOverlayToggle = async (checked: boolean) => {
-    setIsOverlayVisible(checked);
-    await electron.toggleOverlay(checked);
+    await electron.setFixedMode(checked);
   };
 
   const handleApply = () => {
@@ -75,6 +80,14 @@ export default function Component() {
       electron.set("chatUrl", url);
       setIsFirstRun(false);
     }
+  };
+
+  const handleReset = async () => {
+    await electron.reset();
+    setUrl("");
+    setIsFixed(false);
+    setIsFirstRun(true);
+    setIsDialogOpen(true);
   };
 
   return (
@@ -118,21 +131,30 @@ export default function Component() {
           </Dialog>
           <div className="mt-2 flex items-center justify-between">
             <div className="flex items-center">
-              <Label htmlFor="overlay-visible" className="mr-2">오버레이 표시</Label>
-              <Switch
-                id="overlay-visible"
-                checked={isOverlayVisible}
-                onCheckedChange={handleOverlayToggle}
-              />
-            </div>
-            <div className="flex items-center">
-              <Label htmlFor="fixed-mode" className="mr-2">항상 위에 표시</Label>
+              <Label htmlFor="fixed-mode" className="mr-2">고정 활성화</Label>
               <Switch
                 id="fixed-mode"
                 checked={isFixed}
                 onCheckedChange={handleFixedToggle}
               />
             </div>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive">리셋</Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>정말로 리셋하시겠습니까?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    이 작업은 되돌릴 수 없습니다. 모든 설정이 초기화됩니다.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>취소</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleReset}>리셋</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </div>
       </CardContent>

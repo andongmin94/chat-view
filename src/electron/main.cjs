@@ -166,9 +166,51 @@ const createOverlayWindow = (url) => {
     },
   });
 
-  overlayWindow.loadURL(`http://localhost:${PORT}/overlay`);
+  const htmlContent = `
+    <html>
+      <head>
+        <style>
+          body {
+            margin: 0;
+            overflow: hidden;
+            background-color: ${isFixed ? 'rgba(0,0,0,0)' : 'rgba(240,240,240,0.5)'};
+            transition: background-color 0.3s;
+          }
+          #dragRegion {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            -webkit-app-region: drag;
+          }
+          webview {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: ${isFixed ? 'none' : 'auto'};
+          }
+        </style>
+      </head>
+      <body>
+        <div id="dragRegion">
+        <webview src="${url}"/>
+        </div>
+      </body>
+      <script>
+        electron.onUpdateStyle((isFixed) => {
+          document.body.style.backgroundColor = isFixed ? 'rgba(0,0,0,0)' : 'rgba(240,240,240,0.5)';
+          document.querySelector('webview').style.pointerEvents = isFixed ? 'none' : 'auto';
+        });
+      </script>
+    </html>
+  `;
+
+  overlayWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
+  
   overlayWindow.webContents.on('did-finish-load', () => {
-    overlayWindow.webContents.send('url', url);
     overlayWindow.webContents.send('fixedMode', isFixed);
   });
   
@@ -188,10 +230,16 @@ const createOverlayWindow = (url) => {
     e.preventDefault();
   });
 
-  if (isFixed) {
-    overlayWindow.setIgnoreMouseEvents(true, { forward: true });
-  }
+  updateFixedMode(isFixed);
 };
+
+function updateFixedMode(isFixed) {
+  if (overlayWindow) {
+    overlayWindow.setAlwaysOnTop(isFixed);
+    overlayWindow.setIgnoreMouseEvents(isFixed, {forward: true});
+    overlayWindow.webContents.send('update-style', isFixed);
+  }
+}
 
 function saveBounds() {
   if (!overlayWindow.isDestroyed()) {
@@ -221,11 +269,7 @@ ipcMain.handle('set-store-value', (event, key, value) => {
 // 오버레이 고정 모드 설정
 ipcMain.handle('set-fixed-mode', (event, isFixed) => {
   store.set('overlayFixed', isFixed);
-  if (overlayWindow) {
-    overlayWindow.setAlwaysOnTop(isFixed);
-    overlayWindow.setIgnoreMouseEvents(isFixed, { forward: true });
-    overlayWindow.webContents.send('fixedMode', isFixed);
-  }
+  updateFixedMode(isFixed);
   mainWindow.webContents.send('fixedMode', isFixed);
 });
 

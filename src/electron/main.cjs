@@ -63,6 +63,13 @@ async function createWindow() {
     const isFixed = store.get('overlayFixed', false);
     mainWindow.webContents.send('fixedMode', isFixed);
   });
+
+  // 메인 윈도우가 포커스될 때 오버레이 윈도우도 포커스되도록 설정
+  mainWindow.on('focus', () => {
+    if (overlayWindow) {
+      overlayWindow.focus();
+    }
+  });
 };
 
 // Electron의 초기화가 완료후 브라우저 윈도우 생성
@@ -157,6 +164,7 @@ const createOverlayWindow = (url) => {
     resizable: true,
     alwaysOnTop: isFixed,
     transparent: true,
+    skipTaskbar: true,
     icon: path.join(__dirname, "../../public/icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -173,7 +181,7 @@ const createOverlayWindow = (url) => {
           body {
             margin: 0;
             overflow: hidden;
-            background-color: ${isFixed ? 'rgba(0,0,0,0)' : 'rgba(240,240,240,0.5)'};
+            background-color: ${isFixed ? 'rgba(0,0,0,0)' : 'rgba(70, 130, 180, 0.7)'};
             transition: background-color 0.3s;
           }
           #dragRegion {
@@ -201,7 +209,7 @@ const createOverlayWindow = (url) => {
       </body>
       <script>
         electron.onUpdateStyle((isFixed) => {
-          document.body.style.backgroundColor = isFixed ? 'rgba(0,0,0,0)' : 'rgba(240,240,240,0.5)';
+          document.body.style.backgroundColor = isFixed ? 'rgba(0,0,0,0)' : 'rgba(70, 130, 180, 0.7)';
           document.querySelector('webview').style.pointerEvents = isFixed ? 'none' : 'auto';
         });
       </script>

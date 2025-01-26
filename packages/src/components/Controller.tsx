@@ -100,7 +100,7 @@ export default function Component() {
   const handleApply = () => {
     if (!urlError) {
       setIsDialogOpen(false);
-      electron.set("chatUrl", url);
+      electron.send("chatUrl", url);
       setIsFirstRun(false);
     }
   };

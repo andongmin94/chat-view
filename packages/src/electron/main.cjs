@@ -317,7 +317,7 @@ function saveBounds() {
   }
 }
 
-ipcMain.handle('get-store-value', (event, key) => {
+ipcMain.handle('get-value', (event, key) => {
   const value = store.get(key);
   if (key === 'chatUrl' && value) {
     createOverlayWindow(value);
@@ -325,14 +325,12 @@ ipcMain.handle('get-store-value', (event, key) => {
   return value;
 });
 
-ipcMain.handle('set-store-value', (event, key, value) => {
-  if (key === 'chatUrl') {
+ipcMain.on('chatUrl', (event, url) => {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.close();
     }
-    createOverlayWindow(value);
-  }
-  store.set(key, value);
+    createOverlayWindow(url);
+  store.set('chatUrl', url);
 });
 
 ipcMain.on('reInput', () => {

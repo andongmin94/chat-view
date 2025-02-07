@@ -33,7 +33,12 @@
   "scripts": {
     "dev": "vite",
     "app": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
-    "build": "tsc && vite build && electron-builder"
+    "build": "tsc && vite build && electron-builder",
+    "release": "num run build --win --mac --linux --publish always"
+  },
+  "repository": {
+  "type": "git",
+  "url": "https://github.com/andongmin94/chat-view.git"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

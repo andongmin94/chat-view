@@ -21,7 +21,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            npm run build && electron-builder build --mac --publish always --config.extraMetadata.name=chat-view
+            npm run build && electron-builder build --mac --publish always
           else
-            npm run build && electron-builder build --win --publish always --config.extraMetadata.name=chat-view
+            npm run build && electron-builder build --win --publish always
           fi

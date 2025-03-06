@@ -1,4 +1,4 @@
-appId: 챗뷰
+appId: ChatView
 publish:
   provider: github
   owner: andongmin94

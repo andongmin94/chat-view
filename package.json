@@ -28,7 +28,12 @@
     "directories": {
       "buildResources": "assets",
       "output": "dist_app"
-    }
+    },
+    "publish": {
+      "provider": "github",
+      "releaseType": "release"
+    },
+    "compression": "maximum"
   },
   "scripts": {
     "dev": "vite",

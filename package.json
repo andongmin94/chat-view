@@ -1,23 +1,35 @@
 {
   "name": "chat-view",
-  "version": "0.0.2",
+  "version": "0.0.1",
   "type": "module",
   "author": "안동민",
   "main": "src/electron/main.cjs",
   "build": {
     "appId": "ChatView",
     "mac": {
-      "icon": "public/icon.png"
+      "icon": "public/icon.png",
+      "target": [
+        "dmg"
+      ],
+      "artifactName": "${productName}.${ext}"
     },
     "win": {
-      "icon": "public/icon.png"
+      "icon": "public/icon.png",
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "${productName}.${ext}"
+    },
+    "dmg": {
+      "artifactName": "${productName}.${ext}"
     },
     "productName": "ChatView",
     "copyright": "Copyright © andongmin",
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "uninstallDisplayName": "ChatView"
+      "uninstallDisplayName": "ChatView",
+      "artifactName": "${productName}.${ext}"
     },
     "files": [
       "node_modules/**/*",

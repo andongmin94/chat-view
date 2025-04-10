@@ -74,6 +74,11 @@ async function createWindow() {
       overlayWindow.focus();
     }
   });
+
+  // 윈도우가 닫힐 때 발생하는 이벤트
+  mainWindow.on('closed', () => {
+    overlayWindow.destroy();
+  });
 };
 
 // Electron의 초기화가 완료후 브라우저 윈도우 생성
@@ -314,6 +319,12 @@ ipcMain.on('download_update', () => {
 autoUpdater.on('update-downloaded', () => {
   if (mainWindow) {
     mainWindow.webContents.send('update_downloaded');
+  }
+});
+
+autoUpdater.on('download-progress', (progressObj) => {
+  if (mainWindow) {
+    mainWindow.webContents.send('download_progress', progressObj.percent);
   }
 });
 

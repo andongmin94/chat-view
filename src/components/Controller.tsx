@@ -31,6 +31,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Progress } from "@/components/ui/progress";
 import TitleBar from "@/components/TitleBar";
 
 const urlSchema = z.string().url().startsWith("http://afreehp.kr/page/");
@@ -42,6 +43,7 @@ export default function Component() {
   const [urlError, setUrlError] = React.useState<string | null>(null);
   const [isFirstRun, setIsFirstRun] = React.useState(true);
   const [isUpdateDialogOpen, setIsUpdateDialogOpen] = React.useState(false);
+  const [downloadProgress, setDownloadProgress] = React.useState(0);
 
   React.useEffect(() => {
     electron.on("update_available", () => {
@@ -57,15 +59,19 @@ export default function Component() {
       }
     });
 
+    electron.on("download_progress", (percent:any) => {
+      setDownloadProgress(percent);
+    });
+
     return () => {
       electron.removeAllListeners("update_available");
       electron.removeAllListeners("update_downloaded");
+      electron.removeAllListeners("download_progress");
     };
   }, []);
 
   const handleDownloadUpdate = () => {
     electron.send("download_update");
-    setIsUpdateDialogOpen(false);
   };
 
   React.useEffect(() => {
@@ -129,17 +135,25 @@ export default function Component() {
                 업데이트가 가능합니다. 다운로드하시겠습니까?
               </DialogDescription>
             </DialogHeader>
+            {downloadProgress > 0 && (
+              <div>
+                <Progress value={downloadProgress} className="w-full" />
+                <p className="mt-2 text-center">{`다운로드 중... ${downloadProgress.toFixed(2)}%`}</p>
+              </div>
+            )}
             <DialogFooter className="grid grid-cols-4">
               <Button
                 onClick={handleDownloadUpdate}
                 className="bg-green-500 text-white hover:bg-green-600"
+                disabled={downloadProgress > 0}
               >
-                다운로드
+                {downloadProgress > 0 ? "다운로드 중..." : "다운로드"}
               </Button>
               <Button
                 variant="outline"
                 onClick={() => setIsUpdateDialogOpen(false)}
                 className="col-start-4 border-gray-300 text-gray-700 hover:bg-gray-100"
+                disabled={downloadProgress > 0}
               >
                 취소
               </Button>

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-async function updateIndexMd(releaseData) {
+async function updateIndexMd(releaseData : { version: string; fileSize: number; downloadUrl: string }) {
   try {
     const indexPath = path.resolve(__dirname, '..', 'index.md');
     let content = await fs.readFile(indexPath, 'utf-8');

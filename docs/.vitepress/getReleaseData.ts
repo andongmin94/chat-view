@@ -20,7 +20,7 @@ async function fetchLatestRelease() {
       let downloadUrl = '';
       let fileSize = 0;
       
-      const windowsAsset = data.assets.find(asset => asset.name.endsWith('.exe'));
+      const windowsAsset = data.assets.find((asset: { name: string; }) => asset.name.endsWith('.exe'));
       if (windowsAsset) {
         downloadUrl = windowsAsset.browser_download_url;
         fileSize = Math.round(windowsAsset.size / 1024 / 1024); // MB 단위로 변환
@@ -35,14 +35,6 @@ async function fetchLatestRelease() {
       };
     } catch (error) {
       console.error('GitHub 릴리즈 정보 가져오기 실패:', error);
-      // 기본값 반환
-      return {
-        version: 'v0.0.8',
-        downloadUrl: 'https://github.com/andongmin94/andongmin94/releases/download/chat-view-v0.0.8/ChatView.exe',
-        fileSize: 347,
-        body: '정보를 가져오지 못했습니다.',
-        publishedAt: new Date().toISOString()
-      };
     }
   }
   
@@ -59,7 +51,7 @@ async function fetchLatestRelease() {
       
       const releases = await response.json();
       
-      return releases.map(release => {
+      return releases.map((release: { tag_name: string; assets: any[]; body: any; published_at: any; }) => {
         const version = release.tag_name.replace('chat-view-', '');
         
         // 다운로드 URL과 파일 크기 추출

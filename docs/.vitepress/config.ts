@@ -1,149 +1,196 @@
 import { defineConfig } from "vitepress";
 import { transformerTwoslash } from "@shikijs/vitepress-twoslash";
 import { buildEnd } from "./buildEnd.config";
+import { fetchLatestRelease, fetchAllReleases } from "./getReleaseData.js";
+import { updateIndexMd } from "./updateIndexFile";
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 const ogDescription = "GUI Library for Desktop App Development";
 const ogImage = "https://chat-view.andongmin.com/chat-view.svg";
 const ogTitle = "챗뷰";
 const ogUrl = "https://chat-view.andongmin.com";
 
-export default defineConfig({
-  title: "챗뷰",
-  description: "GUI Library for Desktop App Development",
-
-  head: [
-    ["link", { rel: "icon", type: "image/svg+xml", href: "/chat-view.svg" }],
-    [
-      "link",
-      { rel: "alternate", type: "application/rss+xml", href: "/blog.rss" },
-    ],
-    ["link", { rel: "organization", href: "https://github.com/andongmin94" }],
-    ["meta", { property: "og:type", content: "website" }],
-    ["meta", { property: "og:title", content: ogTitle }],
-    ["meta", { property: "og:image", content: ogImage }],
-    ["meta", { property: "og:url", content: ogUrl }],
-    ["meta", { property: "og:description", content: ogDescription }],
-    ["meta", { name: "theme-color", content: "#646cff" }],
-    [
-      "script",
-      {
-        src: "https://cdn.usefathom.com/script.js",
-        "data-site": "CBDFBSLI",
-        "data-spa": "auto",
-        defer: "",
-      },
-    ],
-  ],
-
-  themeConfig: {
-    logo: "/chat-view.svg",
-
-    editLink: {
-      pattern: "mailto:andongmin94@gmail.com",
-      text: "가이드 수정 제안하기",
-    },
-
-    sidebarMenuLabel: "메뉴",
-
-    returnToTopLabel: "위로 가기",
-
-    darkModeSwitchLabel: "다크 모드",
-
-    docFooter: {
-      prev: '이전 페이지',
-      next: '다음 페이지'
-    },
-
-    footer: {
-      message: `Released under the EULA License`,
-      copyright: "Copyright © 2024 안동민",
-    },
-
-    nav: [
-      { text: "챗뷰 가이드", link: "/guide", activeMatch: "/guide" },
-      { text: "챗뷰 개발자", link: "/maintainer" },
-    ],
-
-    sidebar: {
-      "/guide/": [
-        {
-          text: "챗뷰 가이드",
-          items: [
-            {
-              text: "챗뷰 시작하기",
-              link: "/guide/",
-            },
-            {
-              text: "위플랩 설정",
-              link: "/guide/weflab",
-            },
-            {
-              text: "치지직 설정",
-              link: "/guide/chzzk",
-            },
-            {
-              text: "숲 설정",
-              link: "/guide/soop",
-            },
-          ],
-        },
-        {
-          text: "릴리즈 노트",
-          items: [
-            {
-              text: "v0.0.8",
-              link: "/guide/release/v0.0.8",
-            },
-            {
-              text: "v0.0.7",
-              link: "/guide/release/v0.0.7",
-            },
-            {
-              text: "v0.0.6",
-              link: "/guide/release/v0.0.6",
-            },
-            {
-              text: "v0.0.5",
-              link: "/guide/release/v0.0.5",
-            },
-            {
-              text: "v0.0.4",
-              link: "/guide/release/v0.0.4",
-            },
-            {
-              text: "v0.0.3",
-              link: "/guide/release/v0.0.3",
-            },
-            {
-              text: "v0.0.2",
-              link: "/guide/release/v0.0.2",
-            },
-            {
-              text: "v0.0.1",
-              link: "/guide/release/v0.0.1",
-            }
-          ],
+async function generateReleaseNotes(releases) {
+  const releaseDir = path.resolve(__dirname, '../guide/release');
+  
+  try {
+    // 디렉토리 존재 확인 및 생성
+    try {
+      await fs.access(releaseDir);
+    } catch {
+      await fs.mkdir(releaseDir, { recursive: true });
+      console.log(`📁 릴리즈 문서 디렉토리 생성: ${releaseDir}`);
+    }
+    
+    // 각 릴리즈에 대한 문서 생성
+    for (const release of releases) {
+      const version = release.version;
+      const filePath = path.join(releaseDir, `${version}.md`);
+      
+      // 릴리즈 노트 내용 포맷팅 (GitHub의 마크다운을 VitePress 호환 마크다운으로 변환)
+      let content = `# ${version}\n\n`;
+      
+      // GitHub 릴리즈 본문을 파싱하여 추가
+      if (release.body) {
+        content += release.body
+          .replace(/\r\n/g, '\n')  // 줄바꿈 통일
+          .trim();
+      } else {
+        content += `릴리즈 노트 내용이 없습니다.`;
+      }
+      
+      // 파일이 없거나 내용이 다른 경우만 쓰기
+      let shouldWrite = true;
+      try {
+        const existingContent = await fs.readFile(filePath, 'utf-8');
+        if (existingContent.trim() === content.trim()) {
+          shouldWrite = false;
         }
-      ],
-    },
+      } catch {
+        // 파일이 없으면 무시하고 새로 생성
+      }
+      
+      if (shouldWrite) {
+        await fs.writeFile(filePath, content);
+        console.log(`📝 릴리즈 문서 생성: ${version}`);
+      }
+    }
+    
+    console.log('✅ 모든 릴리즈 문서가 업데이트되었습니다');
+  } catch (error) {
+    console.error('❌ 릴리즈 문서 생성 실패:', error);
+  }
+}
 
-    outline: {
-      level: [2, 3],
+export default defineConfig(async () => {
+  // 최신 릴리즈 정보 가져오기
+  console.log('🔍 GitHub에서 최신 릴리즈 정보 가져오는 중...');
+  const latestRelease = await fetchLatestRelease();
+  console.log(`📦 최신 릴리즈 정보: 버전 ${latestRelease.version}, 파일 크기 ${latestRelease.fileSize}MB`);
+  
+  // index.md 파일 업데이트
+  await updateIndexMd(latestRelease);
+
+  // 모든 릴리즈 정보 가져오기
+  console.log('📚 모든 릴리즈 정보 가져오는 중...');
+  const allReleases = await fetchAllReleases();
+  console.log(`🔢 총 ${allReleases.length}개의 릴리즈 정보를 가져왔습니다`);
+  
+  // 릴리즈 문서 자동 생성
+  await generateReleaseNotes(allReleases);
+
+  // 사이드바 설정 부분을 동적으로 생성
+  const releaseItems = allReleases.map(release => ({
+    text: release.version,
+    link: `/guide/release/${release.version}`
+  }));
+
+  return {
+    title: "챗뷰",
+    description: "GUI Library for Desktop App Development",
+
+    head: [
+      ["link", { rel: "icon", type: "image/svg+xml", href: "/chat-view.svg" }],
+      [
+        "link",
+        { rel: "alternate", type: "application/rss+xml", href: "/blog.rss" },
+      ],
+      ["link", { rel: "organization", href: "https://github.com/andongmin94" }],
+      ["meta", { property: "og:type", content: "website" }],
+      ["meta", { property: "og:title", content: ogTitle }],
+      ["meta", { property: "og:image", content: ogImage }],
+      ["meta", { property: "og:url", content: ogUrl }],
+      ["meta", { property: "og:description", content: ogDescription }],
+      ["meta", { name: "theme-color", content: "#646cff" }],
+      [
+        "script",
+        {
+          src: "https://cdn.usefathom.com/script.js",
+          "data-site": "CBDFBSLI",
+          "data-spa": "auto",
+          defer: "",
+        },
+      ],
+    ],
+
+    themeConfig: {
+      logo: "/chat-view.svg",
+
+      editLink: {
+        pattern: "mailto:andongmin94@gmail.com",
+        text: "가이드 수정 제안하기",
+      },
+
+      sidebarMenuLabel: "메뉴",
+
+      returnToTopLabel: "위로 가기",
+
+      darkModeSwitchLabel: "다크 모드",
+
+      docFooter: {
+        prev: '이전 페이지',
+        next: '다음 페이지'
+      },
+
+      footer: {
+        message: `Released under the EULA License`,
+        copyright: "Copyright © 2024 안동민",
+      },
+
+      nav: [
+        { text: "챗뷰 가이드", link: "/guide", activeMatch: "/guide" },
+        { text: "챗뷰 개발자", link: "/maintainer" },
+      ],
+
+      sidebar: {
+        "/guide/": [
+          {
+            text: "챗뷰 가이드",
+            items: [
+              {
+                text: "챗뷰 시작하기",
+                link: "/guide/",
+              },
+              {
+                text: "위플랩 설정",
+                link: "/guide/weflab",
+              },
+              {
+                text: "치지직 설정",
+                link: "/guide/chzzk",
+              },
+              {
+                text: "숲 설정",
+                link: "/guide/soop",
+              },
+            ],
+          },
+          {
+            text: "릴리즈 노트",
+            items: releaseItems // 동적으로 생성된 릴리즈 항목
+          }
+        ],
+      },
+
+      outline: {
+        level: [2, 3],
+      },
     },
-  },
-  transformPageData(pageData) {
-    const canonicalUrl = `${ogUrl}/${pageData.relativePath}`
-      .replace(/\/index\.md$/, "/")
-      .replace(/\.md$/, "/");
-    pageData.frontmatter.head ??= [];
-    pageData.frontmatter.head.unshift([
-      "link",
-      { rel: "canonical", href: canonicalUrl },
-    ]);
-    return pageData;
-  },
-  markdown: {
-    codeTransformers: [transformerTwoslash()],
-  },
-  buildEnd,
+    transformPageData(pageData:any) {
+      const canonicalUrl = `${ogUrl}/${pageData.relativePath}`
+        .replace(/\/index\.md$/, "/")
+        .replace(/\.md$/, "/");
+      pageData.frontmatter.head ??= [];
+      pageData.frontmatter.head.unshift([
+        "link",
+        { rel: "canonical", href: canonicalUrl },
+      ]);
+      return pageData;
+    },
+    markdown: {
+      codeTransformers: [transformerTwoslash()],
+    },
+    buildEnd,
+  };
 });

@@ -5,31 +5,19 @@
   "author": "안동민",
   "main": "src/electron/main.cjs",
   "build": {
-    "appId": "ChatView",
-    "productName": "ChatView",
+    "appId": "챗뷰",
+    "productName": "챗뷰",
     "copyright": "Copyright © andongmin",
     "mac": {
-      "icon": "public/icon.png",
-      "target": [
-        "dmg"
-      ],
-      "artifactName": "${productName}-Installer.${ext}"
-    },
-    "dmg": {
-      "artifactName": "${productName}-Installer.${ext}"
+      "icon": "public/icon.png"
     },
     "win": {
-      "icon": "public/icon.png",
-      "target": [
-        "nsis"
-      ],
-      "artifactName": "${productName}-Setup.${ext}"
+      "icon": "public/icon.png"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "uninstallDisplayName": "ChatView",
-      "artifactName": "${productName}-Setup.${ext}"
+      "uninstallDisplayName": "챗뷰"
     },
     "files": [
       "node_modules/**/*",
@@ -41,22 +29,22 @@
       "buildResources": "assets",
       "output": "dist_app"
     },
-    "publish": {
-      "provider": "github",
-      "releaseType": "release"
-    },
-    "compression": "maximum"
-  },
-  "scripts": {
-    "dev": "vite",
-    "app": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
-    "build": "tsc && vite build && electron-builder",
-    "package": "electron-builder build --publish never",
-    "release": "npm run build && electron-builder build --publish always"
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "andongmin94",
+        "repo": "chat-view"
+      }
+    ]
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/andongmin94/chat-view.git"
+  },
+  "scripts": {
+    "dev": "vite",
+    "app": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
+    "build": "tsc && vite build && electron-builder"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
@@ -93,6 +81,7 @@
     "date-fns": "^3.6.0",
     "dotenv": "^16.4.5",
     "electron-store": "^10.0.0",
+    "electron-updater": "^6.2.1",
     "embla-carousel-react": "^8.1.8",
     "express": "^4.19.2",
     "input-otp": "^1.2.4",

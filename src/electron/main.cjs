@@ -1,7 +1,6 @@
 // 일렉트론 모듈
 const path = require("path");
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } = require("electron");
-const { autoUpdater } = require('electron-updater');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require("electron");
 
 // 환경 변수 설정
 require("dotenv").config();
@@ -311,31 +310,4 @@ ipcMain.handle('reset', async () => {
       overlayWindow.destroy();
     }
     mainWindow.webContents.send('fixedMode', false);
-});
-
-// 업데이트 이벤트 핸들러
-autoUpdater.on('update-available', () => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update_available');
-  }
-});
-
-ipcMain.on('download_update', () => {
-  autoUpdater.downloadUpdate();
-});
-
-autoUpdater.on('update-downloaded', () => {
-  if (mainWindow) {
-    mainWindow.webContents.send('update_downloaded');
-  }
-});
-
-autoUpdater.on('download-progress', (progressObj) => {
-  if (mainWindow) {
-    mainWindow.webContents.send('download_progress', progressObj.percent);
-  }
-});
-
-ipcMain.on('install_update', () => {
-  autoUpdater.quitAndInstall();
 });

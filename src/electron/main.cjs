@@ -73,13 +73,6 @@ async function createWindow() {
       overlayWindow.focus();
     }
   });
-
-  // 윈도우가 닫힐 때 발생하는 이벤트
-  mainWindow.on('closed', () => {
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.destroy();
-    }
-  });
 };
 
 // Electron의 초기화가 완료후 브라우저 윈도우 생성
@@ -108,7 +101,15 @@ app.whenReady().then(() => {
       }
       return false;
     });
+  } else {
+    // 윈도우가 닫힐 때 발생하는 이벤트
+    mainWindow.on('closed', () => {
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.destroy();
+      }
+    });
   }
+  
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

@@ -33,7 +33,9 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import TitleBar from "@/components/TitleBar";
 
-const urlSchema = z.string().url().startsWith("http://afreehp.kr/page/");
+const urlSchema = z.string().url().refine((url) => {
+  return url.startsWith("http://afreehp.kr/page/") || url.startsWith("https://chzzk.naver.com/chat/");
+});
 
 export default function Component() {
   const [url, setUrl] = React.useState("");
@@ -65,7 +67,7 @@ export default function Component() {
       setUrlError(null);
     } catch (error) {
       if (error instanceof z.ZodError) {
-        setUrlError("http://afreehp.kr/page/로 시작해야 합니다.");
+        setUrlError("http://afreehp.kr/page/ 또는 https://chzzk.naver.com/chat/ 로 시작해야 합니다.");
       }
     }
   };

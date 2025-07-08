@@ -110,7 +110,7 @@ async function createWindow() {
     },
   });
 
-  adWindow.loadURL('https://www.andongmin.com/ad/chat-view');
+  adWindow.loadURL('https://andongmin.com/ad/chat-view');
 
   const updateAdWindowPosition = () => {
     const mainBounds = mainWindow.getBounds();

@@ -45,7 +45,7 @@ async function createWindow() {
   // 브라우저 창 생성
   mainWindow = new BrowserWindow({
     width: 416,
-    height: 270,
+    height: 282,
     frame: false,
     resizable: isDev,
     icon: path.join(__dirname, "../../public/icon.png"),

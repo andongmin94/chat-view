@@ -14,12 +14,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/card";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -31,6 +25,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/card";
 import TitleBar from "@/components/TitleBar";
 
 import packageJson from "../../package.json";
@@ -93,7 +93,7 @@ export default function Component() {
   // 고정 모드 토글 핸들러
   const handleFixedToggle = async (checked: boolean) => {
     setIsFixed(checked);
-    await electron.send('set-fixed-mode', checked);
+    await electron.send("set-fixed-mode", checked);
   };
 
   // 적용 버튼 핸들러
@@ -147,7 +147,9 @@ export default function Component() {
                 <div className="grid items-center">
                   <Input id="url" value={url} onChange={handleUrlChange} />
                 </div>
-                {urlError && <p className="mt-2 text-sm text-red-500">{urlError}</p>}
+                {urlError && (
+                  <p className="mt-2 text-sm text-red-500">{urlError}</p>
+                )}
               </div>
               <DialogFooter className="grid grid-cols-4">
                 <Button

@@ -1,45 +1,39 @@
-import { app, BrowserWindow, shell } from 'electron';
-import path from 'path';
-import { updateFixedMode, saveBounds} from './func.js'
-import { __dirname, getStore } from './main.js';
+import path from "path";
+import { app, BrowserWindow, shell } from "electron";
+
+import { saveBounds, updateFixedMode } from "./func.js";
+import { __dirname, isDev, store } from "./main.js";
+import { closeSplash } from "./splash.js";
 
 let mainWindow: BrowserWindow | null;
-/**
- * 메인 윈도우 생성 및 설정
- * @param {number} port - 사용할 포트 번호
- * @param {boolean} isDev - 개발 모드 여부
- * @param {string} __dirname - 현재 디렉토리 경로
- * @param {Function} closeSplash - 스플래시 창 닫기 함수
- */
-
 export let adWindow: BrowserWindow;
 let overlayWindow: BrowserWindow;
 
-export function createWindow(port: number, isDev: boolean, __dirname: string, closeSplash: () => void) {
+export function createWindow(port: number) {
   mainWindow = new BrowserWindow({
     show: false,
     width: 416,
     height: 282,
     frame: false,
     resizable: isDev,
-    icon: path.join(__dirname, '../../public/icon.png'),
+    icon: path.join(__dirname, "../../public/icon.png"),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js'), // preload 사용 시 주석 해제
+      preload: path.join(__dirname, "preload.js"), // preload 사용 시 주석 해제
     },
   });
 
   mainWindow.loadURL(`http://localhost:${port}`);
 
-  mainWindow.webContents.on('did-finish-load', () => {
+  mainWindow.webContents.on("did-finish-load", () => {
     closeSplash(); // 스플래시 닫기
     mainWindow?.show();
   });
 
   // --- 플랫폼별 우클릭 메뉴 비활성화 시도 ---
-  if (process.platform === 'win32') {
-    mainWindow.hookWindowMessage(278, function() {
+  if (process.platform === "win32") {
+    mainWindow.hookWindowMessage(278, function () {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setEnabled(false);
         setTimeout(() => {
@@ -51,15 +45,15 @@ export function createWindow(port: number, isDev: boolean, __dirname: string, cl
       return true;
     });
   } else {
-    mainWindow.webContents.on('context-menu', (event) => {
-      console.log('Main process context-menu event triggered on macOS/Linux');
+    mainWindow.webContents.on("context-menu", (event) => {
+      console.log("Main process context-menu event triggered on macOS/Linux");
       event.preventDefault();
     });
   }
 
   // 종료 설정
-  mainWindow.on('close', (e) => {
-    if (process.platform === 'darwin') {
+  mainWindow.on("close", (e) => {
+    if (process.platform === "darwin") {
       // macOS: 사용자가 명시적으로 종료(Cmd+Q 등)하지 않으면 숨김
       e.preventDefault();
       mainWindow?.hide();
@@ -71,10 +65,9 @@ export function createWindow(port: number, isDev: boolean, __dirname: string, cl
     }
   });
 
-  mainWindow.on('closed', () => {
+  mainWindow.on("closed", () => {
     mainWindow = null; // 창 참조 제거
   });
-
 
   // 광고용 윈도우 생성
   const adWindowWidth = mainWindow.getSize()[0];
@@ -92,11 +85,17 @@ export function createWindow(port: number, isDev: boolean, __dirname: string, cl
     },
   });
 
-  adWindow.loadURL('https://andongmin.com/ad/chat-view');
+  adWindow.loadURL("https://andongmin.com/ad/chat-view");
 
   const updateAdWindowPosition = () => {
     const mainBounds = mainWindow?.getBounds();
-    if (mainBounds && typeof mainBounds.x === 'number' && typeof mainBounds.y === 'number' && typeof mainBounds.width === 'number' && typeof mainBounds.height === 'number') {
+    if (
+      mainBounds &&
+      typeof mainBounds.x === "number" &&
+      typeof mainBounds.y === "number" &&
+      typeof mainBounds.width === "number" &&
+      typeof mainBounds.height === "number"
+    ) {
       adWindow.setBounds({
         x: mainBounds.x,
         y: mainBounds.y + mainBounds.height,
@@ -106,29 +105,23 @@ export function createWindow(port: number, isDev: boolean, __dirname: string, cl
     }
   };
 
-  mainWindow.webContents.on('did-finish-load', () => {
+  mainWindow.webContents.on("did-finish-load", () => {
     updateAdWindowPosition();
     adWindow.show();
   });
 
-  mainWindow.on('move', updateAdWindowPosition);
-  mainWindow.on('resize', updateAdWindowPosition);
-  mainWindow.on('show', () => {
+  mainWindow.on("move", updateAdWindowPosition);
+  mainWindow.on("resize", updateAdWindowPosition);
+  mainWindow.on("show", () => {
     adWindow.show();
-  })
+  });
 
   adWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
-    return { action: 'deny' };
+    return { action: "deny" };
   });
-
-  return mainWindow; // 생성된 윈도우 객체 반환 (선택적)
 }
 
-/**
- * 현재 메인 윈도우 객체를 반환합니다.
- * @returns {BrowserWindow | null}
- */
 export function getMainWindow() {
   return mainWindow;
 }
@@ -142,9 +135,12 @@ export const createOverlayWindow = (url: string) => {
     width: 400,
     height: 270,
   };
-  const store = getStore();
-  const storedBounds = (store as any).get('overlayWindowBounds', defaultBounds);
-  const isFixed = (store as any).get('overlayFixed', false);
+
+  const storedBounds = (store() as any).get(
+    "overlayWindowBounds",
+    defaultBounds,
+  );
+  const isFixed = (store() as any).get("overlayFixed", false);
 
   overlayWindow = new BrowserWindow({
     ...storedBounds,
@@ -158,7 +154,7 @@ export const createOverlayWindow = (url: string) => {
       preload: path.join(__dirname, "preload.js"),
       webSecurity: false,
       nodeIntegration: true,
-      webviewTag: true
+      webviewTag: true,
     },
   });
 
@@ -169,7 +165,7 @@ export const createOverlayWindow = (url: string) => {
           body {
             margin: 0;
             overflow: hidden;
-            background-color: ${isFixed ? 'rgba(0,0,0,0)' : 'rgba(70, 130, 180, 0.7)'};
+            background-color: ${isFixed ? "rgba(0,0,0,0)" : "rgba(70, 130, 180, 0.7)"};
             transition: background-color 0.3s;
           }
           #dragRegion {
@@ -186,7 +182,7 @@ export const createOverlayWindow = (url: string) => {
             left: 0;
             width: 100%;
             height: 100%;
-            pointer-events: ${isFixed ? 'none' : 'auto'};
+            pointer-events: ${isFixed ? "none" : "auto"};
           }
         </style>
       </head>
@@ -204,18 +200,20 @@ export const createOverlayWindow = (url: string) => {
     </html>
   `;
 
-  overlayWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
-  
-  overlayWindow.webContents.on('did-finish-load', () => {
-    overlayWindow?.webContents.send('fixedMode', isFixed);
+  overlayWindow.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`,
+  );
+
+  overlayWindow.webContents.on("did-finish-load", () => {
+    overlayWindow?.webContents.send("fixedMode", isFixed);
   });
-  
+
   // 윈도우 위치 및 크기 변경 감지 및 저장
-  overlayWindow.on('moved', saveBounds);
-  overlayWindow.on('resized', saveBounds);
+  overlayWindow.on("moved", saveBounds);
+  overlayWindow.on("resized", saveBounds);
 
   // 우클릭 메뉴 비활성화
-  overlayWindow.hookWindowMessage(278, function(e) {
+  overlayWindow.hookWindowMessage(278, function () {
     overlayWindow?.setEnabled(false);
     setTimeout(() => overlayWindow?.setEnabled(true), 100);
     return true;

@@ -5,9 +5,9 @@ import { saveBounds, updateFixedMode } from "./func.js";
 import { __dirname, isDev, store } from "./main.js";
 import { closeSplash } from "./splash.js";
 
-let mainWindow: BrowserWindow | null;
+export let mainWindow: BrowserWindow | null;
 export let adWindow: BrowserWindow;
-let overlayWindow: BrowserWindow;
+export let overlayWindow: BrowserWindow;
 
 export function createWindow(port: number) {
   mainWindow = new BrowserWindow({
@@ -122,13 +122,9 @@ export function createWindow(port: number) {
   });
 }
 
-export function getMainWindow() {
-  return mainWindow;
-}
-
 // overlayWindow 생성 및 설정 복원 함수
 export const createOverlayWindow = (url: string) => {
-  const mainWindowBounds = getMainWindow()?.getBounds();
+  const mainWindowBounds = mainWindow?.getBounds();
   const defaultBounds = {
     x: (mainWindowBounds?.x ?? 0) + (mainWindowBounds?.width ?? 800) + 20,
     y: mainWindowBounds?.y ?? 0,
@@ -221,7 +217,3 @@ export const createOverlayWindow = (url: string) => {
 
   updateFixedMode(isFixed);
 };
-
-export function getOverlayWindow() {
-  return overlayWindow;
-}

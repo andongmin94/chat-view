@@ -5,14 +5,11 @@ import { store } from "./main.js";
 import {
   adWindow,
   createOverlayWindow,
-  getMainWindow,
-  getOverlayWindow,
+  mainWindow,
+  overlayWindow,
 } from "./window.js";
 
 export function setupIpcHandlers() {
-  const mainWindow = getMainWindow();
-  const overlayWindow = getOverlayWindow();
-
   ipcMain.on("hidden", () => {
     if (adWindow) adWindow.hide();
     mainWindow?.hide();

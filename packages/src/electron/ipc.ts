@@ -2,16 +2,10 @@ import { ipcMain } from "electron";
 
 import { updateFixedMode } from "./func.js";
 import { store } from "./main.js";
-import {
-  adWindow,
-  createOverlayWindow,
-  mainWindow,
-  overlayWindow,
-} from "./window.js";
+import { createOverlayWindow, mainWindow, overlayWindow } from "./window.js";
 
 export function setupIpcHandlers() {
   ipcMain.on("hidden", () => {
-    if (adWindow) adWindow.hide();
     mainWindow?.hide();
   });
 

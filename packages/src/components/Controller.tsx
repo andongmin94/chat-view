@@ -199,6 +199,14 @@ export default function Component() {
       <div className="pointer-events-none mr-1 flex justify-end text-xs">
         v{packageJson.version}
       </div>
+      <div className="fixed bottom-0 left-0 h-[121px] w-full">
+        <iframe
+          src="https://andongmin.com/ad/chat-view"
+          className="h-full w-full border-0"
+          sandbox="allow-scripts allow-same-origin"
+        />
+      </div>
+      <div className="pb-[121px]"> {/* 기존 컨텐츠 래퍼 */}</div>
     </>
   );
 }

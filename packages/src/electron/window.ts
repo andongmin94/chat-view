@@ -1,19 +1,18 @@
 import path from "path";
-import { app, BrowserWindow, shell } from "electron";
+import { app, BrowserWindow } from "electron";
 
 import { saveBounds, updateFixedMode } from "./func.js";
 import { __dirname, isDev, store } from "./main.js";
 import { closeSplash } from "./splash.js";
 
 export let mainWindow: BrowserWindow | null;
-export let adWindow: BrowserWindow;
 export let overlayWindow: BrowserWindow;
 
 export function createWindow(port: number) {
   mainWindow = new BrowserWindow({
     show: false,
     width: 416,
-    height: 282,
+    height: 282 + 121,
     frame: false,
     resizable: isDev,
     icon: path.join(__dirname, "../../public/icon.png"),
@@ -67,58 +66,6 @@ export function createWindow(port: number) {
 
   mainWindow.on("closed", () => {
     mainWindow = null; // 창 참조 제거
-  });
-
-  // 광고용 윈도우 생성
-  const adWindowWidth = mainWindow.getSize()[0];
-  const adWindowHeight = 121;
-  adWindow = new BrowserWindow({
-    width: adWindowWidth,
-    height: adWindowHeight,
-    frame: false,
-    resizable: false,
-    skipTaskbar: true,
-    show: false,
-    parent: mainWindow,
-    webPreferences: {
-      webSecurity: false,
-    },
-  });
-
-  adWindow.loadURL("https://andongmin.com/ad/chat-view");
-
-  const updateAdWindowPosition = () => {
-    const mainBounds = mainWindow?.getBounds();
-    if (
-      mainBounds &&
-      typeof mainBounds.x === "number" &&
-      typeof mainBounds.y === "number" &&
-      typeof mainBounds.width === "number" &&
-      typeof mainBounds.height === "number"
-    ) {
-      adWindow.setBounds({
-        x: mainBounds.x,
-        y: mainBounds.y + mainBounds.height,
-        width: mainBounds.width,
-        height: adWindowHeight,
-      });
-    }
-  };
-
-  mainWindow.webContents.on("did-finish-load", () => {
-    updateAdWindowPosition();
-    adWindow.show();
-  });
-
-  mainWindow.on("move", updateAdWindowPosition);
-  mainWindow.on("resize", updateAdWindowPosition);
-  mainWindow.on("show", () => {
-    adWindow.show();
-  });
-
-  adWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: "deny" };
   });
 }
 

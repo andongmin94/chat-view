@@ -15,7 +15,7 @@ export const buildEnd = async (config: SiteConfig) => {
     language: "ko",
     image: "https://chat-view.andongmin.com/chat-view.svg",
     favicon: "https://chat-view.andongmin.com/chat-view.svg",
-    copyright: "Copyright © 2024 andongmin",
+    copyright: "Copyright © 2025 andongmin",
   });
 
   const posts = await createContentLoader("blog/*.md", {

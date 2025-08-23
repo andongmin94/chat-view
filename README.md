@@ -42,13 +42,16 @@ Electron + React + Vite 로 제작한 데스크톱용 "채팅 오버레이 제�
 
 ## 프로젝트 구조(요약)
 ```
-packages/
-  src/
-    electron/        # Main/Preload/Tray/Splash/IPCs
-    components/      # UI 컴포넌트 및 TitleBar, Controller
-    lib/             # 유틸 함수
-    App.tsx          # 루트 컴포넌트
-  public/            # 아이콘/폰트/정적 자산
+chat-view/
+ ├─ docs/               # VitePress 기반 문서 (사이트 hero 등)
+ └─ packages/           # 실제 앱 (Electron + React)
+     ├─ public/         # 아이콘, 폰트, 정적 자원
+     ├─ src/
+     │   ├─ electron/   # 메인 프로세스 로직 (창, IPC, 입력 캡처 등)
+     │   ├─ components/ # UI 컴포넌트 및 TitleBar, Controller
+     │   ├─ hooks/      # 커스텀 훅
+     │   └─ lib/        # 공용 유틸
+     └─ package.json
 ```
 
 ## 주요 IPC 채널

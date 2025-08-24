@@ -138,6 +138,10 @@ const config = async (): Promise<UserConfig> => {
         text: "가이드 수정 제안하기",
       },
 
+      socialLinks: [
+      { icon: "github", link: "https://github.com/andongmin94/chat-view" },
+    ],
+
       sidebarMenuLabel: "메뉴",
 
       returnToTopLabel: "위로 가기",

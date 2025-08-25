@@ -20,11 +20,11 @@ export function createTray() {
     tray.setToolTip("챗뷰");
 
     tray.on("double-click", () => {
-      mainWindow?.show();
+      mainWindow.show();
     });
 
     const contextMenu = Menu.buildFromTemplate([
-      { label: "열기", type: "normal", click: () => mainWindow?.show() },
+      { label: "열기", type: "normal", click: () => mainWindow.show() },
       { type: "separator" },
       {
         label: "종료",

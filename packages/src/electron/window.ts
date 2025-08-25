@@ -5,8 +5,8 @@ import { saveBounds, updateFixedMode } from "./func.js";
 import { __dirname, isDev, store } from "./main.js";
 import { closeSplash } from "./splash.js";
 
-export let mainWindow: BrowserWindow | null;
-export let overlayWindow: BrowserWindow;
+export let mainWindow: any;
+export let overlayWindow: any;
 
 export function createWindow(port: number) {
   mainWindow = new BrowserWindow({
@@ -27,7 +27,7 @@ export function createWindow(port: number) {
 
   mainWindow.webContents.on("did-finish-load", () => {
     closeSplash(); // 스플래시 닫기
-    mainWindow?.show();
+    mainWindow.show();
   });
 
   // --- 플랫폼별 우클릭 메뉴 비활성화 시도 ---
@@ -44,14 +44,14 @@ export function createWindow(port: number) {
       return true;
     });
   } else {
-    mainWindow.webContents.on("context-menu", (event) => {
+    mainWindow.webContents.on("context-menu", (event: any) => {
       console.log("Main process context-menu event triggered on macOS/Linux");
       event.preventDefault();
     });
   }
 
   // 종료 설정
-  mainWindow.on("close", (e) => {
+  mainWindow.on("close", (e: any) => {
     if (process.platform === "darwin") {
       // macOS: 사용자가 명시적으로 종료(Cmd+Q 등)하지 않으면 숨김
       e.preventDefault();
@@ -148,7 +148,7 @@ export const createOverlayWindow = (url: string) => {
   );
 
   overlayWindow.webContents.on("did-finish-load", () => {
-    overlayWindow?.webContents.send("fixedMode", isFixed);
+    overlayWindow.webContents.send("fixedMode", isFixed);
   });
 
   // 윈도우 위치 및 크기 변경 감지 및 저장
@@ -157,7 +157,7 @@ export const createOverlayWindow = (url: string) => {
 
   // 우클릭 메뉴 비활성화
   overlayWindow.hookWindowMessage(278, function () {
-    overlayWindow?.setEnabled(false);
+    overlayWindow.setEnabled(false);
     setTimeout(() => overlayWindow?.setEnabled(true), 100);
     return true;
   });

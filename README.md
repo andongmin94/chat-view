@@ -1,6 +1,8 @@
 <div align="center">
 
-<img src="https://chat-view.andongmin.com/chat-view.svg" alt="CHATVIEW" height="200" />
+<a href="https://chat-view.andongmin.com">
+<img src="https://chat-view.andongmin.com/chat-view.svg" alt="logo" height="200" />
+</a>
 
 </div>
 

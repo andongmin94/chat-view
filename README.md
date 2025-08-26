@@ -1,3 +1,9 @@
+<div align="center">
+
+<img src="https://chat-view.andongmin.com/chat-view.svg" alt="CHATVIEW" height="200" />
+
+</div>
+
 # ChatView (챗뷰)
 
 Electron + React + Vite 로 제작한 데스크톱용 "채팅 오버레이 제어/뷰어" 애플리케이션입니다. 

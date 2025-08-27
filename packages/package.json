@@ -3,12 +3,12 @@
   "version": "0.1.2",
   "type": "module",
   "author": "안동민",
+  "description": "채팅 모니터링 프로그램",
   "main": "dist/electron/main.js",
   "build": {
     "appId": "ChatView",
     "productName": "ChatView",
     "copyright": "Copyright © andongmin",
-    "artifactName": "${productName}.${ext}",
     "icon": "public/icon.png",
     "compression": "store",
     "mac": {
@@ -18,12 +18,15 @@
     },
     "win": {
       "target": [
+        "msi",
         "portable"
       ]
     },
-    "nsis": {
-      "oneClick": true,
-      "uninstallDisplayName": "챗뷰"
+    "msi": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}.${ext}"
     },
     "files": [
       "node_modules/**/*",

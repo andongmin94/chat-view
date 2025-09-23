@@ -89,7 +89,7 @@ export default function Component() {
   // 고정 모드 토글 핸들러
   const handleFixedToggle = async (checked: boolean) => {
     setIsFixed(checked);
-    await electron.setFixedMode(checked);
+    await electron.send('set-fixed-mode', checked);
   };
 
   // 적용 버튼 핸들러
@@ -103,7 +103,7 @@ export default function Component() {
 
   // 리셋 버튼 핸들러
   const handleReset = async () => {
-    await electron.reset();
+    await electron.send("reset");
     setUrl("");
     setIsFixed(false);
     setIsFirstRun(true);

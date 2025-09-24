@@ -5,11 +5,11 @@ title: 챗뷰
 titleTemplate: 채팅 모니터링 프로그램
 
 hero:
-  name: 챗뷰 v0.1.2
+  name: 챗뷰 v0.0.0
   text: 채팅 모니터링 프로그램
   tagline: 모니터 하나로 위플랩 / 치지직 / 숲 채팅 모니터링
   image:
-    src: /chat-view.svg
+    src: /logo.png
     alt: chat-view
   actions:
     - theme: brand

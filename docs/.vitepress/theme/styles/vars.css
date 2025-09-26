@@ -63,14 +63,14 @@
   --vp-home-hero-name-color: transparent;
   --vp-home-hero-name-background: -webkit-linear-gradient(
     120deg,
-    #00FFB2 0%,
-    #00CC99
+    #00CC99 0%,
+    #00FFB2
   );
 
   --vp-home-hero-image-background-image: linear-gradient(
     -45deg,
-    #00FFB2 50%,
-    #00CC99 50%
+    #00CC99 50%,
+    #00FFB2 50%
   );
   --vp-home-hero-image-filter: blur(40px);
 }

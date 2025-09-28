@@ -1,6 +1,6 @@
 {
   "name": "chat-view",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "author": "안동민",
   "description": "채팅 모니터링 프로그램",

@@ -9,7 +9,7 @@ hero:
   text: 채팅 모니터링 프로그램
   tagline: 모니터 하나로 위플랩 / 치지직 / 숲 채팅 모니터링
   image:
-    src: /logo.png
+    src: /logo.svg
     alt: chat-view
   actions:
     - theme: brand

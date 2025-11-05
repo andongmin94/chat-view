@@ -32,7 +32,7 @@ export function createWindow(port: number) {
 
   // --- 플랫폼별 우클릭 메뉴 비활성화 시도 ---
   if (process.platform === "win32") {
-    mainWindow.on("system-context-menu", (event:any) => {
+    mainWindow.on("system-context-menu", (event: any) => {
       event.preventDefault();
     });
   } else {
@@ -115,7 +115,7 @@ export const createOverlayWindow = (url: string) => {
             position: absolute;
             top: 0;
             left: 0;
-            width: 100%;
+            width: ${Math.max(storedBounds?.width ?? defaultBounds.width, 100000)}px;
             height: 100%;
             pointer-events: ${isFixed ? "none" : "auto"};
           }
@@ -123,7 +123,7 @@ export const createOverlayWindow = (url: string) => {
       </head>
       <body>
         <div id="dragRegion">
-        <webview src="${url}"/>
+          <webview src="${url}"/>
         </div>
       </body>
       <script>
@@ -148,7 +148,7 @@ export const createOverlayWindow = (url: string) => {
   overlayWindow.on("resized", saveBounds);
 
   // 우클릭 메뉴 비활성화
-  overlayWindow.on("system-context-menu", (event:any) => {
+  overlayWindow.on("system-context-menu", (event: any) => {
     event.preventDefault();
   });
 

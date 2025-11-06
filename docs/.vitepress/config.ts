@@ -74,7 +74,10 @@ const config = async (): Promise<UserConfig> => {
     // 빌드 모드에서만 GitHub API 호출
     console.log("🔍 GitHub에서 최신 릴리즈 정보 가져오는 중...");
     latestRelease = await fetchLatestRelease();
-    if (latestRelease) console.log(`📦 최신 릴리즈 정보: 버전 ${latestRelease.version}, 파일 크기 ${latestRelease.fileSize}MB`);
+    if (latestRelease)
+      console.log(
+        `📦 최신 릴리즈 정보: 버전 ${latestRelease.version}, 파일 크기 ${latestRelease.fileSize}MB`
+      );
 
     // index.md 파일 업데이트
     if (latestRelease) await updateIndexMd(latestRelease);

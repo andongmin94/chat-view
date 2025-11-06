@@ -63,12 +63,8 @@ if (!app.requestSingleInstanceLock()) {
           app.quit();
         }
       }, 2000);
-
-      if (isDev) {
-        setupDevMenu(); // 개발 메뉴 설정
-      } else {
-        Menu.setApplicationMenu(null); // 프로덕션 메뉴 제거
-      }
+      if (isDev) setupDevMenu(); // 개발 메뉴 설정
+      else Menu.setApplicationMenu(null); // 프로덕션 메뉴 제거
     } catch (error) {
       console.error("Failed to initialize app:", error);
       // 사용자에게 오류 알림 (예: dialog.showErrorBox)
@@ -106,15 +102,15 @@ if (!app.requestSingleInstanceLock()) {
 } // 싱글 인스턴스 Lock 블록 끝
 
 // --- 외부 링크를 기본 브라우저로 열기 ---
-app.on('web-contents-created', (_event, contents) => {
+app.on("web-contents-created", (_event, contents) => {
   contents.setWindowOpenHandler(({ url }) => {
     // 외부 링크는 기본 브라우저로 오픈
     shell.openExternal(url);
-    return { action: 'deny' };
+    return { action: "deny" };
   });
 
   // 기존 a 태그 클릭도 외부 브라우저로
-  contents.on('will-navigate', (event, url) => {
+  contents.on("will-navigate", (event, url) => {
     if (url !== contents.getURL()) {
       event.preventDefault();
       shell.openExternal(url);

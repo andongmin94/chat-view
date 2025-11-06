@@ -16,24 +16,19 @@ export function setupIpcHandlers() {
   // 여기에 다른 IPC 핸들러 추가 가능
   ipcMain.handle("get-value", (event, key) => {
     const value = (store() as any).get(key);
-    if (key === "chatUrl" && value) {
-      createOverlayWindow(value);
-    }
+    if (key === "chatUrl" && value) createOverlayWindow(value);
     return value;
   });
 
   ipcMain.on("chatUrl", (event, url) => {
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.close();
-    }
+    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.close();
+
     createOverlayWindow(url);
     (store() as any).set("chatUrl", url);
   });
 
   ipcMain.on("reInput", () => {
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.destroy();
-    }
+    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.destroy();
   });
 
   // 오버레이 고정 모드 설정
@@ -46,9 +41,7 @@ export function setupIpcHandlers() {
   // 리셋 기능
   ipcMain.on("reset", async () => {
     (store() as any).clear();
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.destroy();
-    }
+    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.destroy();
     mainWindow.webContents.send("fixedMode", false);
   });
 }

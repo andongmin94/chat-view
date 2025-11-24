@@ -56,7 +56,7 @@ export function createSplash() {
                     width: 36px;
                     height: 36px;
                     border-radius: 50%;
-                    border-left-color: #09f;
+                    border-left-color: #00E4B8;
                     animation: spin 1s ease-in-out infinite;
                     margin-top: 30px;
                     margin-bottom: 10px;

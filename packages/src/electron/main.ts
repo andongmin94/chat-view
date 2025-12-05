@@ -63,7 +63,8 @@ if (!app.requestSingleInstanceLock()) {
           app.quit();
         }
       }, 2000);
-      if (isDev) setupDevMenu(); // 개발 메뉴 설정
+      if (isDev)
+        setupDevMenu(); // 개발 메뉴 설정
       else Menu.setApplicationMenu(null); // 프로덕션 메뉴 제거
     } catch (error) {
       console.error("Failed to initialize app:", error);

@@ -107,6 +107,3 @@ npm run build
 - 자동 업데이트(electron-updater) 적용
 - 단축키(Global shortcuts)로 고정 토글
 - 다국어(i18n) 지원
-
-## 라이선스
-저작권 © andongmin. 별도 라이선스 명시가 없으므로 개인 프로젝트/사내 사용 전 문의 필요.

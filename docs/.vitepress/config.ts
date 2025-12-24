@@ -8,7 +8,7 @@ import path from "node:path";
 const ogTitle = "챗뷰";
 const ogDescription = "모니터 하나로 위플랩 / 치지직 / 숲 채팅 모니터링";
 const ogUrl = "https://chat-view.andongmin.com";
-const ogImage = "https://chat-view.andongmin.com/logo.svg";
+const ogImage = "https://chat-view.andongmin.com/logo.png";
 
 async function generateReleaseNotes(releases: any) {
   const releaseDir = path.resolve(__dirname, "../guide/release");
@@ -107,7 +107,7 @@ const config = async (): Promise<UserConfig> => {
     description: "GUI Library for Desktop App Development",
 
     head: [
-      ["link", { rel: "icon", type: "image/svg+xml", href: "/logo.svg" }],
+      ["link", { rel: "icon", type: "image/png", href: "/logo.png" }],
       [
         "link",
         { rel: "alternate", type: "application/rss+xml", href: "/blog.rss" },

@@ -4,7 +4,7 @@ import { app, Menu, nativeImage, Tray } from "electron";
 import { __dirname } from "./main.js"; // __dirname을 main.ts에서 가져옴
 import { mainWindow } from "./window.js";
 
-let tray: Tray | null;
+let tray: any;
 
 export function createTray() {
   if (tray || !mainWindow) return; // 중복 생성 방지 및 mainWindow 확인

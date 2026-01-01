@@ -6,11 +6,11 @@ import { createOverlayWindow, mainWindow, overlayWindow } from "./window.js";
 
 export function setupIpcHandlers() {
   ipcMain.on("hidden", () => {
-    mainWindow?.hide();
+    mainWindow.hide();
   });
 
   ipcMain.on("minimize", () => {
-    mainWindow?.minimize();
+    mainWindow.minimize();
   });
 
   // 여기에 다른 IPC 핸들러 추가 가능
@@ -40,7 +40,7 @@ export function setupIpcHandlers() {
   ipcMain.on("set-fixed-mode", (event, isFixed) => {
     (store() as any).set("overlayFixed", isFixed);
     updateFixedMode(isFixed);
-    mainWindow?.webContents.send("fixedMode", isFixed);
+    mainWindow.webContents.send("fixedMode", isFixed);
   });
 
   // 리셋 기능
@@ -49,6 +49,6 @@ export function setupIpcHandlers() {
     if (overlayWindow && !overlayWindow.isDestroyed()) {
       overlayWindow.destroy();
     }
-    mainWindow?.webContents.send("fixedMode", false);
+    mainWindow.webContents.send("fixedMode", false);
   });
 }

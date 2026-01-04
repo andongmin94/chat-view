@@ -55,7 +55,7 @@ export function createWindow(port: number) {
     if (process.platform === "darwin") {
       // macOS: 사용자가 명시적으로 종료(Cmd+Q 등)하지 않으면 숨김
       e.preventDefault();
-      mainWindow?.hide();
+      mainWindow.hide();
       app.dock?.hide(); // Dock 에서도 숨김
     }
     // 다른 OS 에서는 window-all-closed 에서 앱 종료 처리
@@ -71,7 +71,7 @@ export function createWindow(port: number) {
 
 // overlayWindow 생성 및 설정 복원 함수
 export const createOverlayWindow = (url: string) => {
-  const mainWindowBounds = mainWindow?.getBounds();
+  const mainWindowBounds = mainWindow.getBounds();
   const defaultBounds = {
     x: (mainWindowBounds?.x ?? 0) + (mainWindowBounds?.width ?? 800) + 20,
     y: mainWindowBounds?.y ?? 0,
@@ -158,7 +158,7 @@ export const createOverlayWindow = (url: string) => {
   // 우클릭 메뉴 비활성화
   overlayWindow.hookWindowMessage(278, function () {
     overlayWindow.setEnabled(false);
-    setTimeout(() => overlayWindow?.setEnabled(true), 100);
+    setTimeout(() => overlayWindow.setEnabled(true), 100);
     return true;
   });
 

@@ -48,7 +48,7 @@ Electron + React + Vite 로 제작한 데스크톱용 "채팅 오버레이 제�
 5. 위치/크기 변경 이벤트(moved/resized) 발생 시 store에 bounds 저장
 6. 재실행 후 `get-value(chatUrl)` 요청 시 기존 URL 감지되면 즉시 오버레이 복원
 
-## 프로젝트 구조(요약)
+## 프로젝트 구조 (요약)
 ```
 chat-view/
  ├─ docs/               # VitePress 기반 문서 (사이트 hero 등)

@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { app, ipcMain } from "electron";
 
 import { updateFixedMode } from "./func.js";
 import { store } from "./main.js";
@@ -34,6 +34,25 @@ export function setupIpcHandlers() {
   ipcMain.handle("overlay-get-bounds", () => {
     if (!overlayWindow || overlayWindow.isDestroyed()) return null;
     return overlayWindow.getBounds();
+  });
+
+  ipcMain.handle("app-runtime-info", () => {
+    const hasPortableContext = Boolean(
+      process.env.PORTABLE_EXECUTABLE_FILE ||
+      process.env.PORTABLE_EXECUTABLE_DIR,
+    );
+    const installMode =
+      process.platform === "win32" && hasPortableContext
+        ? "portable"
+        : process.platform === "win32" && app.isPackaged
+          ? "msi"
+          : "unknown";
+
+    return {
+      installMode,
+      platform: process.platform,
+      arch: process.arch,
+    };
   });
 
   ipcMain.on("overlay-set-bounds", (_event, nextBounds) => {

@@ -1,107 +1,94 @@
-async function fetchLatestRelease() {
+interface GitHubReleaseAsset {
+  name: string;
+  browser_download_url: string;
+  size: number;
+}
+
+interface GitHubRelease {
+  tag_name: string;
+  body?: string;
+  assets?: GitHubReleaseAsset[];
+}
+
+interface ReleaseBinary {
+  url: string;
+  sizeMB: number;
+}
+
+export interface LatestReleaseData {
+  version: string;
+  fileSize: number;
+  assets: {
+    exe: ReleaseBinary | null;
+    msi: ReleaseBinary | null;
+  };
+}
+
+export interface ReleaseNoteData {
+  version: string;
+  body: string;
+}
+
+const GITHUB_RELEASES_API =
+  "https://api.github.com/repos/andongmin94/chat-view/releases";
+
+function toVersion(tagName: string) {
+  return tagName.replace("chat-view-", "");
+}
+
+function toBinary(asset?: GitHubReleaseAsset): ReleaseBinary | null {
+  if (!asset) return null;
+
+  return {
+    url: asset.browser_download_url,
+    sizeMB: Math.round(asset.size / 1024 / 1024),
+  };
+}
+
+async function fetchGitHubJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, {
+    headers: { "User-Agent": "Node.js" },
+  });
+
+  if (!response.ok) {
+    throw new Error(`GitHub API 응답 오류: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+async function fetchLatestRelease(): Promise<LatestReleaseData | undefined> {
   try {
-    const response = await fetch(
-      "https://api.github.com/repos/andongmin94/chat-view/releases/latest",
-      {
-        headers: { "User-Agent": "Node.js" },
-      }
+    const data = await fetchGitHubJson<GitHubRelease>(`${GITHUB_RELEASES_API}/latest`);
+    const assets = data.assets ?? [];
+
+    const exe = toBinary(assets.find((asset) => asset.name.endsWith(".exe")));
+    const msi = toBinary(
+      assets.find((asset) => asset.name.endsWith(".msi") && /x64/i.test(asset.name))
     );
 
-    if (!response.ok) {
-      throw new Error(
-        `GitHub API 응답 오류: ${response.status} ${response.statusText}`
-      );
-    }
-
-    const data = await response.json();
-    const version = data.tag_name.replace("chat-view-", "");
-    const body = data.body || "";
-
-    const assets = data.assets || [];
-
-    const exeAsset = assets.find(
-      (a: any) => a.name.endsWith(".exe")
-    );
-    const msiAsset = assets.find(
-      (a: any) => a.name.endsWith(".msi") && /x64/i.test(a.name)
-    );
-
-    const makeAssetInfo = (asset: any) =>
-      asset
-        ? {
-            name: asset.name,
-            url: asset.browser_download_url,
-            sizeMB: Math.round(asset.size / 1024 / 1024),
-            ext: asset.name.split(".").pop(),
-          }
-        : null;
-
-    const exeInfo = makeAssetInfo(exeAsset);
-    const msiInfo = makeAssetInfo(msiAsset);
-
-    // 기존 호환 필드 (우선 exe, 없으면 msi)
-    const primary = exeInfo || msiInfo || { url: "", sizeMB: 0 };
+    // 메인 노출용 파일 크기 (우선 exe, 없으면 msi)
+    const primary = exe ?? msi;
 
     return {
-      version,
-      downloadUrl: primary.url,
-      fileSize: primary.sizeMB,
-      body,
-      publishedAt: data.published_at,
-      assets: {
-        exe: exeInfo,
-        msi: msiInfo,
-      },
+      version: toVersion(data.tag_name),
+      fileSize: primary?.sizeMB ?? 0,
+      assets: { exe, msi },
     };
   } catch (error) {
     console.error("GitHub 릴리즈 정보 가져오기 실패:", error);
   }
 }
 
-// 모든 릴리즈 정보 (기존 그대로, 필요시 동일 패턴 확장 가능)
-async function fetchAllReleases() {
+// 릴리즈 노트 생성/사이드바용 최소 데이터
+async function fetchAllReleases(): Promise<ReleaseNoteData[]> {
   try {
-    const response = await fetch(
-      "https://api.github.com/repos/andongmin94/chat-view/releases",
-      {
-        headers: { "User-Agent": "Node.js" },
-      }
-    );
+    const releases = await fetchGitHubJson<GitHubRelease[]>(GITHUB_RELEASES_API);
 
-    if (!response.ok) {
-      throw new Error(
-        `GitHub API 응답 오류: ${response.status} ${response.statusText}`
-      );
-    }
-
-    const releases = await response.json();
-
-    return releases.map(
-      (release: {
-        tag_name: string;
-        assets: any[];
-        body: string;
-        published_at: string;
-      }) => {
-        const version = release.tag_name.replace("chat-view-", "");
-        const exeAsset = release.assets.find((a: any) =>
-          a.name.endsWith(".exe")
-        );
-        let downloadUrl = "";
-        let fileSize = 0;
-        if (exeAsset) {
-          downloadUrl = exeAsset.browser_download_url;
-            fileSize = Math.round(exeAsset.size / 1024 / 1024);
-        }
-        return {
-          version,
-          downloadUrl,
-          fileSize,
-          body: release.body || "",
-          publishedAt: release.published_at,
-        };
-      }
-    );
+    return releases.map((release) => ({
+      version: toVersion(release.tag_name),
+      body: release.body?.trim() ?? "",
+    }));
   } catch (error) {
     console.error("GitHub 릴리즈 정보 가져오기 실패:", error);
     return [];

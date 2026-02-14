@@ -1,20 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { LatestReleaseData } from "./getReleaseData";
 
-interface ReleaseData {
-  version: string;
-  fileSize: number;
-  downloadUrl: string;
-  assets?: {
-    exe: { name: string; url: string; sizeMB: number; ext: string } | null;
-    msi: { name: string; url: string; sizeMB: number; ext: string } | null;
-  };
-}
-
-function buildWindowsBlocks(releaseData: ReleaseData) {
+function buildWindowsBlocks(assets: LatestReleaseData["assets"]) {
   const blocks: string[] = [];
-  const { assets } = releaseData;
-  if (!assets) return "";
 
   // 출력 순서 원하는 대로 (msi 먼저면 순서 바꾸기)
   if (assets.exe) {
@@ -37,18 +26,17 @@ function buildWindowsBlocks(releaseData: ReleaseData) {
     title: Windows 다운로드
     linkText: .msi 설치형 (${assets.msi.sizeMB} MB)
     link: ${assets.msi.url}`
-    );
+      );
   }
-
 
   return [
     "# WINDOWS_DOWNLOADS_START (자동 생성 영역: updateIndexFile.ts 가 덮어씀)",
     ...blocks,
-    "# WINDOWS_DOWNLOADS_END"
+    "# WINDOWS_DOWNLOADS_END",
   ].join("\n\n");
 }
 
-async function updateIndexMd(releaseData: ReleaseData) {
+async function updateIndexMd(releaseData: LatestReleaseData) {
   try {
     const indexPath = path.resolve(__dirname, "..", "index.md");
     let content = await fs.readFile(indexPath, "utf-8");
@@ -66,7 +54,7 @@ async function updateIndexMd(releaseData: ReleaseData) {
       return;
     }
 
-    const windowsSection = buildWindowsBlocks(releaseData);
+    const windowsSection = buildWindowsBlocks(releaseData.assets);
 
     content = content.replace(
       /# WINDOWS_DOWNLOADS_START[\s\S]*?# WINDOWS_DOWNLOADS_END/,

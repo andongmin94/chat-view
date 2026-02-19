@@ -1,0 +1,23 @@
+[package]
+name = "chat_view"
+version = "0.2.0"
+description = "ChatView Tauri migration"
+authors = ["andongmin"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "chat_view_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.3", features = [] }
+
+[dependencies]
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2.9.5", features = ["tray-icon"] }
+tauri-plugin-log = "2"

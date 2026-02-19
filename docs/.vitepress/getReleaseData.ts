@@ -1,4 +1,4 @@
-interface GitHubReleaseAsset {
+﻿interface GitHubReleaseAsset {
   name: string;
   browser_download_url: string;
   size: number;
@@ -20,7 +20,6 @@ export interface LatestReleaseData {
   fileSize: number;
   assets: {
     exe: ReleaseBinary | null;
-    msi: ReleaseBinary | null;
   };
 }
 
@@ -33,7 +32,7 @@ const GITHUB_RELEASES_API =
   "https://api.github.com/repos/andongmin94/chat-view/releases";
 
 function toVersion(tagName: string) {
-  return tagName.replace("chat-view-", "");
+  return tagName.replace(/^chat-view-/, "");
 }
 
 function toBinary(asset?: GitHubReleaseAsset): ReleaseBinary | null {
@@ -43,6 +42,19 @@ function toBinary(asset?: GitHubReleaseAsset): ReleaseBinary | null {
     url: asset.browser_download_url,
     sizeMB: Math.round(asset.size / 1024 / 1024),
   };
+}
+
+function pickExeAsset(assets: GitHubReleaseAsset[]): GitHubReleaseAsset | undefined {
+  const nonSetupExe = assets.find((asset) => {
+    const name = asset.name.toLowerCase();
+    return name.endsWith(".exe") && !name.includes("setup");
+  });
+
+  if (nonSetupExe) {
+    return nonSetupExe;
+  }
+
+  return assets.find((asset) => asset.name.toLowerCase().endsWith(".exe"));
 }
 
 async function fetchGitHubJson<T>(url: string): Promise<T> {
@@ -62,25 +74,18 @@ async function fetchLatestRelease(): Promise<LatestReleaseData | undefined> {
     const data = await fetchGitHubJson<GitHubRelease>(`${GITHUB_RELEASES_API}/latest`);
     const assets = data.assets ?? [];
 
-    const exe = toBinary(assets.find((asset) => asset.name.endsWith(".exe")));
-    const msi = toBinary(
-      assets.find((asset) => asset.name.endsWith(".msi") && /x64/i.test(asset.name))
-    );
-
-    // 메인 노출용 파일 크기 (우선 exe, 없으면 msi)
-    const primary = exe ?? msi;
+    const exe = toBinary(pickExeAsset(assets));
 
     return {
       version: toVersion(data.tag_name),
-      fileSize: primary?.sizeMB ?? 0,
-      assets: { exe, msi },
+      fileSize: exe?.sizeMB ?? 0,
+      assets: { exe },
     };
   } catch (error) {
-    console.error("GitHub 릴리즈 정보 가져오기 실패:", error);
+    console.error("GitHub 릴리즈 정보를 가져오지 못했습니다:", error);
   }
 }
 
-// 릴리즈 노트 생성/사이드바용 최소 데이터
 async function fetchAllReleases(): Promise<ReleaseNoteData[]> {
   try {
     const releases = await fetchGitHubJson<GitHubRelease[]>(GITHUB_RELEASES_API);
@@ -90,7 +95,7 @@ async function fetchAllReleases(): Promise<ReleaseNoteData[]> {
       body: release.body?.trim() ?? "",
     }));
   } catch (error) {
-    console.error("GitHub 릴리즈 정보 가져오기 실패:", error);
+    console.error("GitHub 릴리즈 목록을 가져오지 못했습니다:", error);
     return [];
   }
 }

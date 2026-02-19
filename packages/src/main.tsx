@@ -1,5 +1,7 @@
 import ReactDOM from "react-dom/client";
 
+import "@/bridge/electron";
+
 import App from "./App.tsx";
 
 import "@/globals.css";

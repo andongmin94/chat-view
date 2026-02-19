@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 
-import { useUpdateNotice } from "@/components/controller/useUpdateNotice";
 import { Button } from "@/components/ui/button";
+import { useUpdateNotice } from "@/components/controller/useUpdateNotice";
 
 interface ControllerFooterProps {
   version: string;

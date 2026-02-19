@@ -6,5 +6,14 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 declare global {
-  let electron: any;
+  var electron: {
+    send: (channel: string, data?: unknown) => Promise<unknown>;
+    invoke: (channel: string, data?: unknown) => Promise<unknown>;
+    on: (channel: string, func: (...args: unknown[]) => void) => void;
+    get: (key: string) => Promise<unknown>;
+    removeListener: (
+      channel: string,
+      func: (...args: unknown[]) => void,
+    ) => void;
+  };
 }

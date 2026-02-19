@@ -39,8 +39,8 @@ async function updateIndexMd(releaseData: LatestReleaseData) {
     let content = await fs.readFile(indexPath, "utf-8");
 
     content = content.replace(
-      /name:\s*ChatView\s+v?[0-9A-Za-z._-]+/,
-      `name: ChatView ${releaseData.version}`,
+      /(^\s*name:\s*[^\n]*?\s+)v?[0-9A-Za-z._-]+(\s*$)/m,
+      `$1${releaseData.version}$2`,
     );
 
     if (!/# WINDOWS_DOWNLOADS_START/.test(content)) {

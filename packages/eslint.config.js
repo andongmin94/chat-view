@@ -7,7 +7,13 @@ import tseslint from "typescript-eslint";
 export default tseslint.config({
   extends: [js.configs.recommended, ...tseslint.configs.recommended],
   files: ["**/*.{ts,tsx}"],
-  ignores: ["dist", "src/components/ui/*", "src/hooks/*", "src/lib/*"],
+  ignores: [
+    "dist",
+    "src/components/ui/*",
+    "src/hooks/*",
+    "src/lib/*",
+    "src-tauri/**",
+  ],
   languageOptions: {
     ecmaVersion: 2020,
     globals: globals.browser,

@@ -4,7 +4,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/card";
-import AdBanner from "@/components/controller/AdBanner";
 import ChatUrlDialog from "@/components/controller/ChatUrlDialog";
 import ControllerFooter from "@/components/controller/ControllerFooter";
 import ControlPanel from "@/components/controller/ControlPanel";
@@ -54,7 +53,6 @@ export default function Controller() {
         </div>
       </CardContent>
       <ControllerFooter version={packageJson.version} />
-      <AdBanner />
     </>
   );
 }

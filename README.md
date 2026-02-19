@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <a href="https://chat-view.andongmin.com">
 <img src="https://chat-view.andongmin.com/logo.svg" alt="logo" height="200" />
@@ -6,115 +6,81 @@
 
 </div>
 
-# ChatView (챗뷰)
+# ChatView
 
-Electron + React + Vite 로 제작한 데스크톱용 "채팅 오버레이 제어/뷰어" 애플리케이션입니다. 
-스트리밍/방송 화면에 특정 서비스의 실시간 채팅을 투명한 오버레이 창 형태로 띄워 고정하거나 상호작용을 제어할 수 있습니다.
+Tauri + React + Vite 기반의 데스크톱용 채팅 오버레이 앱입니다.
+스트리밍 화면 위에 채팅 웹페이지를 별도 오버레이 창으로 띄우고, 고정/이동/크기 조절 상태를 유지할 수 있습니다.
 
-현재 지원 주소 패턴
+현재 기본 지원 URL:
 - `https://weflab.com/page/...`
 - `https://chzzk.naver.com/chat/...`
 
 ## 핵심 기능
-- **오버레이 창 생성**: 입력한 채팅 URL을 별도의 투명/프레임리스(Frameless) 창(webview)으로 생성
-- **고정 모드(always-on-top + 클릭 패스스루)**: 고정 활성화 시
-  - 항상 위(alwaysOnTop)
-  - 마우스 이벤트를 무시(클릭 패스스루)하여 방송 송출 프로그램 / 게임 등 뒤쪽 요소와 상호작용 가능
-- **드래그 이동 & 위치/크기 기억**: 창 이동/리사이즈 시 Electron Store에 저장 후 재실행 시 복원
-- **재입력 / 리셋**: URL 재입력 시 기존 오버레이 파기 후 새로 생성, 리셋 시 모든 저장 데이터 초기화
-- **초기 설정 다이얼로그**: 첫 실행 시 URL 입력 모달 자동 오픈
-- **윈도우/맥 플랫폼 UX 고려**
-  - Win: 시스템 우클릭 메뉴 차단(hookWindowMessage)
-  - macOS: 창 닫기 시 앱 숨김 처리(Dock 숨김)로 트레이/백그라운드 동작 유지
-- **커스텀 타이틀바**: 최소화/숨김(닫기 대용) 버튼 제공; 드래그 가능한 상단 바
-- **버전 표시 & 광고 영역**: 하단 버전 텍스트, 고정 높이 iframe 광고 슬롯
+- URL 입력 후 투명 오버레이 창 생성
+- 고정 모드 ON: 항상 위 + 클릭 스루 + 완전 투명 배경
+- 고정 모드 OFF: 오버레이 전체 드래그 이동 + 반투명 배경
+- 오버레이 위치/크기/고정 상태/최근 URL 로컬 저장 및 복원
+- 메인 창 닫기 시 종료 대신 시스템 트레이로 최소화
+- 트레이 메뉴에서 창 다시 열기/종료
 
 ## 기술 스택
 | 영역 | 사용 기술 |
 |------|-----------|
-| 프레임워크 | React 19, TypeScript, Vite |
-| 데스크톱 | Electron (Main, Preload, Renderer 분리) |
-| 스타일/UI | Tailwind CSS v4, Radix UI, shadcn 스타일 패턴, class-variance-authority, tw-animate-css |
-| 상태/폼 | React Hook Form (준비), Zod (URL 검증) |
-| 데이터 저장 | electron-store (윈도우 위치/고정 모드/최근 URL) |
-| 번들/빌드 | Vite, electron-builder |
-| 개발도구 | ESLint, Prettier(import 정렬 + Tailwind 플러그인), TypeScript |
+| UI | React 19, TypeScript, Vite |
+| Desktop Runtime | Tauri v2 (Rust + WebView) |
+| UI 스타일 | Tailwind CSS v4, Radix UI, shadcn/ui |
+| 상태/폼 | React Hook Form, Zod |
+| 데이터 저장 | 앱 데이터 디렉터리의 `store.json` |
+| 번들/배포 | Tauri Bundler (NSIS, MSI, app, dmg 등) |
 
-## 동작 구조 개요
-1. 사용자는 메인 창(제어판)에서 채팅 URL 입력
-2. IPC를 통해 Main Process가 `createOverlayWindow(url)` 실행
-3. 투명한 frameless BrowserWindow + 내부 webview 가 해당 URL 로드
-4. 고정 토글 시 `set-fixed-mode` IPC → alwaysOnTop 및 ignoreMouseEvents 적용 → 렌더러/오버레이 동기 스타일 업데이트
-5. 위치/크기 변경 이벤트(moved/resized) 발생 시 store에 bounds 저장
-6. 재실행 후 `get-value(chatUrl)` 요청 시 기존 URL 감지되면 즉시 오버레이 복원
-
-## 프로젝트 구조 (요약)
-```
+## 프로젝트 구조
+```text
 chat-view/
- ├─ docs/               # VitePress 기반 문서 (사이트 hero 등)
- └─ packages/           # 실제 앱 (Electron + React)
-     ├─ public/         # 아이콘, 폰트, 정적 자원
-     ├─ src/
-     │   ├─ electron/   # 메인 프로세스 로직 (창, IPC, 입력 캡처 등)
-     │   ├─ components/ # UI 컴포넌트 및 TitleBar, Controller
-     │   ├─ hooks/      # 커스텀 훅
-     │   └─ lib/        # 공용 유틸
-     └─ package.json
+├─ docs/                  # VitePress 문서
+└─ packages/              # 실제 앱(Tauri + React)
+   ├─ src/                # 렌더러(UI)
+   ├─ src/bridge/         # electron API 호환 브리지(tauri invoke 래핑)
+   ├─ src-tauri/          # Rust 백엔드, 번들 설정
+   └─ public/             # 아이콘/폰트 등 정적 리소스
 ```
 
-## 주요 IPC 채널
-| 채널 | 방향 | 설명 |
-|------|------|------|
-| `get-value` | Renderer → Main (invoke) | key로 store 값 조회 (chatUrl 조회 시 오버레이 자동 생성) |
-| `chatUrl` | Renderer → Main | 새 URL 저장 및 오버레이 재생성 |
-| `reInput` | Renderer → Main | URL 재입력 시작: 기존 오버레이 제거 |
-| `set-fixed-mode` | Renderer → Main | 고정 모드 토글(alwaysOnTop + ignoreMouseEvents) |
-| `fixedMode` | Main → Renderer | 고정 모드 상태 브로드캐스트 |
-| `reset` | Renderer → Main | store 초기화 및 오버레이 제거 |
-| `minimize` | Renderer → Main | 메인 창 최소화 |
-| `hidden` | Renderer → Main | 메인 창 숨김 |
+## 실행
+사전 요구사항: Node.js 18+, Rust 툴체인, Tauri 빌드 의존성
 
-## 설치 및 실행
-사전 요구: Node.js 18+ 권장.
-
-### 개발 모드 실행
 ```bash
+cd packages
 npm install
-npm run app
+npm run tauri:dev
 ```
-- `npm run dev`: Vite 개발 서버 (React)
-- `npm run app`: Vite + Electron 동시 구동 (concurrently + tsc)
 
-### 빌드 (배포 패키지 생성)
+참고:
+- `npm run dev`: 프론트엔드(Vite)만 실행
+- `npm run tauri:dev`: 실제 데스크톱 앱 실행
+
+## 빌드
 ```bash
-npm run build
+cd packages
+npm run tauri:build
 ```
-결과물: `output/` 내 Electron 빌드 아티팩트 (Windows portable 등)
 
-## 환경 변수
-현재 코드상 필수 `.env` 항목은 명시되어 있지 않습니다. 필요 시 `dotenv` 패키지를 통해 확장 가능합니다.
+주요 산출물 예시(Windows):
+- 실행 파일: `packages/src-tauri/target/release/ChatView.exe`
+- MSI: `packages/src-tauri/target/release/bundle/msi/ChatView_버전_x64_ko-KR.msi`
+- NSIS: `packages/src-tauri/target/release/bundle/nsis/ChatView_버전_x64-setup.exe`
 
-## 데이터 영속 항목 (electron-store Keys)
-| Key | 설명 |
-|-----|------|
-| `chatUrl` | 마지막 사용 채팅 URL |
-| `overlayFixed` | 고정 모드 여부(boolean) |
-| `overlayWindowBounds` | 오버레이 창 위치/크기(Rect) |
+## 데이터 저장
+앱 설정은 OS별 앱 데이터 디렉터리의 `store.json`에 저장됩니다.
 
-## 커스텀 타이틀바 / 드래그 영역
-- 상단 바 전체는 `-webkit-app-region: drag`
-- 버튼 영역만 `no-drag` 처리해 클릭 가능
+저장 항목:
+- `chatUrl`
+- `overlayFixed`
+- `overlayWindowBounds`
 
-## 오버레이 고정 모드 동작
-1. alwaysOnTop 활성화
-2. ignoreMouseEvents(true, { forward: true }) → 패스스루
-3. 배경 투명 처리 및 webview pointer-events 제거 → 완전한 클릭 관통
+## 업데이트 방식
+현재 앱 내 업데이트는 "최신 릴리즈 확인 + 다운로드 링크 안내" 방식입니다.
+자동 설치형 업데이터(Tauri Updater plugin)는 아직 미적용입니다.
 
-## 향후 개선 아이디어
-- 지원 플랫폼/채팅 서비스 확장 (예: YouTube, Twitch)
-- URL 즐겨찾기/최근 목록 UI
-- 다중 오버레이 창 지원
-- 커스텀 CSS 오버레이 (폰트/색상 테마)
-- 자동 업데이트(electron-updater) 적용
-- 단축키(Global shortcuts)로 고정 토글
-- 다국어(i18n) 지원
+## 비고
+- 이 프로젝트는 더 이상 Electron 런타임을 사용하지 않습니다.
+- 기존 Electron 레거시 소스는 제거되었습니다.
+

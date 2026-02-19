@@ -1,47 +1,15 @@
 {
-  "name": "chat-view",
+  "name": "chat_view",
   "version": "0.2.0",
   "type": "module",
-  "author": "안동민",
-  "description": "채팅 모니터링 프로그램",
-  "main": "dist/electron/main.js",
-  "build": {
-    "appId": "ChatView",
-    "productName": "ChatView",
-    "copyright": "Copyright © andongmin",
-    "icon": "public/icon.ico",
-    "compression": "store",
-    "mac": {
-      "target": [
-        "dir"
-      ]
-    },
-    "win": {
-      "target": [
-        "msi",
-        "portable"
-      ]
-    },
-    "msi": {
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
-    },
-    "portable": {
-      "artifactName": "${productName}.${ext}"
-    },
-    "files": [
-      "node_modules/**/*",
-      "public/**/*",
-      "dist/**/*"
-    ],
-    "directories": {
-      "output": "output"
-    }
-  },
+  "author": "andongmin",
+  "description": "ChatView Tauri migration package",
   "scripts": {
     "dev": "vite",
-    "app": "concurrently \"npm run dev\" \"tsc -p tsconfig.electron.json && cross-env NODE_ENV=development electron .\"",
-    "build": "vite build && tsc -p tsconfig.electron.json && electron-builder",
-    "lint": "eslint . && npx prettier --write ."
+    "build": "vite build",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "lint": "eslint src && prettier --write ."
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -72,14 +40,12 @@
     "@radix-ui/react-toggle-group": "^1.1.11",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/vite": "^4.1.18",
+    "@tauri-apps/api": "^2.9.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
-    "dotenv": "^17.2.3",
-    "electron-store": "^11.0.2",
     "embla-carousel-react": "^8.6.0",
-    "express": "^5.2.1",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.563.0",
     "react": "^19.2.4",
@@ -98,16 +64,12 @@
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@ianvs/prettier-plugin-sort-imports": "^4.7.0",
-    "@types/express": "^5.0.6",
+    "@tauri-apps/cli": "^2.9.1",
     "@types/node": "^25.1.0",
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.2",
     "babel-plugin-react-compiler": "^1.0.0",
-    "concurrently": "^9.2.1",
-    "cross-env": "^10.1.0",
-    "electron": "^40.2.1",
-    "electron-builder": "^26.4.0",
     "eslint": "^9.39.2",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.26",
@@ -117,7 +79,6 @@
     "tw-animate-css": "^1.4.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.54.0",
-    "vite": "^7.3.1",
-    "wait-on": "^9.0.3"
+    "vite": "^7.3.1"
   }
 }

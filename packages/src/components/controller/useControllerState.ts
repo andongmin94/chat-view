@@ -28,17 +28,23 @@ export function useControllerState() {
 
   useEffect(() => {
     const fetchInitialState = async () => {
-      const savedUrl = await electron.get("chatUrl");
-      const savedFixedMode = await electron.get("overlayFixed");
+      try {
+        const savedUrl = await electron.get("chatUrl");
+        const savedFixedMode = await electron.get("overlayFixed");
 
-      if (savedUrl) {
-        setUrl(savedUrl);
-        setIsFirstRun(false);
-      } else {
+        if (typeof savedUrl === "string" && savedUrl.length > 0) {
+          setUrl(savedUrl);
+          setIsFirstRun(false);
+        } else {
+          setIsDialogOpen(true);
+        }
+
+        setIsFixed(Boolean(savedFixedMode));
+      } catch (error) {
+        console.error("Failed to load initial controller state:", error);
         setIsDialogOpen(true);
+        setUrlError("초기 상태를 불러오지 못했습니다. URL을 다시 입력해주세요.");
       }
-
-      setIsFixed(savedFixedMode || false);
     };
 
     void fetchInitialState();
@@ -54,14 +60,24 @@ export function useControllerState() {
     setUrlError(validateUrl(nextUrl));
   }, []);
 
-  const handleApply = useCallback(() => {
+  const handleApply = useCallback(async () => {
     if (urlError) {
       return;
     }
 
-    setIsDialogOpen(false);
-    electron.send("chatUrl", url);
-    setIsFirstRun(false);
+    try {
+      await electron.send("chatUrl", url);
+      setIsDialogOpen(false);
+      setIsFirstRun(false);
+    } catch (error) {
+      console.error("Failed to create overlay window:", error);
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "오버레이 창을 생성하지 못했습니다.";
+      setUrlError(message);
+      setIsDialogOpen(true);
+    }
   }, [url, urlError]);
 
   const handleFixedToggle = useCallback(async (checked: boolean) => {

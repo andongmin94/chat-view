@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ChatView",
+  "productName": "챗뷰",
   "mainBinaryName": "ChatView",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "identifier": "com.andongmin.chatview",
   "build": {
     "frontendDist": "../dist",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "ChatView",
+        "title": "챗뷰",
         "width": 416,
         "height": 282,
         "resizable": true,

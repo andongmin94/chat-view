@@ -1,14 +1,15 @@
 {
-  "name": "chat_view",
-  "version": "0.2.1",
+  "name": "chat-view",
+  "version": "0.2.2",
   "type": "module",
-  "author": "andongmin",
-  "description": "ChatView Tauri migration package",
+  "author": "안동민",
+  "description": "채팅 모니터링 프로그램",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
+    "version:sync-release": "node ./scripts/bump-version-from-release.mjs",
+    "tauri:build": "npm run version:sync-release && tauri build",
     "lint": "eslint src && prettier --write ."
   },
   "dependencies": {

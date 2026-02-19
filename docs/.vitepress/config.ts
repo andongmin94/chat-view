@@ -9,7 +9,7 @@ import { updateIndexMd } from "./updateIndexFile";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const ogTitle = "ChatView";
+const ogTitle = "챗뷰";
 const ogDescription = "모니터 하나로 위플랩 / 치지직 / 숲 채팅 모니터링";
 const ogUrl = "https://chat-view.andongmin.com";
 const ogImage = "https://chat-view.andongmin.com/logo.png";
@@ -100,7 +100,7 @@ const config = async (): Promise<UserConfig> => {
   }));
 
   return {
-    title: "ChatView",
+    title: "챗뷰",
     description: "GUI Library for Desktop App Development",
     vite: {
       server: {
@@ -133,7 +133,7 @@ const config = async (): Promise<UserConfig> => {
       logo: "/logo.svg",
 
       editLink: {
-        pattern: "https://mail.google.com/mail/?view=cm&fs=1&to=andongmin94@gmail.com&su=ChatView%20문의&body=",
+        pattern: "https://mail.google.com/mail/?view=cm&fs=1&to=andongmin94@gmail.com&su=챗뷰%20문의&body=",
         text: "Gmail로 문의하기",
       },
 
@@ -158,17 +158,17 @@ const config = async (): Promise<UserConfig> => {
       },
 
       nav: [
-        { text: "ChatView 가이드", link: "/guide", activeMatch: "/guide" },
-        { text: "ChatView 개발자", link: "/maintainer" },
+        { text: "챗뷰 가이드", link: "/guide", activeMatch: "/guide" },
+        { text: "챗뷰 개발자", link: "/maintainer" },
       ],
 
       sidebar: {
         "/guide/": [
           {
-            text: "ChatView 가이드",
+            text: "챗뷰 가이드",
             items: [
               {
-                text: "ChatView 시작하기",
+                text: "챗뷰 시작하기",
                 link: "/guide/",
               },
               {

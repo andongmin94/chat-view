@@ -1,11 +1,11 @@
 ﻿---
 layout: home
 
-title: ChatView
+title: 챗뷰
 titleTemplate: 채팅 모니터링 프로그램
 
 hero:
-  name: ChatView v0.0.0
+  name: 챗뷰 v0.0.0
   text: 채팅 모니터링 프로그램
   tagline: 하나의 오버레이로 위플랩/치지직 채팅을 빠르게 관리
   image:
@@ -13,7 +13,7 @@ hero:
     alt: chat-view
   actions:
     - theme: brand
-      text: ChatView 가이드
+      text: 챗뷰 가이드
       link: /guide/
     - theme: alt
       text: 사용 방법 (Youtube)

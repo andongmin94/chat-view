@@ -273,7 +273,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), String> {
 
   let mut builder = TrayIconBuilder::with_id("main")
     .menu(&menu)
-    .tooltip("ChatView")
+    .tooltip("챗뷰")
     .show_menu_on_left_click(false)
     .on_tray_icon_event(|tray: &TrayIcon, event: TrayIconEvent| {
       if let TrayIconEvent::Click {
@@ -411,7 +411,7 @@ fn create_overlay_window(
     OVERLAY_LABEL,
     WebviewUrl::App("overlay.html".into()),
   )
-    .title("ChatView Overlay")
+    .title("챗뷰 오버레이")
     .decorations(false)
     .transparent(true)
     .shadow(false)

@@ -5,7 +5,7 @@ use tauri::{
   menu::{Menu, MenuItem},
   tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
   utils::config::Color,
-  AppHandle, LogicalPosition, LogicalSize, Manager, State, WebviewUrl, WebviewWindow,
+  AppHandle, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl, WebviewWindow,
   WebviewWindowBuilder, Window, WindowEvent,
 };
 
@@ -113,29 +113,21 @@ fn set_store_value(
   key: &str,
   value: Value,
 ) -> Result<(), String> {
-  let snapshot = {
-    let mut guard = state
-      .store
-      .lock()
-      .map_err(|_| "failed to lock application store".to_string())?;
-    guard.values.insert(key.to_string(), value);
-    guard.clone()
-  };
-
-  save_store_to_disk(app, &snapshot)
+  let mut guard = state
+    .store
+    .lock()
+    .map_err(|_| "failed to lock application store".to_string())?;
+  guard.values.insert(key.to_string(), value);
+  save_store_to_disk(app, &guard)
 }
 
 fn clear_store(app: &AppHandle, state: &State<'_, AppState>) -> Result<(), String> {
-  let snapshot = {
-    let mut guard = state
-      .store
-      .lock()
-      .map_err(|_| "failed to lock application store".to_string())?;
-    guard.values.clear();
-    guard.clone()
-  };
-
-  save_store_to_disk(app, &snapshot)
+  let mut guard = state
+    .store
+    .lock()
+    .map_err(|_| "failed to lock application store".to_string())?;
+  guard.values.clear();
+  save_store_to_disk(app, &guard)
 }
 
 fn overlay_window(app: &AppHandle) -> Option<WebviewWindow> {
@@ -163,10 +155,50 @@ fn default_overlay_bounds(app: &AppHandle) -> WindowBounds {
     return bounds;
   };
 
-  let width = i32::try_from(size.width).unwrap_or(0);
+  let main_width = i32::try_from(size.width).unwrap_or(0);
+  let overlay_width = i32::try_from(bounds.width).unwrap_or(0);
+  let overlay_height = i32::try_from(bounds.height).unwrap_or(0);
 
-  bounds.x = position.x + width + 20;
+  bounds.x = position.x + main_width + 20;
   bounds.y = position.y;
+
+  if let Ok(Some(monitor)) = main_window.current_monitor() {
+    let monitor_pos = monitor.position();
+    let monitor_size = monitor.size();
+
+    let monitor_left = monitor_pos.x;
+    let monitor_top = monitor_pos.y;
+    let monitor_right = monitor_pos.x + i32::try_from(monitor_size.width).unwrap_or(0);
+    let monitor_bottom = monitor_pos.y + i32::try_from(monitor_size.height).unwrap_or(0);
+
+    let bounds_right = bounds.x + overlay_width;
+    if bounds_right > monitor_right {
+      let left_candidate = position.x - overlay_width - 20;
+      if left_candidate >= monitor_left {
+        bounds.x = left_candidate;
+      } else {
+        bounds.x = (monitor_right - overlay_width).max(monitor_left);
+      }
+    }
+
+    if bounds.x < monitor_left {
+      bounds.x = monitor_left;
+    }
+
+    let max_y = monitor_bottom - overlay_height;
+    if max_y >= monitor_top {
+      bounds.y = bounds.y.clamp(monitor_top, max_y);
+    } else {
+      bounds.y = monitor_top;
+    }
+  }
+
+  bounds
+}
+
+fn normalize_bounds_size(mut bounds: WindowBounds) -> WindowBounds {
+  bounds.width = bounds.width.max(MIN_OVERLAY_WIDTH);
+  bounds.height = bounds.height.max(MIN_OVERLAY_HEIGHT);
   bounds
 }
 
@@ -174,7 +206,8 @@ fn read_overlay_bounds(state: &State<'_, AppState>, app: &AppHandle) -> WindowBo
   let stored = get_store_value(state, "overlayWindowBounds")
     .ok()
     .flatten()
-    .and_then(|value| serde_json::from_value::<WindowBounds>(value).ok());
+    .and_then(|value| serde_json::from_value::<WindowBounds>(value).ok())
+    .map(normalize_bounds_size);
 
   stored.unwrap_or_else(|| default_overlay_bounds(app))
 }
@@ -192,6 +225,10 @@ fn read_chat_url(state: &State<'_, AppState>) -> Option<String> {
     .ok()
     .flatten()
     .and_then(|value| value.as_str().map(ToString::to_string))
+}
+
+fn should_persist_overlay_bounds(state: &State<'_, AppState>) -> bool {
+  read_chat_url(state).is_some()
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -282,6 +319,10 @@ fn setup_main_close_behavior(app: &AppHandle) -> Result<(), String> {
 }
 
 fn save_overlay_bounds(app: &AppHandle, state: &State<'_, AppState>) -> Result<(), String> {
+  if !should_persist_overlay_bounds(state) {
+    return Ok(());
+  }
+
   let Some(window) = overlay_window(app) else {
     return Ok(());
   };
@@ -290,8 +331,8 @@ fn save_overlay_bounds(app: &AppHandle, state: &State<'_, AppState>) -> Result<(
     .outer_position()
     .map_err(|err| format!("failed to read overlay position: {err}"))?;
   let size = window
-    .outer_size()
-    .map_err(|err| format!("failed to read overlay size: {err}"))?;
+    .inner_size()
+    .map_err(|err| format!("failed to read overlay inner size: {err}"))?;
 
   let bounds = WindowBounds {
     x: position.x,
@@ -299,6 +340,7 @@ fn save_overlay_bounds(app: &AppHandle, state: &State<'_, AppState>) -> Result<(
     width: size.width,
     height: size.height,
   };
+  let bounds = normalize_bounds_size(bounds);
 
   let payload =
     serde_json::to_value(bounds).map_err(|err| format!("failed to encode overlay bounds: {err}"))?;
@@ -348,6 +390,7 @@ fn create_overlay_window(
     .shadow(false)
     .resizable(true)
     .always_on_top(is_fixed)
+    .visible(false)
     .skip_taskbar(true);
 
   if let Some(icon) = app.default_window_icon().cloned() {
@@ -357,10 +400,18 @@ fn create_overlay_window(
   }
 
   let window = builder
-    .inner_size(bounds.width as f64, bounds.height as f64)
-    .position(bounds.x as f64, bounds.y as f64)
     .build()
     .map_err(|err| format!("failed to create overlay window: {err}"))?;
+
+  window
+    .set_size(PhysicalSize::new(bounds.width, bounds.height))
+    .map_err(|err| format!("failed to set initial overlay size: {err}"))?;
+  window
+    .set_position(PhysicalPosition::new(bounds.x, bounds.y))
+    .map_err(|err| format!("failed to set initial overlay position: {err}"))?;
+  window
+    .show()
+    .map_err(|err| format!("failed to show overlay window: {err}"))?;
 
   let app_for_events = app.clone();
   window.on_window_event(move |event| {
@@ -443,15 +494,17 @@ fn overlay_get_bounds(app: AppHandle) -> Result<Option<WindowBounds>, String> {
     .outer_position()
     .map_err(|err| format!("failed to read overlay position: {err}"))?;
   let size = window
-    .outer_size()
-    .map_err(|err| format!("failed to read overlay size: {err}"))?;
+    .inner_size()
+    .map_err(|err| format!("failed to read overlay inner size: {err}"))?;
 
-  Ok(Some(WindowBounds {
+  let bounds = normalize_bounds_size(WindowBounds {
     x: position.x,
     y: position.y,
     width: size.width,
     height: size.height,
-  }))
+  });
+
+  Ok(Some(bounds))
 }
 
 #[tauri::command]
@@ -468,11 +521,15 @@ fn overlay_set_bounds(
 
   if let Some(window) = overlay_window(&app) {
     window
-      .set_position(LogicalPosition::new(bounds.x as f64, bounds.y as f64))
+      .set_position(PhysicalPosition::new(bounds.x, bounds.y))
       .map_err(|err| format!("failed to set overlay position: {err}"))?;
     window
-      .set_size(LogicalSize::new(bounds.width as f64, bounds.height as f64))
+      .set_size(PhysicalSize::new(bounds.width, bounds.height))
       .map_err(|err| format!("failed to set overlay size: {err}"))?;
+  }
+
+  if !should_persist_overlay_bounds(&state) {
+    return Ok(());
   }
 
   let encoded =
@@ -504,8 +561,8 @@ fn overlay_bootstrap(state: State<'_, AppState>) -> Result<Option<OverlayBootstr
 
 #[tauri::command]
 fn reset_state(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-  clear_store(&app, &state)?;
   close_overlay_window(&app);
+  clear_store(&app, &state)?;
   Ok(())
 }
 

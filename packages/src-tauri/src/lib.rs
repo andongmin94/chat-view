@@ -48,6 +48,7 @@ struct AppState {
   store: Mutex<PersistedStore>,
   is_quitting: Mutex<bool>,
   tray: Mutex<Option<TrayIcon>>,
+  suppress_overlay_bounds_persist: Mutex<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -134,7 +135,25 @@ fn overlay_window(app: &AppHandle) -> Option<WebviewWindow> {
   app.get_webview_window(OVERLAY_LABEL)
 }
 
+fn set_overlay_bounds_persist_suppressed(state: &State<'_, AppState>, suppressed: bool) {
+  if let Ok(mut guard) = state.suppress_overlay_bounds_persist.lock() {
+    *guard = suppressed;
+  }
+}
+
+fn is_overlay_bounds_persist_suppressed(state: &State<'_, AppState>) -> bool {
+  state
+    .suppress_overlay_bounds_persist
+    .lock()
+    .map(|guard| *guard)
+    .unwrap_or(false)
+}
+
 fn close_overlay_window(app: &AppHandle) {
+  let state = app.state::<AppState>();
+  let _ = save_overlay_bounds(app, &state);
+  set_overlay_bounds_persist_suppressed(&state, true);
+
   if let Some(window) = overlay_window(app) {
     let _ = window.close();
   }
@@ -154,6 +173,11 @@ fn default_overlay_bounds(app: &AppHandle) -> WindowBounds {
   let Ok(size) = main_window.outer_size() else {
     return bounds;
   };
+  let scale = main_window.scale_factor().unwrap_or(1.0);
+  let scaled_width = ((DEFAULT_OVERLAY_WIDTH as f64) * scale).round() as u32;
+  let scaled_height = ((DEFAULT_OVERLAY_HEIGHT as f64) * scale).round() as u32;
+  bounds.width = scaled_width.max(MIN_OVERLAY_WIDTH);
+  bounds.height = scaled_height.max(MIN_OVERLAY_HEIGHT);
 
   let main_width = i32::try_from(size.width).unwrap_or(0);
   let overlay_width = i32::try_from(bounds.width).unwrap_or(0);
@@ -322,6 +346,9 @@ fn save_overlay_bounds(app: &AppHandle, state: &State<'_, AppState>) -> Result<(
   if !should_persist_overlay_bounds(state) {
     return Ok(());
   }
+  if is_overlay_bounds_persist_suppressed(state) {
+    return Ok(());
+  }
 
   let Some(window) = overlay_window(app) else {
     return Ok(());
@@ -403,15 +430,22 @@ fn create_overlay_window(
     .build()
     .map_err(|err| format!("failed to create overlay window: {err}"))?;
 
-  window
-    .set_size(PhysicalSize::new(bounds.width, bounds.height))
-    .map_err(|err| format!("failed to set initial overlay size: {err}"))?;
+  set_overlay_bounds_persist_suppressed(state, false);
+
   window
     .set_position(PhysicalPosition::new(bounds.x, bounds.y))
     .map_err(|err| format!("failed to set initial overlay position: {err}"))?;
   window
+    .set_size(PhysicalSize::new(bounds.width, bounds.height))
+    .map_err(|err| format!("failed to set initial overlay size: {err}"))?;
+  window
     .show()
     .map_err(|err| format!("failed to show overlay window: {err}"))?;
+  // On Windows multi-DPI setups, hidden-window sizing can be scaled on show.
+  // Re-apply the target size once the window is visible on its final monitor.
+  window
+    .set_size(PhysicalSize::new(bounds.width, bounds.height))
+    .map_err(|err| format!("failed to normalize overlay size after show: {err}"))?;
 
   let app_for_events = app.clone();
   window.on_window_event(move |event| {
@@ -595,6 +629,7 @@ pub fn run() {
         store: Mutex::new(loaded_store),
         is_quitting: Mutex::new(false),
         tray: Mutex::new(None),
+        suppress_overlay_bounds_persist: Mutex::new(false),
       });
 
       if cfg!(debug_assertions) {

@@ -2,70 +2,22 @@
 import {
   fetchLatestRelease,
   fetchAllReleases,
-  type LatestReleaseData,
-  type ReleaseNoteData,
-} from "./getReleaseData";
-import { updateIndexMd } from "./updateIndexFile";
-import fs from "node:fs/promises";
-import path from "node:path";
+  updateIndexMd,
+  generateReleaseNotes,
+  type ReleaseData,
+} from "./release";
 
 const ogTitle = "챗뷰";
 const ogDescription = "모니터 하나로 위플랩 / 치지직 / 숲 채팅 모니터링";
 const ogUrl = "https://chat-view.andongmin.com";
 const ogImage = "https://chat-view.andongmin.com/logo.png";
 
-async function generateReleaseNotes(releases: ReleaseNoteData[]) {
-  const releaseDir = path.resolve(__dirname, "../guide/release");
-
-  try {
-    await fs.mkdir(releaseDir, { recursive: true });
-
-    // 각 릴리즈에 대한 문서 생성
-    for (const release of releases) {
-      const version = release.version;
-      const filePath = path.join(releaseDir, `${version}.md`);
-
-      // 릴리즈 노트 내용 포맷팅 (GitHub의 마크다운을 VitePress 호환 마크다운으로 변환)
-      let content = `# ${version}\n\n`;
-
-      // GitHub 릴리즈 본문을 파싱하여 추가
-      if (release.body) {
-        content += release.body
-          .replace(/\r\n/g, "\n") // 줄바꿈 통일
-          .trim();
-      } else {
-        content += `릴리즈 노트 내용이 없습니다.`;
-      }
-
-      // 파일이 없거나 내용이 다른 경우만 쓰기
-      let shouldWrite = true;
-      try {
-        const existingContent = await fs.readFile(filePath, "utf-8");
-        if (existingContent.trim() === content.trim()) {
-          shouldWrite = false;
-        }
-      } catch {
-        // 파일이 없으면 무시하고 새로 생성
-      }
-
-      if (shouldWrite) {
-        await fs.writeFile(filePath, content);
-        console.log(`📝 릴리즈 문서 생성: ${version}`);
-      }
-    }
-
-    console.log("✅ 모든 릴리즈 문서가 업데이트되었습니다");
-  } catch (error) {
-    console.error("❌ 릴리즈 문서 생성 실패:", error);
-  }
-}
-
 const config = async (): Promise<UserConfig> => {
   const isProd = process.env.NODE_ENV === "production";
   console.log(`현재 모드: ${isProd ? "빌드" : "개발"}`);
 
-  let latestRelease: LatestReleaseData | undefined;
-  let allReleases: ReleaseNoteData[] = [];
+  let latestRelease: ReleaseData | undefined;
+  let allReleases: ReleaseData[] = [];
 
   if (isProd) {
     // 빌드 모드에서만 GitHub API 호출
@@ -88,7 +40,15 @@ const config = async (): Promise<UserConfig> => {
     await generateReleaseNotes(allReleases);
   } else {
     // 개발용 더미 릴리즈 목록
-    allReleases = [{ version: "v0.0.0", body: "" }];
+    allReleases = [
+      {
+        version: "v0.0.0",
+        fileSize: 0,
+        downloadUrl: "",
+        body: "",
+        assets: { exe: null },
+      },
+    ];
 
     console.log("🧪 개발 모드: API 호출 대신 더미 데이터 사용");
   }

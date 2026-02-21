@@ -1,6 +1,6 @@
 [package]
 name = "chat_view"
-version = "0.2.2"
+version = "0.2.3"
 description = "채팅 모니터링 프로그램"
 authors = ["안동민"]
 license = ""

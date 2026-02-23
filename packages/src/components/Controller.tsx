@@ -54,7 +54,6 @@ export default function Controller() {
         </div>
       </CardContent>
       <ControllerFooter version={packageJson.version} />
-      <AdBanner />
     </>
   );
 }

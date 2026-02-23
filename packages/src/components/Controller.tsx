@@ -4,7 +4,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/card";
-import AdBanner from "@/components/controller/AdBanner";
 import ChatUrlDialog from "@/components/controller/ChatUrlDialog";
 import ControllerFooter from "@/components/controller/ControllerFooter";
 import ControlPanel from "@/components/controller/ControlPanel";
@@ -31,7 +30,7 @@ export default function Controller() {
     <>
       <TitleBar />
 
-      <CardHeader className="flex justify-center">
+      <CardHeader className="flex justify-center p-4">
         <CardTitle>채팅 오버레이 제어판</CardTitle>
         <CardDescription>채팅 오버레이 설정을 관리합니다</CardDescription>
       </CardHeader>

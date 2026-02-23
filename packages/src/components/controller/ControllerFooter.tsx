@@ -21,7 +21,7 @@ export default function ControllerFooter({ version }: ControllerFooterProps) {
   }, [message, status]);
 
   return (
-    <div className="pointer-events-auto mr-1 flex items-center justify-between gap-2 text-xs">
+    <div className="pointer-events-auto mx-2 flex items-center justify-between gap-2 text-xs">
       <div className="flex min-w-0 items-center gap-2">
         {statusText && (
           <span

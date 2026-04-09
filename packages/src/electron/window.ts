@@ -51,9 +51,7 @@ export function createWindow(port: number) {
       app.dock?.hide(); // Dock 에서도 숨김
     }
     // 다른 OS 에서는 window-all-closed 에서 앱 종료 처리
-    else {
-      app.quit();
-    }
+    else app.quit();
   });
 
   mainWindow.on("closed", () => {

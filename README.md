@@ -89,7 +89,7 @@ npm run app
 ```bash
 npm run build
 ```
-결과물: `dist_app/` 내 Electron 빌드 아티팩트 (Windows portable 등)
+결과물: `output/` 내 Electron 빌드 아티팩트 (Windows portable 등)
 
 ## 환경 변수
 현재 코드상 필수 `.env` 항목은 명시되어 있지 않습니다. 필요 시 `dotenv` 패키지를 통해 확장 가능합니다.

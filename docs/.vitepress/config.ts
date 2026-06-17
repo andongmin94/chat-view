@@ -1,6 +1,10 @@
 import { defineConfig, UserConfig } from "vitepress";
-import { buildEnd } from "./buildEnd.config";
-import { fetchLatestRelease, fetchAllReleases } from "./getReleaseData";
+import {
+  fetchLatestRelease,
+  fetchAllReleases,
+  type LatestReleaseData,
+  type ReleaseNoteData,
+} from "./getReleaseData";
 import { updateIndexMd } from "./updateIndexFile";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -10,17 +14,11 @@ const ogDescription = "모니터 하나로 위플랩 / 치지직 / 숲 채팅 �
 const ogUrl = "https://chat-view.andongmin.com";
 const ogImage = "https://chat-view.andongmin.com/logo.png";
 
-async function generateReleaseNotes(releases: any) {
+async function generateReleaseNotes(releases: ReleaseNoteData[]) {
   const releaseDir = path.resolve(__dirname, "../guide/release");
 
   try {
-    // 디렉토리 존재 확인 및 생성
-    try {
-      await fs.access(releaseDir);
-    } catch {
-      await fs.mkdir(releaseDir, { recursive: true });
-      console.log(`📁 릴리즈 문서 디렉토리 생성: ${releaseDir}`);
-    }
+    await fs.mkdir(releaseDir, { recursive: true });
 
     // 각 릴리즈에 대한 문서 생성
     for (const release of releases) {
@@ -66,9 +64,8 @@ const config = async (): Promise<UserConfig> => {
   const isProd = process.env.NODE_ENV === "production";
   console.log(`현재 모드: ${isProd ? "빌드" : "개발"}`);
 
-  let latestRelease;
-  let allReleases = [];
-  let releaseItems = [];
+  let latestRelease: LatestReleaseData | undefined;
+  let allReleases: ReleaseNoteData[] = [];
 
   if (isProd) {
     // 빌드 모드에서만 GitHub API 호출
@@ -91,13 +88,13 @@ const config = async (): Promise<UserConfig> => {
     await generateReleaseNotes(allReleases);
   } else {
     // 개발용 더미 릴리즈 목록
-    allReleases = [{ version: "v0.0.0" }];
+    allReleases = [{ version: "v0.0.0", body: "" }];
 
     console.log("🧪 개발 모드: API 호출 대신 더미 데이터 사용");
   }
 
   // 사이드바 설정 부분을 동적으로 생성
-  releaseItems = allReleases.map((release: { version: any }) => ({
+  const releaseItems = allReleases.map((release) => ({
     text: release.version,
     link: `/guide/release/${release.version}`,
   }));
@@ -105,20 +102,22 @@ const config = async (): Promise<UserConfig> => {
   return {
     title: "챗뷰",
     description: "GUI Library for Desktop App Development",
+    vite: {
+      server: {
+        port: 3000,
+        host: "0.0.0.0",
+      },
+    },
 
     head: [
       ["link", { rel: "icon", type: "image/png", href: "/logo.png" }],
-      [
-        "link",
-        { rel: "alternate", type: "application/rss+xml", href: "/blog.rss" },
-      ],
       ["link", { rel: "organization", href: "https://github.com/andongmin94" }],
       ["meta", { property: "og:type", content: "website" }],
       ["meta", { property: "og:title", content: ogTitle }],
       ["meta", { property: "og:description", content: ogDescription }],
       ["meta", { property: "og:url", content: ogUrl }],
       ["meta", { property: "og:image", content: ogImage }],
-      ["meta", { name: "theme-color", content: "#00c79f" }],
+      ["meta", { name: "theme-color", content: "#41C3A8" }],
       [
         "script",
         {
@@ -198,7 +197,7 @@ const config = async (): Promise<UserConfig> => {
         label: "목차"    // ← 추가: 원하는 한글로 변경
       },
     },
-    transformPageData(pageData: any) {
+    transformPageData(pageData) {
       const canonicalUrl = `${ogUrl}/${pageData.relativePath}`
         .replace(/\/index\.md$/, "/")
         .replace(/\.md$/, "/");
@@ -209,7 +208,6 @@ const config = async (): Promise<UserConfig> => {
       ]);
       return pageData;
     },
-    buildEnd,
   };
 };
 

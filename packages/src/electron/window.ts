@@ -12,7 +12,7 @@ export function createWindow(port: number) {
   mainWindow = new BrowserWindow({
     show: false,
     width: 416,
-    height: 282 + 121,
+    height: 275,
     frame: false,
     resizable: isDev,
     icon: path.join(__dirname, "../../public/icon.ico"),

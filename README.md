@@ -1,7 +1,7 @@
 <div align="center">
 
-<a href="https://chat-view.andongmin.com">
-<img src="https://chat-view.andongmin.com/logo.svg" alt="logo" height="200" />
+<a href="https://andongmin.com/chat-view">
+<img src="https://andongmin.com/chat-view/logo.svg" alt="logo" height="200" />
 </a>
 
 </div>

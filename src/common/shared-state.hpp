@@ -18,12 +18,13 @@ enum SharedStateFlag : std::uint32_t {
     SharedStateShutdown = 1U << 31U,
 };
 
-struct alignas(64) SharedState {
+struct SharedState {
     std::uint32_t magic;
     std::uint32_t version;
     volatile LONG sequence;
     std::uint32_t flags;
     std::uint64_t generation;
+    std::uint8_t reserved[40]{};
 };
 
 struct SharedSnapshot {
@@ -37,7 +38,6 @@ struct SharedSnapshot {
 }
 
 static_assert(sizeof(LONG) == sizeof(std::int32_t));
-static_assert(alignof(SharedState) == 64U);
 static_assert(sizeof(SharedState) == 64U);
 
 } // namespace chatview

@@ -89,7 +89,7 @@ jobs:
 
           $prefix = (Resolve-Path '.ci/obs-prefix').Path
           $obsDeps = @(Get-ChildItem '.ci/obs-studio/.deps' -Directory |
-            Where-Object { $_.Name -like 'obs-deps-*-x64' })
+            Where-Object { $_.Name -match '^obs-deps-\d{4}-\d{2}-\d{2}-x64$' })
           if ($obsDeps.Count -ne 1) {
             throw "Expected one OBS x64 dependency prefix, found $($obsDeps.Count)"
           }

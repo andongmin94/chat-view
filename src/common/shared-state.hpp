@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+#pragma once
+
+#include <Windows.h>
+
+#include <cstdint>
+
+namespace chatview {
+
+inline constexpr std::uint32_t kSharedStateMagic = 0x43485657U; // "CHVW"
+inline constexpr std::uint32_t kSharedStateVersion = 1U;
+
+enum SharedStateFlag : std::uint32_t {
+    SharedStateNone = 0U,
+    SharedStateStreaming = 1U << 0U,
+    SharedStateRecording = 1U << 1U,
+    SharedStateShutdown = 1U << 31U,
+};
+
+struct alignas(64) SharedState {
+    std::uint32_t magic;
+    std::uint32_t version;
+    volatile LONG sequence;
+    std::uint32_t flags;
+    std::uint64_t generation;
+};
+
+struct SharedSnapshot {
+    std::uint32_t flags = SharedStateNone;
+    std::uint64_t generation = 0U;
+};
+
+[[nodiscard]] inline bool has_flag(const SharedSnapshot &snapshot, SharedStateFlag flag) noexcept
+{
+    return (snapshot.flags & static_cast<std::uint32_t>(flag)) != 0U;
+}
+
+static_assert(sizeof(LONG) == sizeof(std::int32_t));
+static_assert(alignof(SharedState) == 64U);
+
+} // namespace chatview

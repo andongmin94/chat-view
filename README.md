@@ -36,13 +36,13 @@ docs/         Architecture and product constraints
 ### Requirements
 
 - Windows 10 version 2004 or newer
-- Visual Studio 2022 with Desktop development with C++
+- Visual Studio 2026 with Desktop development with C++ and Windows 11 SDK 10.0.26100
 - CMake 3.28 or newer
 - An OBS Studio development build or install prefix exposing:
   - `libobsConfig.cmake`
   - `obs-frontend-apiConfig.cmake`
 
-The active development target is OBS Studio 32.2.x. Older versions have not yet been qualified.
+The active development and CI target is OBS Studio 32.2.2 on Windows x64. Older OBS versions have not been qualified.
 
 Set the OBS CMake package prefix, then configure and build:
 
@@ -65,7 +65,7 @@ dist/
     └── locale/
 ```
 
-Copy the contents of `dist/` into the OBS Studio installation root for a development test.
+Copy the contents of `dist/` into the OBS Studio installation root for a development test. Every push to `OBS` also runs a pinned Windows build and uploads the same layout as a CI artifact.
 
 ## Expected behavior
 

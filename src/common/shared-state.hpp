@@ -38,5 +38,6 @@ struct SharedSnapshot {
 
 static_assert(sizeof(LONG) == sizeof(std::int32_t));
 static_assert(alignof(SharedState) == 64U);
+static_assert(sizeof(SharedState) == 64U);
 
 } // namespace chatview

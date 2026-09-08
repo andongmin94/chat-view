@@ -1,0 +1,132 @@
+name: Windows build
+
+on:
+  push:
+    branches:
+      - OBS
+  pull_request:
+    branches:
+      - OBS
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OBS_VERSION: "32.2.2"
+  OBS_COMMIT: ba2f32bdf791005443988a4955e963663e16b1ed
+
+jobs:
+  build:
+    name: Windows x64
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out ChatView
+        uses: actions/checkout@v4
+
+      - name: Check out pinned OBS Studio sources
+        uses: actions/checkout@v4
+        with:
+          repository: obsproject/obs-studio
+          ref: ${{ env.OBS_COMMIT }}
+          path: .ci/obs-studio
+          fetch-depth: 1
+
+      - name: Restore OBS dependency downloads
+        uses: actions/cache@v4
+        with:
+          path: .ci/obs-studio/.deps
+          key: obs-deps-windows-x64-${{ env.OBS_COMMIT }}
+
+      - name: Build OBS development libraries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $prefix = Join-Path $env:GITHUB_WORKSPACE '.ci/obs-prefix'
+
+          cmake -S .ci/obs-studio -B .ci/obs-build `
+            -G "Visual Studio 18 2026" `
+            -A "x64,version=10.0.26100.0" `
+            "-DOBS_VERSION_OVERRIDE:STRING=$env:OBS_VERSION" `
+            -DENABLE_BROWSER:BOOL=OFF `
+            -DENABLE_FRONTEND:BOOL=OFF `
+            -DENABLE_PLUGINS:BOOL=OFF `
+            -DENABLE_SCRIPTING:BOOL=OFF
+
+          cmake --build .ci/obs-build `
+            --target obs-frontend-api `
+            --config RelWithDebInfo `
+            --parallel
+
+          cmake --install .ci/obs-build `
+            --component Development `
+            --config RelWithDebInfo `
+            --prefix $prefix
+
+      - name: Build and install ChatView
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $prefix = (Resolve-Path '.ci/obs-prefix').Path
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'dist'
+
+          cmake -S . -B build/windows-x64 `
+            -G "Visual Studio 18 2026" `
+            -A "x64,version=10.0.26100.0" `
+            "-DCMAKE_PREFIX_PATH=$prefix" `
+            "-DCMAKE_INSTALL_PREFIX=$dist" `
+            -DCHATVIEW_WARNINGS_AS_ERRORS:BOOL=ON
+
+          cmake --build build/windows-x64 `
+            --config RelWithDebInfo `
+            --parallel
+
+          cmake --install build/windows-x64 `
+            --config RelWithDebInfo
+
+      - name: Validate package layout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $requiredFiles = @(
+            'dist/obs-plugins/64bit/chat-view-obs.dll',
+            'dist/obs-plugins/64bit/chat-view-hud.exe',
+            'dist/data/obs-plugins/chat-view-obs/locale/en-US.ini',
+            'dist/data/obs-plugins/chat-view-obs/locale/ko-KR.ini'
+          )
+
+          foreach ($file in $requiredFiles) {
+            if (-not (Test-Path $file -PathType Leaf)) {
+              throw "Missing package file: $file"
+            }
+          }
+
+      - name: Create Windows package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          Compress-Archive `
+            -Path dist/* `
+            -DestinationPath artifacts/chat-view-obs-windows-x64.zip `
+            -Force
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-view-obs-windows-x64
+          path: artifacts/chat-view-obs-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14

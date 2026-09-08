@@ -36,6 +36,11 @@ bool SharedStateReader::open(const std::wstring &mapping_name,
     }
 
     parent_process_.reset(OpenProcess(SYNCHRONIZE, FALSE, parent_process_id));
+    if (!parent_process_) {
+        close();
+        return false;
+    }
+
     return true;
 }
 

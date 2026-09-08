@@ -36,7 +36,7 @@ private:
 
     static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 
-    LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam);
+    LRESULT handle_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
     void render(DisplayMode mode);
     void hide();
     void arm_hide_timer(UINT milliseconds);

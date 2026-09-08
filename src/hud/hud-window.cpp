@@ -162,16 +162,17 @@ LRESULT CALLBACK HudWindow::window_proc(HWND window, UINT message, WPARAM wparam
         const auto *create = reinterpret_cast<const CREATESTRUCTW *>(lparam);
         self = static_cast<HudWindow *>(create->lpCreateParams);
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+        self->window_ = window;
     }
 
     if (self != nullptr) {
-        return self->handle_message(message, wparam, lparam);
+        return self->handle_message(window, message, wparam, lparam);
     }
 
     return DefWindowProcW(window, message, wparam, lparam);
 }
 
-LRESULT HudWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
+LRESULT HudWindow::handle_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
     switch (message) {
     case WM_TIMER:
@@ -202,7 +203,7 @@ LRESULT HudWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
         break;
     }
 
-    return DefWindowProcW(window_, message, wparam, lparam);
+    return DefWindowProcW(window, message, wparam, lparam);
 }
 
 void HudWindow::render(DisplayMode mode)

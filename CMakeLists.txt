@@ -11,6 +11,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
+option(CHATVIEW_WARNINGS_AS_ERRORS "Treat ChatView compiler warnings as errors" OFF)
+
 find_package(libobs REQUIRED)
 find_package(obs-frontend-api REQUIRED)
 
@@ -84,6 +86,9 @@ endforeach()
 if(MSVC)
     foreach(target chat-view-obs chat-view-hud)
         target_compile_options(${target} PRIVATE /W4 /permissive- /Zc:__cplusplus /utf-8)
+        if(CHATVIEW_WARNINGS_AS_ERRORS)
+            target_compile_options(${target} PRIVATE /WX)
+        endif()
     endforeach()
 endif()
 

@@ -54,17 +54,21 @@ The plugin and HUD ship as one package. Incompatible layouts increment the proto
 
 The current alpha renders an explicitly configured web chat page rather than implementing platform protocols inside OBS.
 
-Supported top-level URLs are currently restricted to:
+The settings application accepts either direct chat pages or normal CHZZK and YouTube broadcast links. The configuration layer converts supported broadcast links into one canonical chat URL before persistence:
 
 ```text
-https://weflab.com/page/...
-https://chzzk.naver.com/chat/...
-https://www.youtube.com/live_chat?...&v=...
+CHZZK /live/<channel-id> or /<channel-id>
+    → https://chzzk.naver.com/chat/<channel-id>
+
+YouTube /watch?v=<video-id>, /live/<video-id>, youtu.be/<video-id>
+    → https://www.youtube.com/live_chat?is_popout=1&v=<video-id>
 ```
+
+Weflab `/page/...` URLs remain direct. The normalizer requires HTTPS, the default HTTPS port, no URL credentials, supported paths, a 32-character hexadecimal CHZZK channel ID, and an ASCII YouTube video identifier. Unsupported or ambiguous links are rejected instead of being guessed.
 
 Configuration is stored by the separate native settings application in `%LOCALAPPDATA%\ChatView\config.ini`. Saving broadcasts a registered local Windows message so the HUD reloads immediately.
 
-Validation requires HTTPS, the default HTTPS port, no URL credentials, an exact allowlisted host, and an expected path. YouTube additionally requires a non-empty `v` video identifier. Top-level navigation outside the allowlisted hosts is cancelled and new windows are suppressed. Page subresources continue to load normally.
+Top-level WebView navigation is restricted to the supported hosts and new windows are suppressed. Page subresources continue to load normally.
 
 This web-content boundary is the smallest complete path that preserves the existing ChatView use case. First-party platform aggregation is a later backend/runtime layer and must not be half-integrated as unused provider code.
 
@@ -123,11 +127,13 @@ Using monitor-relative DIPs preserves useful placement across virtual-desktop re
 
 The Windows workflow builds against pinned OBS Studio 32.2.2 development libraries and a pinned WebView2 SDK. It then runs:
 
-- provider URL validation and configuration persistence tests;
+- provider URL normalization, rejection, and configuration persistence tests;
 - placement validation, monitor fallback, and malformed-input tests;
 - a real WebView2 HUD process smoke test covering initialization readiness, locked/edit modes, native resize, persistence, capture-exclusion request, shared-state shutdown, and delayed WebView profile cleanup;
 - package layout validation;
 - installer and uninstaller tests against an isolated OBS directory tree.
+
+The uploaded artifact contains the install tree directly, so users extract it once and run `install.cmd`.
 
 These checks prevent publishing a package with a broken controller-to-HUD path. They do not replace interactive qualification on a real broadcaster workstation, GPU driver stack, game, and capture configuration.
 

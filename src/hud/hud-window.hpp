@@ -5,6 +5,8 @@
 #include "common/shared-state.hpp"
 
 #include <Windows.h>
+#include <objidl.h>
+#include <propidl.h>
 
 #include <cstdint>
 

@@ -194,7 +194,9 @@ install(DIRECTORY data/ DESTINATION "data/obs-plugins/chat-view-obs")
 install(FILES
     README.md
     LICENSE
+    scripts/install.cmd
     scripts/install.ps1
+    scripts/uninstall.cmd
     scripts/uninstall.ps1
     scripts/ensure-webview2-runtime.ps1
     DESTINATION "."

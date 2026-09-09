@@ -8,6 +8,34 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Test-Administrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Invoke-ElevatedSelf {
+    $hostExecutable = (Get-Process -Id $PID).Path
+    $arguments = @(
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', "`"$PSCommandPath`"",
+        '-ObsPath', "`"$ObsPath`""
+    )
+
+    $process = Start-Process `
+        -FilePath $hostExecutable `
+        -Verb RunAs `
+        -ArgumentList $arguments `
+        -Wait `
+        -PassThru
+    exit $process.ExitCode
+}
+
+if (-not (Test-Administrator)) {
+    Invoke-ElevatedSelf
+}
+
 if (Get-Process -Name 'obs64' -ErrorAction SilentlyContinue) {
     throw 'Close OBS Studio before uninstalling ChatView OBS.'
 }

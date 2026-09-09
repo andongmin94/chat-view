@@ -27,12 +27,8 @@ The renderer remains out of process deliberately. A browser or desktop-rendering
 
 1. Download and extract `chat-view-obs-windows-x64.zip` from a successful Windows workflow run.
 2. Close OBS Studio.
-3. Open an elevated PowerShell terminal in the extracted directory.
-4. Run:
-
-```powershell
-./install.ps1
-```
+3. Double-click `install.cmd` and approve the Windows administrator prompt.
+4. Start OBS Studio and open **Tools → ChatView Settings...**.
 
 The installer verifies the Microsoft Edge WebView2 Runtime and installs it when missing. It then copies the plugin, HUD, settings application, and locale files into the default OBS directory:
 
@@ -40,19 +36,13 @@ The installer verifies the Microsoft Edge WebView2 Runtime and installs it when 
 C:\Program Files\obs-studio
 ```
 
-Use a different OBS root explicitly when required:
+For a non-default OBS directory, open PowerShell in the extracted package and run:
 
 ```powershell
 ./install.ps1 -ObsPath "D:\Apps\obs-studio"
 ```
 
-Remove the installed files with:
-
-```powershell
-./uninstall.ps1
-```
-
-User settings in `%LOCALAPPDATA%\ChatView` are retained on uninstall.
+Double-click `uninstall.cmd` to remove the default installation, or pass a custom OBS root to `uninstall.ps1`. User settings in `%LOCALAPPDATA%\ChatView` are retained on uninstall.
 
 ## Configure chat
 
@@ -144,7 +134,9 @@ The install tree is written to `dist/` and contains:
 
 ```text
 dist/
+├── install.cmd
 ├── install.ps1
+├── uninstall.cmd
 ├── uninstall.ps1
 ├── ensure-webview2-runtime.ps1
 ├── README.md

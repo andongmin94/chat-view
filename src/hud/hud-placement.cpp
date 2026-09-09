@@ -274,14 +274,10 @@ RECT resolve_hud_bounds(const HudPlacement &placement, int margin_dip) noexcept
     const int height_dip = placement.valid ? placement.height_dip : kDefaultHudHeightDip;
     int width = dip_to_pixel(width_dip, dpi);
     int height = dip_to_pixel(height_dip, dpi);
-    width = std::clamp(
-        width,
-        1,
-        std::max(1, info.rcWork.right - info.rcWork.left));
-    height = std::clamp(
-        height,
-        1,
-        std::max(1, info.rcWork.bottom - info.rcWork.top));
+    const int work_width = static_cast<int>(info.rcWork.right - info.rcWork.left);
+    const int work_height = static_cast<int>(info.rcWork.bottom - info.rcWork.top);
+    width = std::clamp(width, 1, std::max(1, work_width));
+    height = std::clamp(height, 1, std::max(1, work_height));
 
     LONG x = 0;
     LONG y = 0;

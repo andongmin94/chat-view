@@ -2,6 +2,7 @@
 
 #include "common/shared-state.hpp"
 #include "common/win32-handle.hpp"
+#include "common/window-messages.hpp"
 
 #include <Windows.h>
 
@@ -18,7 +19,6 @@
 namespace {
 
 constexpr wchar_t kHudWindowClass[] = L"ChatViewObsHudWindow";
-constexpr WPARAM kEditHotkeyId = 1U;
 constexpr DWORD kStartupTimeoutMs = 25000U;
 constexpr DWORD kShutdownTimeoutMs = 8000U;
 constexpr DWORD kWindowStateTimeoutMs = 3000U;
@@ -305,7 +305,13 @@ int wmain(int argument_count, wchar_t **arguments)
         return fail(L"The HUD did not request capture exclusion", child_process.get());
     }
 
-    if (!PostMessageW(window, WM_HOTKEY, kEditHotkeyId, 0L)) {
+    const UINT toggle_edit_message =
+        RegisterWindowMessageW(chatview::kToggleEditMessageName);
+    if (toggle_edit_message == 0U) {
+        return fail(L"Failed to register the overlay edit control message", child_process.get());
+    }
+
+    if (!PostMessageW(window, toggle_edit_message, 0U, 0L)) {
         return fail(L"Failed to request HUD edit mode", child_process.get());
     }
     if (!wait_for_style(
@@ -334,7 +340,7 @@ int wmain(int argument_count, wchar_t **arguments)
         return fail(L"The HUD did not accept a resized bound", child_process.get());
     }
 
-    if (!PostMessageW(window, WM_HOTKEY, kEditHotkeyId, 0L)) {
+    if (!PostMessageW(window, toggle_edit_message, 0U, 0L)) {
         return fail(L"Failed to request HUD lock mode", child_process.get());
     }
     if (!wait_for_style(window, locked_style, 0)) {

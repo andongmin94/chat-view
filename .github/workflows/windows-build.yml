@@ -19,13 +19,14 @@ concurrency:
 env:
   OBS_VERSION: "32.2.2"
   OBS_COMMIT: ba2f32bdf791005443988a4955e963663e16b1ed
+  OBS_PORTABLE_SHA256: 4d6e40e3ab155f56b30de517380566a206d74b63cdf5ad49aa596924768f97e1
   WEBVIEW2_VERSION: "1.0.4129.50"
 
 jobs:
   build:
     name: Windows x64
     runs-on: windows-2025-vs2026
-    timeout-minutes: 50
+    timeout-minutes: 65
 
     steps:
       - name: Check out ChatView
@@ -240,6 +241,71 @@ jobs:
             if (Test-Path $file) {
               throw "Uninstaller did not remove: $file"
             }
+          }
+
+      - name: Restore official OBS portable archive
+        id: obs-portable-cache
+        uses: actions/cache@v4
+        with:
+          path: .ci/OBS-Studio-${{ env.OBS_VERSION }}-Windows-x64.zip
+          key: official-obs-portable-${{ env.OBS_VERSION }}-${{ env.OBS_PORTABLE_SHA256 }}
+
+      - name: Download official OBS portable archive
+        if: steps.obs-portable-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          New-Item -ItemType Directory -Path .ci -Force | Out-Null
+          $archive = ".ci/OBS-Studio-$env:OBS_VERSION-Windows-x64.zip"
+          $url = "https://github.com/obsproject/obs-studio/releases/download/$env:OBS_VERSION/OBS-Studio-$env:OBS_VERSION-Windows-x64.zip"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actualHash -ne $env:OBS_PORTABLE_SHA256) {
+            throw "Official OBS archive hash mismatch: $actualHash"
+          }
+
+      - name: Test package inside official OBS Studio
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $archive = (Resolve-Path ".ci/OBS-Studio-$env:OBS_VERSION-Windows-x64.zip").Path
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actualHash -ne $env:OBS_PORTABLE_SHA256) {
+            throw "Cached official OBS archive hash mismatch: $actualHash"
+          }
+
+          $runtime = Join-Path $env:GITHUB_WORKSPACE '.ci/obs-runtime-test'
+          Remove-Item -LiteralPath $runtime -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $archive -DestinationPath $runtime -Force
+
+          $obsExecutables = @(Get-ChildItem $runtime -Recurse -File -Filter obs64.exe |
+            Where-Object { $_.FullName -match '[\\/]bin[\\/]64bit[\\/]obs64\.exe$' })
+          if ($obsExecutables.Count -ne 1) {
+            throw "Expected one official OBS executable, found $($obsExecutables.Count)"
+          }
+          $obsRoot = $obsExecutables[0].Directory.Parent.Parent.FullName
+
+          $env:LOCALAPPDATA = Join-Path $env:GITHUB_WORKSPACE '.ci/obs-runtime-localappdata'
+          Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $env:LOCALAPPDATA -Force | Out-Null
+
+          & ./dist/install.ps1 -ObsPath $obsRoot
+          $runtimeTest = (Resolve-Path 'build/windows-x64/RelWithDebInfo/chat-view-obs-runtime-test.exe').Path
+
+          try {
+            & $runtimeTest $obsRoot
+          }
+          catch {
+            Get-ChildItem $runtime -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match '\.(txt|log)$' } |
+              Select-String -Pattern 'ChatView|Failed to load|module' -SimpleMatch:$false -ErrorAction SilentlyContinue |
+              Select-Object -Last 200 |
+              ForEach-Object { Write-Host $_.Line }
+            throw
           }
 
       - name: Upload Windows package

@@ -218,6 +218,21 @@ if(BUILD_TESTING)
         COMMAND chat-view-obs-load-test ${obs_load_test_arguments}
     )
     set_tests_properties(chat-view-obs-load PROPERTIES TIMEOUT 10)
+
+    add_executable(chat-view-obs-runtime-test
+        tests/obs-runtime-smoke-test.cpp
+        src/common/win32-handle.hpp
+    )
+    target_include_directories(chat-view-obs-runtime-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    target_compile_definitions(chat-view-obs-runtime-test PRIVATE
+        UNICODE
+        _UNICODE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        _WIN32_WINNT=0x0A00
+        WINVER=0x0A00
+    )
+    chatview_enable_warnings(chat-view-obs-runtime-test)
 endif()
 
 install(TARGETS chat-view-obs chat-view-hud chat-view-config

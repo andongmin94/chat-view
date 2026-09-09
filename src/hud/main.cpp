@@ -103,6 +103,20 @@ bool parse_options(Options &options)
            options.parent_process_id != 0U;
 }
 
+bool dispatch_pending_messages(int &exit_code)
+{
+    MSG message{};
+    while (PeekMessageW(&message, nullptr, 0U, 0U, PM_REMOVE)) {
+        if (message.message == WM_QUIT) {
+            exit_code = static_cast<int>(message.wParam);
+            return false;
+        }
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+    return true;
+}
+
 int run(HINSTANCE instance, const Options &options)
 {
     chatview::SharedStateReader state_reader;
@@ -143,11 +157,23 @@ int run(HINSTANCE instance, const Options &options)
     int exit_code = 0;
     bool running = true;
     while (running) {
-        const DWORD wait_result =
-            MsgWaitForMultipleObjects(handle_count, wait_handles, FALSE, INFINITE, QS_ALLINPUT);
+        if (!dispatch_pending_messages(exit_code)) {
+            break;
+        }
+
+        const DWORD wait_result = MsgWaitForMultipleObjectsEx(
+            handle_count,
+            wait_handles,
+            INFINITE,
+            QS_ALLINPUT,
+            MWMO_ALERTABLE | MWMO_INPUTAVAILABLE);
         if (wait_result == WAIT_FAILED) {
             exit_code = 7;
             break;
+        }
+
+        if (wait_result == WAIT_IO_COMPLETION) {
+            continue;
         }
 
         if (wait_result == WAIT_OBJECT_0) {
@@ -163,20 +189,11 @@ int run(HINSTANCE instance, const Options &options)
         }
 
         if (wait_result == WAIT_OBJECT_0 + handle_count) {
-            MSG message{};
-            while (PeekMessageW(&message, nullptr, 0U, 0U, PM_REMOVE)) {
-                if (message.message == WM_QUIT) {
-                    exit_code = static_cast<int>(message.wParam);
-                    running = false;
-                    break;
-                }
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
-            }
             continue;
         }
 
-        break;
+        exit_code = 8;
+        running = false;
     }
 
     hud_window.destroy();

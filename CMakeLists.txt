@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.2.1 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.2.2 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -54,20 +54,24 @@ function(chatview_set_runtime_output target)
     endforeach()
 endfunction()
 
+function(chatview_enable_win32 target)
+    target_compile_definitions(${target} PRIVATE
+        UNICODE
+        _UNICODE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        _WIN32_WINNT=0x0A00
+        WINVER=0x0A00
+    )
+endfunction()
+
 add_library(chat-view-common STATIC
     src/common/chat-config.cpp
     src/common/chat-config.hpp
 )
 target_include_directories(chat-view-common PUBLIC "${CHATVIEW_SOURCE_DIR}")
 target_link_libraries(chat-view-common PUBLIC winhttp)
-target_compile_definitions(chat-view-common PUBLIC
-    UNICODE
-    _UNICODE
-    WIN32_LEAN_AND_MEAN
-    NOMINMAX
-    _WIN32_WINNT=0x0A00
-    WINVER=0x0A00
-)
+chatview_enable_win32(chat-view-common)
 chatview_enable_warnings(chat-view-common)
 
 add_library(chat-view-obs MODULE
@@ -80,15 +84,8 @@ add_library(chat-view-obs MODULE
 )
 target_include_directories(chat-view-obs PRIVATE "${CHATVIEW_SOURCE_DIR}")
 target_link_libraries(chat-view-obs PRIVATE OBS::libobs OBS::obs-frontend-api)
-target_compile_definitions(chat-view-obs PRIVATE
-    UNICODE
-    _UNICODE
-    WIN32_LEAN_AND_MEAN
-    NOMINMAX
-    _WIN32_WINNT=0x0A00
-    WINVER=0x0A00
-    CHATVIEW_VERSION="${PROJECT_VERSION}"
-)
+target_compile_definitions(chat-view-obs PRIVATE CHATVIEW_VERSION="${PROJECT_VERSION}")
+chatview_enable_win32(chat-view-obs)
 set_target_properties(chat-view-obs PROPERTIES PREFIX "" OUTPUT_NAME "chat-view-obs")
 chatview_enable_warnings(chat-view-obs)
 chatview_set_runtime_output(chat-view-obs)
@@ -127,6 +124,7 @@ target_compile_definitions(chat-view-hud PRIVATE
     WEBVIEW2_STATIC
     CHATVIEW_VERSION="${PROJECT_VERSION}"
 )
+chatview_enable_win32(chat-view-hud)
 set_target_properties(chat-view-hud PROPERTIES OUTPUT_NAME "chat-view-hud")
 chatview_enable_warnings(chat-view-hud)
 chatview_set_runtime_output(chat-view-hud)
@@ -138,9 +136,30 @@ add_executable(chat-view-config WIN32
 target_include_directories(chat-view-config PRIVATE "${CHATVIEW_SOURCE_DIR}")
 target_link_libraries(chat-view-config PRIVATE chat-view-common user32 gdi32)
 target_compile_definitions(chat-view-config PRIVATE CHATVIEW_VERSION="${PROJECT_VERSION}")
+chatview_enable_win32(chat-view-config)
 set_target_properties(chat-view-config PROPERTIES OUTPUT_NAME "chat-view-config")
 chatview_enable_warnings(chat-view-config)
 chatview_set_runtime_output(chat-view-config)
+
+add_executable(chat-view-self-test
+    src/preflight/hud-self-test.cpp
+    src/common/shared-state.hpp
+    src/common/win32-handle.hpp
+    src/common/window-messages.hpp
+)
+target_include_directories(chat-view-self-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+target_link_libraries(chat-view-self-test PRIVATE user32)
+chatview_enable_win32(chat-view-self-test)
+set_target_properties(chat-view-self-test PROPERTIES OUTPUT_NAME "chat-view-self-test")
+chatview_enable_warnings(chat-view-self-test)
+
+add_executable(chat-view-plugin-preflight
+    src/preflight/plugin-load-test.cpp
+)
+chatview_enable_win32(chat-view-plugin-preflight)
+set_target_properties(
+    chat-view-plugin-preflight PROPERTIES OUTPUT_NAME "chat-view-plugin-preflight")
+chatview_enable_warnings(chat-view-plugin-preflight)
 
 if(BUILD_TESTING)
     add_executable(chat-view-chat-config-test
@@ -157,52 +176,15 @@ if(BUILD_TESTING)
     )
     target_include_directories(chat-view-hud-placement-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
     target_link_libraries(chat-view-hud-placement-test PRIVATE user32)
-    target_compile_definitions(chat-view-hud-placement-test PRIVATE
-        UNICODE
-        _UNICODE
-        WIN32_LEAN_AND_MEAN
-        NOMINMAX
-        _WIN32_WINNT=0x0A00
-        WINVER=0x0A00
-    )
+    chatview_enable_win32(chat-view-hud-placement-test)
     chatview_enable_warnings(chat-view-hud-placement-test)
     add_test(NAME chat-view-hud-placement COMMAND chat-view-hud-placement-test)
 
-    add_executable(chat-view-hud-smoke-test
-        tests/hud-smoke-test.cpp
-        src/common/shared-state.hpp
-        src/common/win32-handle.hpp
-        src/common/window-messages.hpp
-    )
-    target_include_directories(chat-view-hud-smoke-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
-    target_link_libraries(chat-view-hud-smoke-test PRIVATE user32)
-    target_compile_definitions(chat-view-hud-smoke-test PRIVATE
-        UNICODE
-        _UNICODE
-        WIN32_LEAN_AND_MEAN
-        NOMINMAX
-        _WIN32_WINNT=0x0A00
-        WINVER=0x0A00
-    )
-    chatview_enable_warnings(chat-view-hud-smoke-test)
     add_test(
         NAME chat-view-hud-smoke
-        COMMAND chat-view-hud-smoke-test "$<TARGET_FILE:chat-view-hud>"
+        COMMAND chat-view-self-test "$<TARGET_FILE:chat-view-hud>"
     )
     set_tests_properties(chat-view-hud-smoke PROPERTIES TIMEOUT 30)
-
-    add_executable(chat-view-obs-load-test
-        tests/obs-module-load-test.cpp
-    )
-    target_compile_definitions(chat-view-obs-load-test PRIVATE
-        UNICODE
-        _UNICODE
-        WIN32_LEAN_AND_MEAN
-        NOMINMAX
-        _WIN32_WINNT=0x0A00
-        WINVER=0x0A00
-    )
-    chatview_enable_warnings(chat-view-obs-load-test)
 
     set(obs_load_test_arguments
         "$<TARGET_FILE:chat-view-obs>"
@@ -215,7 +197,7 @@ if(BUILD_TESTING)
 
     add_test(
         NAME chat-view-obs-load
-        COMMAND chat-view-obs-load-test ${obs_load_test_arguments}
+        COMMAND chat-view-plugin-preflight ${obs_load_test_arguments}
     )
     set_tests_properties(chat-view-obs-load PROPERTIES TIMEOUT 10)
 
@@ -224,20 +206,16 @@ if(BUILD_TESTING)
         src/common/win32-handle.hpp
     )
     target_include_directories(chat-view-obs-runtime-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
-    target_compile_definitions(chat-view-obs-runtime-test PRIVATE
-        UNICODE
-        _UNICODE
-        WIN32_LEAN_AND_MEAN
-        NOMINMAX
-        _WIN32_WINNT=0x0A00
-        WINVER=0x0A00
-    )
+    chatview_enable_win32(chat-view-obs-runtime-test)
     chatview_enable_warnings(chat-view-obs-runtime-test)
 endif()
 
 install(TARGETS chat-view-obs chat-view-hud chat-view-config
     RUNTIME DESTINATION "obs-plugins/64bit"
     LIBRARY DESTINATION "obs-plugins/64bit"
+)
+install(TARGETS chat-view-self-test chat-view-plugin-preflight
+    RUNTIME DESTINATION "."
 )
 install(DIRECTORY data/ DESTINATION "data/obs-plugins/chat-view-obs")
 install(FILES

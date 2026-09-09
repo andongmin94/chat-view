@@ -69,9 +69,9 @@ int fail(const std::wstring &message)
 
 int wmain(int argument_count, wchar_t **arguments)
 {
-    if (argument_count < 4) {
+    if (argument_count < 3) {
         return fail(
-            L"Expected the plugin path, OBS runtime directory, and frontend API directory");
+            L"Expected the plugin path followed by at least one OBS DLL directory");
     }
 
     const std::filesystem::path plugin_path =

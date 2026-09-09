@@ -173,7 +173,9 @@ jobs:
           $binaries = @(
             'dist/obs-plugins/64bit/chat-view-obs.dll',
             'dist/obs-plugins/64bit/chat-view-hud.exe',
-            'dist/obs-plugins/64bit/chat-view-config.exe'
+            'dist/obs-plugins/64bit/chat-view-config.exe',
+            'dist/chat-view-self-test.exe',
+            'dist/chat-view-plugin-preflight.exe'
           )
 
           foreach ($binary in $binaries) {
@@ -194,6 +196,8 @@ jobs:
             'dist/obs-plugins/64bit/chat-view-obs.dll',
             'dist/obs-plugins/64bit/chat-view-hud.exe',
             'dist/obs-plugins/64bit/chat-view-config.exe',
+            'dist/chat-view-self-test.exe',
+            'dist/chat-view-plugin-preflight.exe',
             'dist/data/obs-plugins/chat-view-obs/locale/en-US.ini',
             'dist/data/obs-plugins/chat-view-obs/locale/ko-KR.ini',
             'dist/install.cmd',
@@ -208,38 +212,6 @@ jobs:
           foreach ($file in $requiredFiles) {
             if (-not (Test-Path $file -PathType Leaf)) {
               throw "Missing package file: $file"
-            }
-          }
-
-      - name: Test package installer
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          $fakeObs = Join-Path $env:GITHUB_WORKSPACE '.ci/fake-obs'
-          New-Item -ItemType Directory -Path (Join-Path $fakeObs 'bin/64bit') -Force | Out-Null
-          New-Item -ItemType File -Path (Join-Path $fakeObs 'bin/64bit/obs64.exe') -Force | Out-Null
-
-          & ./dist/install.ps1 -ObsPath $fakeObs -SkipObsVersionCheck
-
-          $installedFiles = @(
-            (Join-Path $fakeObs 'obs-plugins/64bit/chat-view-obs.dll'),
-            (Join-Path $fakeObs 'obs-plugins/64bit/chat-view-hud.exe'),
-            (Join-Path $fakeObs 'obs-plugins/64bit/chat-view-config.exe'),
-            (Join-Path $fakeObs 'data/obs-plugins/chat-view-obs/locale/en-US.ini'),
-            (Join-Path $fakeObs 'data/obs-plugins/chat-view-obs/locale/ko-KR.ini')
-          )
-          foreach ($file in $installedFiles) {
-            if (-not (Test-Path $file -PathType Leaf)) {
-              throw "Installer did not create: $file"
-            }
-          }
-
-          & ./dist/uninstall.ps1 -ObsPath $fakeObs
-
-          foreach ($file in $installedFiles) {
-            if (Test-Path $file) {
-              throw "Uninstaller did not remove: $file"
             }
           }
 
@@ -266,7 +238,7 @@ jobs:
             throw "Official OBS archive hash mismatch: $actualHash"
           }
 
-      - name: Test package inside official OBS Studio
+      - name: Test installation and runtime inside official OBS Studio
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -293,10 +265,24 @@ jobs:
           Remove-Item -LiteralPath $env:LOCALAPPDATA -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $env:LOCALAPPDATA -Force | Out-Null
 
-          & ./dist/install.ps1 -ObsPath $obsRoot
-          $runtimeTest = (Resolve-Path 'build/windows-x64/RelWithDebInfo/chat-view-obs-runtime-test.exe').Path
+          $installedFiles = @(
+            (Join-Path $obsRoot 'obs-plugins/64bit/chat-view-obs.dll'),
+            (Join-Path $obsRoot 'obs-plugins/64bit/chat-view-hud.exe'),
+            (Join-Path $obsRoot 'obs-plugins/64bit/chat-view-config.exe'),
+            (Join-Path $obsRoot 'data/obs-plugins/chat-view-obs/locale/en-US.ini'),
+            (Join-Path $obsRoot 'data/obs-plugins/chat-view-obs/locale/ko-KR.ini')
+          )
 
           try {
+            & ./dist/install.ps1 -ObsPath $obsRoot
+
+            foreach ($file in $installedFiles) {
+              if (-not (Test-Path $file -PathType Leaf)) {
+                throw "Installer did not create: $file"
+              }
+            }
+
+            $runtimeTest = (Resolve-Path 'build/windows-x64/RelWithDebInfo/chat-view-obs-runtime-test.exe').Path
             & $runtimeTest $obsRoot
           }
           catch {
@@ -306,6 +292,18 @@ jobs:
               Select-Object -Last 200 |
               ForEach-Object { Write-Host $_.Line }
             throw
+          }
+          finally {
+            Get-Process -Name 'obs64' -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
+            & ./dist/uninstall.ps1 -ObsPath $obsRoot
+          }
+
+          foreach ($file in $installedFiles) {
+            if (Test-Path $file) {
+              throw "Uninstaller did not remove: $file"
+            }
           }
 
       - name: Upload Windows package

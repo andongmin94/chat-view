@@ -2,16 +2,14 @@
 param(
     [Parameter()]
     [ValidateNotNullOrEmpty()]
-    [string]$ObsPath = (Join-Path $env:ProgramFiles 'obs-studio'),
-
-    [Parameter()]
-    [switch]$SkipObsVersionCheck
+    [string]$ObsPath = (Join-Path $env:ProgramFiles 'obs-studio')
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $SupportedObsVersion = '32.2.2'
+$MinimumWindowsBuild = 19041
 
 function Test-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -27,9 +25,6 @@ function Invoke-ElevatedSelf {
         '-File', "`"$PSCommandPath`"",
         '-ObsPath', "`"$ObsPath`""
     )
-    if ($SkipObsVersionCheck) {
-        $arguments += '-SkipObsVersionCheck'
-    }
 
     $process = Start-Process `
         -FilePath $hostExecutable `
@@ -38,6 +33,17 @@ function Invoke-ElevatedSelf {
         -Wait `
         -PassThru
     exit $process.ExitCode
+}
+
+function Assert-SupportedWindows {
+    if (-not [Environment]::Is64BitOperatingSystem) {
+        throw 'ChatView OBS requires 64-bit Windows.'
+    }
+
+    $version = [Environment]::OSVersion.Version
+    if ($version.Major -lt 10 -or $version.Build -lt $MinimumWindowsBuild) {
+        throw "ChatView OBS requires Windows 10 build $MinimumWindowsBuild or newer. Detected $version."
+    }
 }
 
 function Resolve-ObsRoot {
@@ -49,16 +55,33 @@ function Resolve-ObsRoot {
         throw "OBS Studio was not found at '$root'. Expected '$executable'."
     }
 
-    if (-not $SkipObsVersionCheck) {
-        $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($executable)
-        $versionText = "$($versionInfo.ProductVersion) $($versionInfo.FileVersion)"
-        $escapedVersion = [regex]::Escape($SupportedObsVersion)
-        if ($versionText -notmatch "(^|[^0-9])$escapedVersion([^0-9]|$)") {
-            throw "ChatView OBS currently supports OBS Studio $SupportedObsVersion x64 only. Detected '$versionText'."
-        }
+    $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($executable)
+    $versionText = "$($versionInfo.ProductVersion) $($versionInfo.FileVersion)"
+    $escapedVersion = [regex]::Escape($SupportedObsVersion)
+    if ($versionText -notmatch "(^|[^0-9])$escapedVersion([^0-9]|$)") {
+        throw "ChatView OBS currently supports OBS Studio $SupportedObsVersion x64 only. Detected '$versionText'."
     }
 
     return $root
+}
+
+function Invoke-NativePreflight {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Executable,
+
+        [Parameter(Mandatory)]
+        [string[]]$Arguments,
+
+        [Parameter(Mandatory)]
+        [string]$FailureMessage
+    )
+
+    & $Executable @Arguments
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        throw "$FailureMessage (exit code $exitCode). No ChatView files were installed."
+    }
 }
 
 function Copy-ChatViewFilesTransactionally {
@@ -157,20 +180,26 @@ $packageFiles = @(
     }
 )
 
-foreach ($file in $packageFiles) {
-    if (-not (Test-Path $file.Source -PathType Leaf)) {
-        throw "Package file is missing: $($file.Source)"
-    }
-}
-
 $runtimeInstaller = Join-Path $PSScriptRoot 'ensure-webview2-runtime.ps1'
-if (-not (Test-Path $runtimeInstaller -PathType Leaf)) {
-    throw "Package file is missing: $runtimeInstaller"
+$selfTest = Join-Path $PSScriptRoot 'chat-view-self-test.exe'
+$pluginPreflight = Join-Path $PSScriptRoot 'chat-view-plugin-preflight.exe'
+$requiredPackageFiles = @(
+    $runtimeInstaller,
+    $selfTest,
+    $pluginPreflight
+) + @($packageFiles | ForEach-Object { $_.Source })
+
+foreach ($file in $requiredPackageFiles) {
+    if (-not (Test-Path $file -PathType Leaf)) {
+        throw "Package file is missing: $file"
+    }
 }
 
 if (-not (Test-Administrator)) {
     Invoke-ElevatedSelf
 }
+
+Assert-SupportedWindows
 
 if (Get-Process -Name 'obs64' -ErrorAction SilentlyContinue) {
     throw 'Close OBS Studio before installing ChatView OBS.'
@@ -178,6 +207,21 @@ if (Get-Process -Name 'obs64' -ErrorAction SilentlyContinue) {
 
 $obsRoot = Resolve-ObsRoot -Path $ObsPath
 & $runtimeInstaller
+
+Write-Host 'Running the local transparent-HUD preflight...'
+Invoke-NativePreflight `
+    -Executable $selfTest `
+    -Arguments @((Join-Path $PSScriptRoot 'obs-plugins\64bit\chat-view-hud.exe')) `
+    -FailureMessage 'The ChatView HUD preflight failed on this PC'
+
+Write-Host 'Checking the plugin against the installed OBS runtime...'
+Invoke-NativePreflight `
+    -Executable $pluginPreflight `
+    -Arguments @(
+        (Join-Path $PSScriptRoot 'obs-plugins\64bit\chat-view-obs.dll'),
+        (Join-Path $obsRoot 'bin\64bit')
+    ) `
+    -FailureMessage 'The ChatView plugin could not be loaded against this OBS installation'
 
 $files = foreach ($file in $packageFiles) {
     [pscustomobject]@{
@@ -188,4 +232,4 @@ $files = foreach ($file in $packageFiles) {
 Copy-ChatViewFilesTransactionally -Files $files
 
 Write-Host "ChatView OBS $SupportedObsVersion-compatible build was installed to '$obsRoot'."
-Write-Host 'Start OBS Studio, then open Tools > ChatView Settings.'
+Write-Host 'All local preflight checks passed. Start OBS Studio, then open Tools > ChatView Settings.'

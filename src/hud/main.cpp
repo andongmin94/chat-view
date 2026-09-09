@@ -16,6 +16,8 @@ namespace {
 
 class ComSession final {
 public:
+    ComSession() = default;
+
     [[nodiscard]] bool start() noexcept
     {
         const HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);

@@ -21,7 +21,7 @@ public:
     HudWindow(const HudWindow &) = delete;
     HudWindow &operator=(const HudWindow &) = delete;
 
-    [[nodiscard]] bool create(HINSTANCE instance);
+    [[nodiscard]] bool create(HINSTANCE instance, HANDLE ready_event = nullptr);
     void destroy() noexcept;
 
     void show_ready();
@@ -47,6 +47,7 @@ private:
 
     HWND window_ = nullptr;
     HINSTANCE instance_ = nullptr;
+    HANDLE ready_event_ = nullptr;
     UINT config_changed_message_ = 0U;
     WebViewHost webview_;
     HudPlacement placement_;

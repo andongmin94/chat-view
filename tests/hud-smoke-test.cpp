@@ -17,7 +17,7 @@ namespace {
 
 constexpr wchar_t kHudWindowClass[] = L"ChatViewObsHudWindow";
 constexpr WPARAM kEditHotkeyId = 1U;
-constexpr DWORD kStartupTimeoutMs = 15000U;
+constexpr DWORD kStartupTimeoutMs = 25000U;
 constexpr DWORD kShutdownTimeoutMs = 8000U;
 constexpr DWORD kWindowStateTimeoutMs = 3000U;
 
@@ -78,7 +78,7 @@ BOOL CALLBACK find_hud_window(HWND window, LPARAM data)
 
 HWND wait_for_hud_window(HANDLE process, DWORD process_id) noexcept
 {
-    const ULONGLONG deadline = GetTickCount64() + kStartupTimeoutMs;
+    const ULONGLONG deadline = GetTickCount64() + kWindowStateTimeoutMs;
     while (GetTickCount64() < deadline) {
         if (WaitForSingleObject(process, 0U) != WAIT_TIMEOUT) {
             return nullptr;
@@ -86,10 +86,10 @@ HWND wait_for_hud_window(HANDLE process, DWORD process_id) noexcept
 
         WindowSearch search{process_id, nullptr};
         EnumWindows(&find_hud_window, reinterpret_cast<LPARAM>(&search));
-        if (search.window != nullptr && IsWindowVisible(search.window)) {
+        if (search.window != nullptr) {
             return search.window;
         }
-        Sleep(50U);
+        Sleep(25U);
     }
     return nullptr;
 }
@@ -141,6 +141,18 @@ int fail(const wchar_t *message, HANDLE process = nullptr)
     return 1;
 }
 
+int fail_process_exit(HANDLE process)
+{
+    DWORD exit_code = 0U;
+    if (!GetExitCodeProcess(process, &exit_code)) {
+        return fail(L"The HUD exited before reporting readiness");
+    }
+
+    std::wcerr << L"The HUD exited before reporting readiness (exit code "
+               << exit_code << L")\n";
+    return 1;
+}
+
 } // namespace
 
 int wmain(int argument_count, wchar_t **arguments)
@@ -158,6 +170,7 @@ int wmain(int argument_count, wchar_t **arguments)
     const std::wstring suffix = std::to_wstring(process_id);
     const std::wstring mapping_name = L"Local\\ChatViewOBS.Test.State." + suffix;
     const std::wstring event_name = L"Local\\ChatViewOBS.Test.Event." + suffix;
+    const std::wstring ready_event_name = L"Local\\ChatViewOBS.Test.Ready." + suffix;
 
     chatview::UniqueHandle mapping(CreateFileMappingW(
         INVALID_HANDLE_VALUE,
@@ -187,6 +200,12 @@ int wmain(int argument_count, wchar_t **arguments)
         return fail(L"Failed to create the smoke-test event");
     }
 
+    chatview::UniqueHandle ready_event(
+        CreateEventW(nullptr, TRUE, FALSE, ready_event_name.c_str()));
+    if (!ready_event) {
+        return fail(L"Failed to create the smoke-test readiness event");
+    }
+
     ZeroMemory(mapped_state.get(), sizeof(chatview::SharedState));
     mapped_state.get()->magic = chatview::kSharedStateMagic;
     mapped_state.get()->version = chatview::kSharedStateVersion;
@@ -210,7 +229,8 @@ int wmain(int argument_count, wchar_t **arguments)
 
     std::wstring command_line =
         L"\"" + hud_path.wstring() + L"\" --mapping \"" + mapping_name +
-        L"\" --event \"" + event_name + L"\" --parent " + suffix;
+        L"\" --event \"" + event_name + L"\" --ready-event \"" +
+        ready_event_name + L"\" --parent " + suffix;
 
     STARTUPINFOW startup_info{};
     startup_info.cb = sizeof(startup_info);
@@ -233,9 +253,22 @@ int wmain(int argument_count, wchar_t **arguments)
     chatview::UniqueHandle child_process(child_info.hProcess);
     child_thread.reset();
 
+    HANDLE startup_handles[2] = {ready_event.get(), child_process.get()};
+    const DWORD startup_result =
+        WaitForMultipleObjects(2U, startup_handles, FALSE, kStartupTimeoutMs);
+    if (startup_result == WAIT_OBJECT_0 + 1U) {
+        return fail_process_exit(child_process.get());
+    }
+    if (startup_result != WAIT_OBJECT_0) {
+        return fail(L"The WebView2 HUD did not report readiness", child_process.get());
+    }
+
     HWND window = wait_for_hud_window(child_process.get(), child_info.dwProcessId);
     if (window == nullptr) {
-        return fail(L"The WebView2 HUD window did not become visible", child_process.get());
+        return fail(L"The ready HUD window could not be enumerated", child_process.get());
+    }
+    if (!IsWindowVisible(window)) {
+        return fail(L"The ready HUD window was not visible", child_process.get());
     }
 
     constexpr LONG_PTR locked_style =

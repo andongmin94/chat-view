@@ -49,9 +49,10 @@ HudWindow::~HudWindow()
     destroy();
 }
 
-bool HudWindow::create(HINSTANCE instance)
+bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
 {
     instance_ = instance;
+    ready_event_ = ready_event;
 
     WNDCLASSEXW window_class{};
     window_class.cbSize = sizeof(window_class);
@@ -118,9 +119,7 @@ bool HudWindow::create(HINSTANCE instance)
 
 void HudWindow::destroy() noexcept
 {
-    if (window_ != nullptr) {
-        KillTimer(window_, kStatusTimerId);
-    }
+    KillTimer(window_, kStatusTimerId);
 
     if (window_ != nullptr && edit_hotkey_registered_) {
         UnregisterHotKey(window_, kEditHotkeyId);
@@ -128,6 +127,7 @@ void HudWindow::destroy() noexcept
     }
 
     webview_.close();
+    ready_event_ = nullptr;
     if (window_ != nullptr) {
         DestroyWindow(window_);
         window_ = nullptr;
@@ -210,17 +210,20 @@ LRESULT HudWindow::handle_message(
             0,
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        if (ready_event_ != nullptr && !SetEvent(ready_event_)) {
+            debug_windows_error(L"SetEvent(ready)");
+        }
         return 0L;
     case kWebViewDocumentReadyMessage:
         update_host_state();
         return 0L;
     case kWebViewFailedMessage: {
-        wchar_t detail[320]{};
+        wchar_t detail[192]{};
         swprintf_s(
             detail,
-            L"ChatView could not initialize Microsoft Edge WebView2 (0x%08lX).\n\nInstall or repair the Microsoft Edge WebView2 Runtime, then restart OBS Studio.",
+            L"[ChatView HUD] WebView2 initialization failed (0x%08lX)\n",
             static_cast<unsigned long>(static_cast<std::uint32_t>(wparam)));
-        MessageBoxW(window_, detail, L"ChatView", MB_OK | MB_ICONERROR);
+        OutputDebugStringW(detail);
         PostQuitMessage(2);
         return 0L;
     }
@@ -458,8 +461,8 @@ void HudWindow::set_transient_status(
 {
     transient_status_ = std::move(text);
     transient_tone_ = std::move(tone);
+    KillTimer(window_, kStatusTimerId);
     if (window_ != nullptr) {
-        KillTimer(window_, kStatusTimerId);
         SetTimer(window_, kStatusTimerId, duration_ms, nullptr);
     }
     update_host_state();

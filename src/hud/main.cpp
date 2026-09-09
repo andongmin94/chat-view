@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/win32-handle.hpp"
 #include "hud/hud-window.hpp"
 #include "hud/shared-state-reader.hpp"
 
@@ -42,6 +43,7 @@ private:
 struct Options {
     std::wstring mapping_name;
     std::wstring event_name;
+    std::wstring ready_event_name;
     DWORD parent_process_id = 0U;
 };
 
@@ -87,6 +89,8 @@ bool parse_options(Options &options)
             options.mapping_name = arguments[++index];
         } else if (argument == L"--event" && index + 1 < argument_count) {
             options.event_name = arguments[++index];
+        } else if (argument == L"--ready-event" && index + 1 < argument_count) {
+            options.ready_event_name = arguments[++index];
         } else if (argument == L"--parent" && index + 1 < argument_count) {
             valid = parse_parent_process_id(arguments[++index], options.parent_process_id);
         } else {
@@ -108,8 +112,18 @@ int run(HINSTANCE instance, const Options &options)
         return 2;
     }
 
+    chatview::UniqueHandle ready_event;
+    if (!options.ready_event_name.empty()) {
+        ready_event.reset(OpenEventW(
+            EVENT_MODIFY_STATE, FALSE, options.ready_event_name.c_str()));
+        if (!ready_event) {
+            OutputDebugStringW(L"[ChatView HUD] Failed to open readiness event\n");
+            return 6;
+        }
+    }
+
     chatview::HudWindow hud_window;
-    if (!hud_window.create(instance)) {
+    if (!hud_window.create(instance, ready_event.get())) {
         return 3;
     }
 
@@ -126,11 +140,13 @@ int run(HINSTANCE instance, const Options &options)
     };
     const DWORD handle_count = wait_handles[1] != nullptr ? 2U : 1U;
 
+    int exit_code = 0;
     bool running = true;
     while (running) {
         const DWORD wait_result =
             MsgWaitForMultipleObjects(handle_count, wait_handles, FALSE, INFINITE, QS_ALLINPUT);
         if (wait_result == WAIT_FAILED) {
+            exit_code = 7;
             break;
         }
 
@@ -150,6 +166,7 @@ int run(HINSTANCE instance, const Options &options)
             MSG message{};
             while (PeekMessageW(&message, nullptr, 0U, 0U, PM_REMOVE)) {
                 if (message.message == WM_QUIT) {
+                    exit_code = static_cast<int>(message.wParam);
                     running = false;
                     break;
                 }
@@ -163,7 +180,7 @@ int run(HINSTANCE instance, const Options &options)
     }
 
     hud_window.destroy();
-    return 0;
+    return exit_code;
 }
 
 } // namespace

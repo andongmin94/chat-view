@@ -14,7 +14,6 @@
 #include <wrl/event.h>
 
 #include <cstdint>
-#include <filesystem>
 #include <string>
 #include <string_view>
 
@@ -35,7 +34,7 @@ constexpr wchar_t kSetupPage[] = LR"HTML(
 :root { color-scheme: dark; font-family: "Segoe UI", sans-serif; }
 html, body { width:100%; height:100%; margin:0; background:transparent; overflow:hidden; }
 body { display:grid; place-items:center; }
-main { box-sizing:border-box; width:min(92%, 460px); padding:24px; border:1px solid rgba(255,255,255,.16); border-radius:18px; background:rgba(18,18,22,.92); color:#fff; box-shadow:0 14px 50px rgba(0,0,0,.35); }
+main { box-sizing:border-box; width:min(92%, 480px); padding:24px; border:1px solid rgba(255,255,255,.16); border-radius:18px; background:rgba(18,18,22,.92); color:#fff; box-shadow:0 14px 50px rgba(0,0,0,.35); }
 h1 { margin:0 0 10px; font-size:22px; }
 p { margin:6px 0; color:#c8c8ce; line-height:1.5; }
 strong { color:#fff; }
@@ -46,7 +45,7 @@ code { color:#7dd3fc; }
 <main>
 <h1>ChatView needs a chat URL</h1>
 <p>Open <strong>OBS Studio → Tools → ChatView Settings…</strong>.</p>
-<p>Paste a Weflab page URL or a CHZZK chat URL, then save.</p>
+<p>Paste a Weflab page URL, CHZZK chat URL, or YouTube live-chat URL, then save.</p>
 <p><code>Ctrl + Alt + Shift + H</code> unlocks this overlay for moving and resizing.</p>
 </main>
 </body>
@@ -127,16 +126,20 @@ std::wstring javascript_string(const std::wstring &value)
             output.append(L"\\t");
             break;
         default:
-            if (character < 0x20) {
-                output.push_back(L' ');
-            } else {
-                output.push_back(character);
-            }
+            output.push_back(character < 0x20 ? L' ' : character);
             break;
         }
     }
     output.push_back(L'"');
     return output;
+}
+
+bool is_allowed_host(const std::wstring &host) noexcept
+{
+    return _wcsicmp(host.c_str(), L"weflab.com") == 0 ||
+           _wcsicmp(host.c_str(), L"chzzk.naver.com") == 0 ||
+           _wcsicmp(host.c_str(), L"www.youtube.com") == 0 ||
+           _wcsicmp(host.c_str(), L"youtube.com") == 0;
 }
 
 bool is_allowed_document_url(const wchar_t *url) noexcept
@@ -164,8 +167,7 @@ bool is_allowed_document_url(const wchar_t *url) noexcept
     const std::wstring host(
         components.lpszHostName,
         components.lpszHostName + components.dwHostNameLength);
-    return _wcsicmp(host.c_str(), L"weflab.com") == 0 ||
-           _wcsicmp(host.c_str(), L"chzzk.naver.com") == 0;
+    return is_allowed_host(host);
 }
 
 HRESULT create_d3d_device(ComPtr<ID3D11Device> &device) noexcept
@@ -494,10 +496,6 @@ HRESULT WebViewHost::on_controller_created(
     ComPtr<ICoreWebView2Controller2> controller2;
     if (SUCCEEDED(controller_.As(&controller2))) {
         COREWEBVIEW2_COLOR transparent{};
-        transparent.A = 0U;
-        transparent.R = 0U;
-        transparent.G = 0U;
-        transparent.B = 0U;
         controller2->put_DefaultBackgroundColor(transparent);
     }
 
@@ -564,10 +562,9 @@ void WebViewHost::post_failure(HRESULT result) const noexcept
 
 void WebViewHost::install_page_overlay() noexcept
 {
-    if (!ready_ || !webview_) {
-        return;
+    if (ready_ && webview_) {
+        webview_->ExecuteScript(kOverlayScript, nullptr);
     }
-    webview_->ExecuteScript(kOverlayScript, nullptr);
 }
 
 void WebViewHost::apply_host_state() noexcept

@@ -11,7 +11,7 @@ This branch currently provides an installable single-PC alpha:
 - native OBS frontend plugin;
 - out-of-process Win32 HUD runtime;
 - transparent WebView2 composition rendering;
-- Weflab page URLs and CHZZK chat URLs;
+- Weflab page, CHZZK chat, and YouTube live-chat URLs;
 - OBS **Tools → ChatView Settings...** configuration;
 - click-through locked mode;
 - draggable and resizable edit mode;
@@ -67,11 +67,12 @@ Paste one of the currently supported HTTPS URLs:
 ```text
 https://weflab.com/page/...
 https://chzzk.naver.com/chat/...
+https://www.youtube.com/live_chat?is_popout=1&v=...
 ```
 
-Saving broadcasts a local configuration-change message, so the running HUD reloads without restarting OBS.
+For YouTube, open a live stream's chat pop-out window and copy its URL. Saving broadcasts a local configuration-change message, so the running HUD reloads without restarting OBS.
 
-The URL validator rejects non-HTTPS URLs, credentials embedded in URLs, non-default ports, unrelated hosts, and unsupported paths. New top-level WebView navigation outside the allowlist is cancelled.
+The URL validator rejects non-HTTPS URLs, credentials embedded in URLs, non-default ports, unrelated hosts, unsupported paths, and YouTube live-chat URLs without a video ID. New top-level WebView navigation outside the allowlist is cancelled.
 
 ## Move, resize, and lock
 
@@ -170,6 +171,6 @@ docs/         Architecture constraints
 
 ## Remaining product work
 
-This is not the finished product. Before a public release it still needs interactive qualification on real streamer PCs across game capture, display capture, multi-monitor DPI layouts, and common anti-cheat environments. Dual-PC pairing, first-party multi-platform chat aggregation, account/backend services, and the creator advertising system remain later layers.
+This is not the finished product. Before a public release it still needs interactive qualification on real streamer PCs across game capture, display capture, multi-monitor DPI layouts, and common anti-cheat environments. Direct SOOP support, dual-PC pairing, first-party multi-platform aggregation, account/backend services, and the creator advertising system remain later layers. Weflab pages can be used for broader platform aggregation during this alpha.
 
 See [`docs/architecture.md`](docs/architecture.md) for the decisions that constrain implementation.

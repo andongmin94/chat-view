@@ -50,6 +50,42 @@ bool has_path_prefix(std::wstring_view path, std::wstring_view prefix) noexcept
     return path.size() > prefix.size() && path.substr(0U, prefix.size()) == prefix;
 }
 
+bool has_non_empty_query_value(
+    std::wstring_view extra_info, std::wstring_view key) noexcept
+{
+    if (extra_info.empty() || extra_info.front() != L'?') {
+        return false;
+    }
+
+    extra_info.remove_prefix(1U);
+    const std::size_t fragment = extra_info.find(L'#');
+    if (fragment != std::wstring_view::npos) {
+        extra_info = extra_info.substr(0U, fragment);
+    }
+
+    while (!extra_info.empty()) {
+        const std::size_t separator = extra_info.find(L'&');
+        const std::wstring_view pair = extra_info.substr(0U, separator);
+        const std::size_t equals = pair.find(L'=');
+        if (equals != std::wstring_view::npos && pair.substr(0U, equals) == key &&
+            equals + 1U < pair.size()) {
+            return true;
+        }
+
+        if (separator == std::wstring_view::npos) {
+            break;
+        }
+        extra_info.remove_prefix(separator + 1U);
+    }
+    return false;
+}
+
+bool is_youtube_host(const std::wstring &host) noexcept
+{
+    return _wcsicmp(host.c_str(), L"www.youtube.com") == 0 ||
+           _wcsicmp(host.c_str(), L"youtube.com") == 0;
+}
+
 } // namespace
 
 bool is_supported_chat_url(const std::wstring &url) noexcept
@@ -83,6 +119,11 @@ bool is_supported_chat_url(const std::wstring &url) noexcept
             components.lpszHostName,
             components.lpszHostName + components.dwHostNameLength);
         const std::wstring_view path(components.lpszUrlPath, components.dwUrlPathLength);
+        const std::wstring_view extra_info = components.lpszExtraInfo == nullptr
+                                                 ? std::wstring_view{}
+                                                 : std::wstring_view(
+                                                       components.lpszExtraInfo,
+                                                       components.dwExtraInfoLength);
 
         if (_wcsicmp(host.c_str(), L"weflab.com") == 0) {
             return has_path_prefix(path, L"/page/");
@@ -90,6 +131,11 @@ bool is_supported_chat_url(const std::wstring &url) noexcept
 
         if (_wcsicmp(host.c_str(), L"chzzk.naver.com") == 0) {
             return has_path_prefix(path, L"/chat/");
+        }
+
+        if (is_youtube_host(host)) {
+            return path == L"/live_chat" &&
+                   has_non_empty_query_value(extra_info, L"v");
         }
 
         return false;

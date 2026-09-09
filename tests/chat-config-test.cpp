@@ -39,15 +39,25 @@ int main()
     }
 
     if (!chatview::is_supported_chat_url(L"https://weflab.com/page/test") ||
-        !chatview::is_supported_chat_url(L"https://chzzk.naver.com/chat/channel-id?dark=true") ||
+        !chatview::is_supported_chat_url(
+            L"https://chzzk.naver.com/chat/channel-id?dark=true") ||
+        !chatview::is_supported_chat_url(
+            L"https://www.youtube.com/live_chat?is_popout=1&v=video-id") ||
+        !chatview::is_supported_chat_url(
+            L"https://youtube.com/live_chat?v=video-id#chat") ||
         chatview::is_supported_chat_url(L"http://weflab.com/page/test") ||
         chatview::is_supported_chat_url(L"https://weflab.com/not-page/test") ||
         chatview::is_supported_chat_url(L"https://evil.example/page/test") ||
-        chatview::is_supported_chat_url(L"https://chzzk.naver.com/chat/")) {
+        chatview::is_supported_chat_url(L"https://chzzk.naver.com/chat/") ||
+        chatview::is_supported_chat_url(L"https://www.youtube.com/live_chat") ||
+        chatview::is_supported_chat_url(L"https://www.youtube.com/watch?v=video-id") ||
+        chatview::is_supported_chat_url(
+            L"https://user:password@www.youtube.com/live_chat?v=video-id")) {
         return fail(L"Supported chat URL validation returned an unexpected result");
     }
 
-    const chatview::ChatConfig expected{L"https://chzzk.naver.com/chat/channel-id"};
+    const chatview::ChatConfig expected{
+        L"https://www.youtube.com/live_chat?is_popout=1&v=video-id"};
     if (!chatview::save_chat_config(expected)) {
         return fail(L"Failed to save a valid chat configuration");
     }

@@ -72,8 +72,8 @@ public:
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            680,
-            220,
+            710,
+            260,
             nullptr,
             nullptr,
             instance,
@@ -141,11 +141,11 @@ private:
         HWND label = CreateWindowExW(
             0,
             L"STATIC",
-            L"Chat URL",
+            L"Chat page URL",
             WS_CHILD | WS_VISIBLE,
             20,
             18,
-            620,
+            650,
             20,
             window_,
             nullptr,
@@ -158,7 +158,7 @@ private:
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
             20,
             42,
-            620,
+            650,
             28,
             window_,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kUrlEditId)),
@@ -167,12 +167,12 @@ private:
         HWND hint = CreateWindowExW(
             0,
             L"STATIC",
-            L"Supported: https://weflab.com/page/... or https://chzzk.naver.com/chat/...\nLeave empty to disable the chat overlay.",
+            L"Supported: Weflab /page, CHZZK /chat, or YouTube /live_chat?v=...\nFor YouTube, use the live chat pop-out URL. Leave this field empty to disable chat content.",
             WS_CHILD | WS_VISIBLE,
             20,
             80,
-            620,
-            42,
+            650,
+            48,
             window_,
             nullptr,
             nullptr,
@@ -182,8 +182,8 @@ private:
             L"BUTTON",
             L"Save",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-            460,
-            130,
+            490,
+            158,
             85,
             30,
             window_,
@@ -195,8 +195,8 @@ private:
             L"BUTTON",
             L"Cancel",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            555,
-            130,
+            585,
+            158,
             85,
             30,
             window_,
@@ -246,7 +246,8 @@ private:
         if (url.empty()) {
             saved = chatview::clear_chat_config();
         } else if (!chatview::is_supported_chat_url(url)) {
-            show_error(L"Enter a supported HTTPS chat URL from Weflab or CHZZK.");
+            show_error(
+                L"Enter a supported HTTPS Weflab, CHZZK, or YouTube live-chat URL.");
             return;
         } else {
             saved = chatview::save_chat_config(chatview::ChatConfig{url});

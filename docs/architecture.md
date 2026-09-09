@@ -59,11 +59,12 @@ Supported top-level URLs are currently restricted to:
 ```text
 https://weflab.com/page/...
 https://chzzk.naver.com/chat/...
+https://www.youtube.com/live_chat?...&v=...
 ```
 
 Configuration is stored by the separate native settings application in `%LOCALAPPDATA%\ChatView\config.ini`. Saving broadcasts a registered local Windows message so the HUD reloads immediately.
 
-Validation requires HTTPS, the default HTTPS port, no URL credentials, an exact allowlisted host, and an expected path prefix. Top-level navigation outside the allowlist is cancelled and new windows are suppressed. Page subresources continue to load normally.
+Validation requires HTTPS, the default HTTPS port, no URL credentials, an exact allowlisted host, and an expected path. YouTube additionally requires a non-empty `v` video identifier. Top-level navigation outside the allowlisted hosts is cancelled and new windows are suppressed. Page subresources continue to load normally.
 
 This web-content boundary is the smallest complete path that preserves the existing ChatView use case. First-party platform aggregation is a later backend/runtime layer and must not be half-integrated as unused provider code.
 
@@ -122,7 +123,7 @@ Using monitor-relative DIPs preserves useful placement across virtual-desktop re
 
 The Windows workflow builds against pinned OBS Studio 32.2.2 development libraries and a pinned WebView2 SDK. It then runs:
 
-- URL validation and configuration persistence tests;
+- provider URL validation and configuration persistence tests;
 - placement validation, monitor fallback, and malformed-input tests;
 - a real WebView2 HUD process smoke test covering initialization readiness, locked/edit modes, native resize, persistence, capture-exclusion request, shared-state shutdown, and delayed WebView profile cleanup;
 - package layout validation;
@@ -135,7 +136,7 @@ These checks prevent publishing a package with a broken controller-to-HUD path. 
 Development proceeds only from a working product layer:
 
 1. installable single-PC OBS-controlled transparent web chat HUD;
-2. real-workstation qualification and UI hardening;
+2. direct URL coverage for the major target platforms and real-workstation qualification;
 3. authenticated dual-PC pairing with a separate transport implementation;
 4. first-party multi-platform chat aggregation and backend services;
 5. creator advertising and verified campaign accounting.

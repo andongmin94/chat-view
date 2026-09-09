@@ -4,6 +4,8 @@
 
 #include <Windows.h>
 
+#include <algorithm>
+
 namespace chatview {
 
 SharedStateReader::~SharedStateReader()
@@ -74,6 +76,10 @@ bool SharedStateReader::read(SharedSnapshot &snapshot) const noexcept
         SharedSnapshot candidate;
         candidate.flags = shared_state_->flags;
         candidate.generation = shared_state_->generation;
+        std::copy_n(shared_state_->scene_name,
+                    candidate.scene_name.size(),
+                    candidate.scene_name.begin());
+        candidate.scene_name.back() = '\0';
         MemoryBarrier();
 
         const LONG after = InterlockedCompareExchange(&shared_state_->sequence, 0, 0);

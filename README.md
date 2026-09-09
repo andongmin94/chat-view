@@ -11,7 +11,8 @@ This branch currently provides an installable single-PC alpha:
 - native OBS frontend plugin;
 - out-of-process Win32 HUD runtime;
 - transparent WebView2 composition rendering;
-- Weflab page, CHZZK chat, and YouTube live-chat URLs;
+- Weflab, CHZZK, and YouTube chat pages;
+- automatic conversion of ordinary CHZZK and YouTube broadcast URLs;
 - OBS **Tools → ChatView Settings...** configuration;
 - click-through locked mode;
 - draggable and resizable edit mode;
@@ -25,7 +26,7 @@ The renderer remains out of process deliberately. A browser or desktop-rendering
 
 ## Install
 
-1. Download and extract `chat-view-obs-windows-x64.zip` from a successful Windows workflow run.
+1. Download `chat-view-obs-windows-x64.zip` from a successful Windows workflow run and extract it once.
 2. Close OBS Studio.
 3. Double-click `install.cmd` and approve the Windows administrator prompt.
 4. Start OBS Studio and open **Tools → ChatView Settings...**.
@@ -52,17 +53,25 @@ Start OBS Studio and open:
 Tools → ChatView Settings...
 ```
 
-Paste one of the currently supported HTTPS URLs:
+For CHZZK and YouTube, paste the normal broadcast URL that is already in the browser address bar:
+
+```text
+https://chzzk.naver.com/live/<channel-id>
+https://www.youtube.com/watch?v=<video-id>
+https://youtu.be/<video-id>
+```
+
+ChatView converts those links into their chat-page form automatically. Direct chat URLs are also accepted:
 
 ```text
 https://weflab.com/page/...
-https://chzzk.naver.com/chat/...
-https://www.youtube.com/live_chat?is_popout=1&v=...
+https://chzzk.naver.com/chat/<channel-id>
+https://www.youtube.com/live_chat?is_popout=1&v=<video-id>
 ```
 
-For YouTube, open a live stream's chat pop-out window and copy its URL. Saving broadcasts a local configuration-change message, so the running HUD reloads without restarting OBS.
+Saving broadcasts a local configuration-change message, so the running HUD reloads without restarting OBS.
 
-The URL validator rejects non-HTTPS URLs, credentials embedded in URLs, non-default ports, unrelated hosts, unsupported paths, and YouTube live-chat URLs without a video ID. New top-level WebView navigation outside the allowlist is cancelled.
+The URL normalizer requires HTTPS, the default HTTPS port, no embedded credentials, a supported host and path, a valid CHZZK channel ID, and a non-empty YouTube video ID. It stores only the normalized chat URL. New top-level WebView navigation outside the allowlist is cancelled.
 
 ## Move, resize, and lock
 
@@ -101,7 +110,7 @@ OBS Studio
       chat-view-hud.exe
       ├── owns the transparent desktop window
       ├── hosts WebView2 through DirectComposition
-      ├── loads the configured chat URL
+      ├── loads the normalized chat URL
       └── exits when OBS exits
 ```
 

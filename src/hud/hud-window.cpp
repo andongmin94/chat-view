@@ -228,12 +228,12 @@ void HudWindow::render(DisplayMode mode)
         return;
     }
 
-    const POINT destination{
+    POINT destination{
         monitor_info.rcWork.right - width - margin,
         monitor_info.rcWork.top + margin,
     };
-    const SIZE size{width, height};
-    const POINT source{0, 0};
+    SIZE size{width, height};
+    POINT source{0, 0};
 
     BITMAPINFO bitmap_info{};
     bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);

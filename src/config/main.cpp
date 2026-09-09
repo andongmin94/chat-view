@@ -72,8 +72,8 @@ public:
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            710,
-            260,
+            730,
+            270,
             nullptr,
             nullptr,
             instance,
@@ -141,11 +141,11 @@ private:
         HWND label = CreateWindowExW(
             0,
             L"STATIC",
-            L"Chat page URL",
+            L"Broadcast or chat URL",
             WS_CHILD | WS_VISIBLE,
             20,
             18,
-            650,
+            670,
             20,
             window_,
             nullptr,
@@ -158,7 +158,7 @@ private:
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
             20,
             42,
-            650,
+            670,
             28,
             window_,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(kUrlEditId)),
@@ -167,12 +167,12 @@ private:
         HWND hint = CreateWindowExW(
             0,
             L"STATIC",
-            L"Supported: Weflab /page, CHZZK /chat, or YouTube /live_chat?v=...\nFor YouTube, use the live chat pop-out URL. Leave this field empty to disable chat content.",
+            L"Paste a Weflab page, CHZZK channel/live/chat URL, or YouTube watch/live/chat URL.\nChatView converts normal CHZZK and YouTube broadcast links automatically. Leave empty to disable chat.",
             WS_CHILD | WS_VISIBLE,
             20,
             80,
-            650,
-            48,
+            670,
+            50,
             window_,
             nullptr,
             nullptr,
@@ -182,8 +182,8 @@ private:
             L"BUTTON",
             L"Save",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-            490,
-            158,
+            510,
+            168,
             85,
             30,
             window_,
@@ -195,8 +195,8 @@ private:
             L"BUTTON",
             L"Cancel",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-            585,
-            158,
+            605,
+            168,
             85,
             30,
             window_,
@@ -245,12 +245,14 @@ private:
         bool saved = false;
         if (url.empty()) {
             saved = chatview::clear_chat_config();
-        } else if (!chatview::is_supported_chat_url(url)) {
-            show_error(
-                L"Enter a supported HTTPS Weflab, CHZZK, or YouTube live-chat URL.");
-            return;
         } else {
-            saved = chatview::save_chat_config(chatview::ChatConfig{url});
+            const std::wstring normalized = chatview::normalize_chat_url(url);
+            if (normalized.empty()) {
+                show_error(
+                    L"Paste a supported HTTPS Weflab, CHZZK, or YouTube broadcast/chat URL.");
+                return;
+            }
+            saved = chatview::save_chat_config(chatview::ChatConfig{normalized});
         }
 
         if (!saved) {

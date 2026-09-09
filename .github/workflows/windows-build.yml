@@ -19,12 +19,13 @@ concurrency:
 env:
   OBS_VERSION: "32.2.2"
   OBS_COMMIT: ba2f32bdf791005443988a4955e963663e16b1ed
+  WEBVIEW2_VERSION: "1.0.4129.50"
 
 jobs:
   build:
     name: Windows x64
     runs-on: windows-2025-vs2026
-    timeout-minutes: 45
+    timeout-minutes: 50
 
     steps:
       - name: Check out ChatView
@@ -54,6 +55,22 @@ jobs:
           path: .ci/obs-studio/.deps
           key: obs-deps-windows-x64-${{ env.OBS_COMMIT }}
 
+      - name: Restore WebView2 SDK cache
+        id: webview2-cache
+        uses: actions/cache@v4
+        with:
+          path: .ci/webview2
+          key: webview2-native-${{ env.WEBVIEW2_VERSION }}
+
+      - name: Download WebView2 SDK
+        if: steps.webview2-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./scripts/restore-webview2.ps1 `
+            -Version $env:WEBVIEW2_VERSION `
+            -Destination .ci/webview2
+
       - name: Build OBS development libraries
         shell: pwsh
         run: |
@@ -81,13 +98,14 @@ jobs:
             --config RelWithDebInfo `
             --prefix $prefix
 
-      - name: Build and install ChatView
+      - name: Build, test, and install ChatView
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
 
           $prefix = (Resolve-Path '.ci/obs-prefix').Path
+          $webview2 = (Resolve-Path '.ci/webview2').Path
           $obsDeps = @(Get-ChildItem '.ci/obs-studio/.deps' -Directory |
             Where-Object { $_.Name -match '^obs-deps-\d{4}-\d{2}-\d{2}-x64$' })
           if ($obsDeps.Count -ne 1) {
@@ -102,6 +120,7 @@ jobs:
             -A "x64,version=10.0.26100.0" `
             "-DCMAKE_PREFIX_PATH=$prefixPath" `
             "-DCMAKE_INSTALL_PREFIX=$dist" `
+            "-DWEBVIEW2_SDK_DIR=$webview2" `
             -DCHATVIEW_WARNINGS_AS_ERRORS:BOOL=ON
 
           cmake --build build/windows-x64 `
@@ -123,6 +142,7 @@ jobs:
           $requiredFiles = @(
             'dist/obs-plugins/64bit/chat-view-obs.dll',
             'dist/obs-plugins/64bit/chat-view-hud.exe',
+            'dist/obs-plugins/64bit/chat-view-config.exe',
             'dist/data/obs-plugins/chat-view-obs/locale/en-US.ini',
             'dist/data/obs-plugins/chat-view-obs/locale/ko-KR.ini',
             'dist/install.ps1',
@@ -151,6 +171,7 @@ jobs:
           $installedFiles = @(
             (Join-Path $fakeObs 'obs-plugins/64bit/chat-view-obs.dll'),
             (Join-Path $fakeObs 'obs-plugins/64bit/chat-view-hud.exe'),
+            (Join-Path $fakeObs 'obs-plugins/64bit/chat-view-config.exe'),
             (Join-Path $fakeObs 'data/obs-plugins/chat-view-obs/locale/en-US.ini'),
             (Join-Path $fakeObs 'data/obs-plugins/chat-view-obs/locale/ko-KR.ini')
           )

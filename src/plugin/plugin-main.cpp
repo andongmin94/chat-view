@@ -17,11 +17,10 @@ std::unique_ptr<chatview::RuntimeController> runtime_controller;
 
 void publish_frontend_state()
 {
-    if (!runtime_controller) {
-        return;
+    if (runtime_controller) {
+        runtime_controller->update(
+            obs_frontend_streaming_active(), obs_frontend_recording_active());
     }
-
-    runtime_controller->update(obs_frontend_streaming_active(), obs_frontend_recording_active());
 }
 
 void on_frontend_event(obs_frontend_event event, void *)
@@ -39,6 +38,13 @@ void on_frontend_event(obs_frontend_event event, void *)
     }
 }
 
+void open_settings(void *)
+{
+    if (runtime_controller && !runtime_controller->open_settings()) {
+        blog(LOG_ERROR, "[ChatView OBS] Settings could not be opened");
+    }
+}
+
 } // namespace
 
 MODULE_EXPORT const char *obs_module_name(void)
@@ -48,7 +54,7 @@ MODULE_EXPORT const char *obs_module_name(void)
 
 MODULE_EXPORT const char *obs_module_description(void)
 {
-    return "Out-of-process transparent streamer HUD controlled by OBS Studio.";
+    return "Private transparent chat overlay controlled by OBS Studio.";
 }
 
 bool obs_module_load(void)
@@ -62,6 +68,8 @@ bool obs_module_load(void)
         }
 
         obs_frontend_add_event_callback(on_frontend_event, nullptr);
+        obs_frontend_add_tools_menu_item(
+            obs_module_text("ChatView.Settings"), open_settings, nullptr);
         publish_frontend_state();
 
         blog(LOG_INFO, "[ChatView OBS] Plugin loaded (version %s)", CHATVIEW_VERSION);

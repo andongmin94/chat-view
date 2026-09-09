@@ -6,6 +6,7 @@
 #include <Windows.h>
 
 #include <array>
+#include <cstdint>
 #include <cwchar>
 #include <filesystem>
 #include <iostream>
@@ -16,10 +17,13 @@ namespace {
 
 constexpr wchar_t kHudWindowClass[] = L"ChatViewObsHudWindow";
 constexpr WPARAM kEditHotkeyId = 1U;
-constexpr WPARAM kGrowHotkeyId = 2U;
-constexpr DWORD kStartupTimeoutMs = 5000U;
-constexpr DWORD kShutdownTimeoutMs = 5000U;
-constexpr DWORD kWindowStateTimeoutMs = 2000U;
+constexpr DWORD kStartupTimeoutMs = 15000U;
+constexpr DWORD kShutdownTimeoutMs = 8000U;
+constexpr DWORD kWindowStateTimeoutMs = 3000U;
+
+#ifndef WDA_EXCLUDEFROMCAPTURE
+constexpr DWORD WDA_EXCLUDEFROMCAPTURE = 0x00000011;
+#endif
 
 struct WindowSearch {
     DWORD process_id = 0U;
@@ -69,7 +73,6 @@ BOOL CALLBACK find_hud_window(HWND window, LPARAM data)
         search->window = window;
         return FALSE;
     }
-
     return TRUE;
 }
 
@@ -83,26 +86,12 @@ HWND wait_for_hud_window(HANDLE process, DWORD process_id) noexcept
 
         WindowSearch search{process_id, nullptr};
         EnumWindows(&find_hud_window, reinterpret_cast<LPARAM>(&search));
-        if (search.window != nullptr) {
+        if (search.window != nullptr && IsWindowVisible(search.window)) {
             return search.window;
         }
-
         Sleep(50U);
     }
-
     return nullptr;
-}
-
-bool wait_for_visibility(HWND window, bool visible) noexcept
-{
-    const ULONGLONG deadline = GetTickCount64() + kWindowStateTimeoutMs;
-    while (GetTickCount64() < deadline) {
-        if ((IsWindowVisible(window) != FALSE) == visible) {
-            return true;
-        }
-        Sleep(25U);
-    }
-    return false;
 }
 
 bool wait_for_style(HWND window, LONG_PTR required, LONG_PTR forbidden) noexcept
@@ -122,9 +111,8 @@ bool wait_for_width_greater(HWND window, LONG previous_width) noexcept
 {
     const ULONGLONG deadline = GetTickCount64() + kWindowStateTimeoutMs;
     while (GetTickCount64() < deadline) {
-        RECT window_rect{};
-        if (GetWindowRect(window, &window_rect) &&
-            window_rect.right - window_rect.left > previous_width) {
+        RECT bounds{};
+        if (GetWindowRect(window, &bounds) && bounds.right - bounds.left > previous_width) {
             return true;
         }
         Sleep(25U);
@@ -183,12 +171,18 @@ int wmain(int argument_count, wchar_t **arguments)
     }
 
     MappedState mapped_state(static_cast<chatview::SharedState *>(
-        MapViewOfFile(mapping.get(), FILE_MAP_ALL_ACCESS, 0U, 0U, sizeof(chatview::SharedState))));
+        MapViewOfFile(
+            mapping.get(),
+            FILE_MAP_ALL_ACCESS,
+            0U,
+            0U,
+            sizeof(chatview::SharedState))));
     if (mapped_state.get() == nullptr) {
         return fail(L"Failed to map the smoke-test state");
     }
 
-    chatview::UniqueHandle state_event(CreateEventW(nullptr, FALSE, FALSE, event_name.c_str()));
+    chatview::UniqueHandle state_event(
+        CreateEventW(nullptr, FALSE, FALSE, event_name.c_str()));
     if (!state_event) {
         return fail(L"Failed to create the smoke-test event");
     }
@@ -241,56 +235,68 @@ int wmain(int argument_count, wchar_t **arguments)
 
     HWND window = wait_for_hud_window(child_process.get(), child_info.dwProcessId);
     if (window == nullptr) {
-        return fail(L"The HUD window did not start", child_process.get());
+        return fail(L"The WebView2 HUD window did not become visible", child_process.get());
     }
 
     constexpr LONG_PTR locked_style =
-        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
+        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP;
     if (!wait_for_style(window, locked_style, 0)) {
         return fail(L"The HUD did not enter locked overlay mode", child_process.get());
     }
-    if (!wait_for_visibility(window, true)) {
-        return fail(L"The streaming HUD was not visible", child_process.get());
+
+    DWORD affinity = 0U;
+    if (!GetWindowDisplayAffinity(window, &affinity) ||
+        affinity != WDA_EXCLUDEFROMCAPTURE) {
+        return fail(L"The HUD did not request capture exclusion", child_process.get());
     }
 
-    if (!PostMessageW(window, WM_HOTKEY, kEditHotkeyId, 0)) {
+    if (!PostMessageW(window, WM_HOTKEY, kEditHotkeyId, 0L)) {
         return fail(L"Failed to request HUD edit mode", child_process.get());
     }
     if (!wait_for_style(
             window,
-            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
-            WS_EX_TRANSPARENT)) {
-        return fail(L"The HUD did not enter edit mode", child_process.get());
+            WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP,
+            WS_EX_TRANSPARENT | WS_EX_NOACTIVATE)) {
+        return fail(L"The HUD did not enter interactive edit mode", child_process.get());
     }
 
-    RECT edit_rect{};
-    if (!GetWindowRect(window, &edit_rect)) {
+    RECT edit_bounds{};
+    if (!GetWindowRect(window, &edit_bounds)) {
         return fail(L"Failed to read the edit-mode HUD bounds", child_process.get());
     }
-    const LONG edit_width = edit_rect.right - edit_rect.left;
-
-    if (!PostMessageW(window, WM_HOTKEY, kGrowHotkeyId, 0)) {
-        return fail(L"Failed to request a larger HUD", child_process.get());
-    }
+    const LONG edit_width = edit_bounds.right - edit_bounds.left;
+    const LONG edit_height = edit_bounds.bottom - edit_bounds.top;
+    SetWindowPos(
+        window,
+        nullptr,
+        edit_bounds.left,
+        edit_bounds.top,
+        edit_width + 120,
+        edit_height + 80,
+        SWP_NOZORDER | SWP_NOACTIVATE);
+    PostMessageW(window, WM_EXITSIZEMOVE, 0U, 0L);
     if (!wait_for_width_greater(window, edit_width)) {
-        return fail(L"The HUD did not grow in edit mode", child_process.get());
+        return fail(L"The HUD did not accept a resized bound", child_process.get());
     }
 
-    if (!PostMessageW(window, WM_HOTKEY, kEditHotkeyId, 0)) {
+    if (!PostMessageW(window, WM_HOTKEY, kEditHotkeyId, 0L)) {
         return fail(L"Failed to request HUD lock mode", child_process.get());
     }
     if (!wait_for_style(window, locked_style, 0)) {
         return fail(L"The HUD did not return to locked mode", child_process.get());
     }
 
-    const std::filesystem::path placement_file = local_app_data / L"ChatView" / L"hud.ini";
+    const std::filesystem::path placement_file =
+        local_app_data / L"ChatView" / L"hud.ini";
     if (!std::filesystem::is_regular_file(placement_file)) {
-        return fail(L"Locking the HUD did not persist placement", child_process.get());
+        return fail(L"Locking the HUD did not persist its bounds", child_process.get());
     }
-    const UINT saved_scale =
-        GetPrivateProfileIntW(L"placement", L"scale_percent", 0, placement_file.c_str());
-    if (saved_scale != 110U) {
-        return fail(L"The HUD scale was not persisted", child_process.get());
+    const UINT saved_width = GetPrivateProfileIntW(
+        L"placement", L"width_dip", 0, placement_file.c_str());
+    const UINT saved_height = GetPrivateProfileIntW(
+        L"placement", L"height_dip", 0, placement_file.c_str());
+    if (saved_width <= 420U || saved_height <= 640U) {
+        return fail(L"The resized HUD dimensions were not persisted", child_process.get());
     }
 
     publish(
@@ -311,6 +317,5 @@ int wmain(int argument_count, wchar_t **arguments)
     if (error) {
         return fail(L"Failed to remove the smoke-test profile directory");
     }
-
     return 0;
 }

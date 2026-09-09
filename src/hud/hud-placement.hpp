@@ -8,23 +8,26 @@
 
 namespace chatview {
 
-inline constexpr int kDefaultHudScalePercent = 100;
-inline constexpr int kMinimumHudScalePercent = 50;
-inline constexpr int kMaximumHudScalePercent = 200;
-inline constexpr int kHudScaleStepPercent = 10;
+inline constexpr int kDefaultHudWidthDip = 420;
+inline constexpr int kDefaultHudHeightDip = 640;
+inline constexpr int kMinimumHudWidthDip = 280;
+inline constexpr int kMinimumHudHeightDip = 180;
+inline constexpr int kMaximumHudWidthDip = 1200;
+inline constexpr int kMaximumHudHeightDip = 1600;
 
 struct HudPlacement {
     std::wstring monitor_device;
-    LONG offset_x = 0;
-    LONG offset_y = 0;
-    int scale_percent = kDefaultHudScalePercent;
+    int offset_x_dip = 0;
+    int offset_y_dip = 0;
+    int width_dip = kDefaultHudWidthDip;
+    int height_dip = kDefaultHudHeightDip;
     bool valid = false;
 };
 
-bool load_hud_placement(HudPlacement &placement) noexcept;
+[[nodiscard]] bool load_hud_placement(HudPlacement &placement) noexcept;
 [[nodiscard]] bool save_hud_placement(const HudPlacement &placement) noexcept;
-[[nodiscard]] POINT resolve_hud_position(
-    const HudPlacement &placement, int width, int height, int margin) noexcept;
+[[nodiscard]] RECT resolve_hud_bounds(const HudPlacement &placement, int margin_dip) noexcept;
 [[nodiscard]] HudPlacement capture_hud_placement(HWND window) noexcept;
+[[nodiscard]] SIZE minimum_hud_track_size(HWND window) noexcept;
 
 } // namespace chatview

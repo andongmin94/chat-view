@@ -4,12 +4,12 @@
 
 #include "common/shared-state.hpp"
 #include "hud/hud-placement.hpp"
+#include "hud/webview-host.hpp"
 
 #include <Windows.h>
-#include <objidl.h>
-#include <propidl.h>
 
 #include <cstdint>
+#include <string>
 
 namespace chatview {
 
@@ -28,41 +28,36 @@ public:
     void apply_state(const SharedSnapshot &snapshot);
 
 private:
-    enum class DisplayMode {
-        Hidden,
-        Ready,
-        Live,
-        Recording,
-        LiveAndRecording,
-        Offline,
-        Editing,
-    };
+    static LRESULT CALLBACK window_proc(
+        HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 
-    static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
-
-    LRESULT handle_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
-    void render(DisplayMode mode);
-    void hide();
-    void arm_hide_timer(UINT milliseconds);
-    void cancel_hide_timer();
+    LRESULT handle_message(
+        HWND window, UINT message, WPARAM wparam, LPARAM lparam);
+    LRESULT hit_test(LPARAM lparam) const noexcept;
     void toggle_edit_mode();
-    void adjust_scale(int delta_percent);
-    void set_click_through(bool enabled) noexcept;
-    void capture_current_position() noexcept;
-    void persist_placement() const noexcept;
+    void apply_window_mode() noexcept;
+    void reload_chat_config() noexcept;
+    void update_host_state() noexcept;
+    void set_transient_status(
+        std::wstring text, std::wstring tone, UINT duration_ms);
+    void clear_transient_status() noexcept;
+    void capture_and_persist_bounds() noexcept;
+    void restore_saved_bounds() noexcept;
     [[nodiscard]] UINT dpi() const noexcept;
-    [[nodiscard]] const wchar_t *label_for(DisplayMode mode) const noexcept;
 
     HWND window_ = nullptr;
     HINSTANCE instance_ = nullptr;
-    DisplayMode display_mode_ = DisplayMode::Hidden;
-    DisplayMode output_mode_ = DisplayMode::Hidden;
+    UINT config_changed_message_ = 0U;
+    WebViewHost webview_;
     HudPlacement placement_;
+    std::wstring transient_status_;
+    std::wstring transient_tone_ = L"#aeb0b2";
     std::uint64_t last_generation_ = 0U;
+    bool streaming_ = false;
+    bool recording_ = false;
     bool edit_mode_ = false;
     bool edit_hotkey_registered_ = false;
-    bool grow_hotkey_registered_ = false;
-    bool shrink_hotkey_registered_ = false;
+    bool webview_ready_ = false;
 };
 
 } // namespace chatview

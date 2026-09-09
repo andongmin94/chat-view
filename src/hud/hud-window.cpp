@@ -2,30 +2,29 @@
 
 #include "hud/hud-window.hpp"
 
+#include "common/chat-config.hpp"
+
 #include <Windows.h>
-#include <gdiplus.h>
-#include <strsafe.h>
+#include <windowsx.h>
 
 #include <algorithm>
-#include <cmath>
-#include <cwchar>
-#include <iterator>
+#include <cstdint>
+#include <string>
 #include <utility>
 
 namespace chatview {
 namespace {
 
 constexpr wchar_t kWindowClassName[] = L"ChatViewObsHudWindow";
-constexpr UINT_PTR kHideTimerId = 1U;
+constexpr UINT_PTR kStatusTimerId = 1U;
 constexpr int kEditHotkeyId = 1;
-constexpr int kGrowHotkeyId = 2;
-constexpr int kShrinkHotkeyId = 3;
 constexpr UINT kReadyDurationMs = 2200U;
 constexpr UINT kOfflineDurationMs = 1200U;
 constexpr UINT kEditHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT;
 constexpr UINT kEditHotkeyVirtualKey = 'H';
-constexpr UINT kGrowHotkeyVirtualKey = VK_UP;
-constexpr UINT kShrinkHotkeyVirtualKey = VK_DOWN;
+constexpr int kDefaultMarginDip = 24;
+constexpr int kResizeBorderDip = 10;
+constexpr int kDragHeaderDip = 46;
 
 #ifndef WDA_EXCLUDEFROMCAPTURE
 constexpr DWORD WDA_EXCLUDEFROMCAPTURE = 0x00000011;
@@ -35,15 +34,12 @@ void debug_windows_error(const wchar_t *operation)
 {
     const DWORD error = GetLastError();
     wchar_t message[256]{};
-    const HRESULT result = StringCchPrintfW(
+    swprintf_s(
         message,
-        std::size(message),
         L"[ChatView HUD] %s failed with error %lu\n",
         operation,
-        error);
-    if (SUCCEEDED(result)) {
-        OutputDebugStringW(message);
-    }
+        static_cast<unsigned long>(error));
+    OutputDebugStringW(message);
 }
 
 } // namespace
@@ -64,23 +60,30 @@ bool HudWindow::create(HINSTANCE instance)
     window_class.lpszClassName = kWindowClassName;
     window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
 
-    if (RegisterClassExW(&window_class) == 0U && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+    if (RegisterClassExW(&window_class) == 0U &&
+        GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         debug_windows_error(L"RegisterClassExW");
         return false;
     }
 
-    constexpr DWORD extended_style =
-        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
+    HudPlacement loaded;
+    if (load_hud_placement(loaded)) {
+        placement_ = std::move(loaded);
+    }
+    const RECT bounds = resolve_hud_bounds(placement_, kDefaultMarginDip);
 
+    constexpr DWORD extended_style =
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT |
+        WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP;
     window_ = CreateWindowExW(
         extended_style,
         kWindowClassName,
         L"ChatView HUD",
         WS_POPUP,
-        0,
-        0,
-        1,
-        1,
+        bounds.left,
+        bounds.top,
+        bounds.right - bounds.left,
+        bounds.bottom - bounds.top,
         nullptr,
         nullptr,
         instance_,
@@ -94,27 +97,19 @@ bool HudWindow::create(HINSTANCE instance)
         debug_windows_error(L"SetWindowDisplayAffinity");
     }
 
-    HudPlacement loaded_placement;
-    if (load_hud_placement(loaded_placement)) {
-        placement_ = std::move(loaded_placement);
-    }
-
+    config_changed_message_ = RegisterWindowMessageW(kConfigChangedMessageName);
     edit_hotkey_registered_ =
-        RegisterHotKey(window_, kEditHotkeyId, kEditHotkeyModifiers, kEditHotkeyVirtualKey) != FALSE;
+        RegisterHotKey(
+            window_,
+            kEditHotkeyId,
+            kEditHotkeyModifiers,
+            kEditHotkeyVirtualKey) != FALSE;
     if (!edit_hotkey_registered_) {
-        debug_windows_error(L"RegisterHotKey(edit)");
+        debug_windows_error(L"RegisterHotKey");
     }
 
-    grow_hotkey_registered_ =
-        RegisterHotKey(window_, kGrowHotkeyId, kEditHotkeyModifiers, kGrowHotkeyVirtualKey) != FALSE;
-    if (!grow_hotkey_registered_) {
-        debug_windows_error(L"RegisterHotKey(grow)");
-    }
-
-    shrink_hotkey_registered_ =
-        RegisterHotKey(window_, kShrinkHotkeyId, kEditHotkeyModifiers, kShrinkHotkeyVirtualKey) != FALSE;
-    if (!shrink_hotkey_registered_) {
-        debug_windows_error(L"RegisterHotKey(shrink)");
+    if (!webview_.initialize(window_)) {
+        return false;
     }
 
     ShowWindow(window_, SW_HIDE);
@@ -123,21 +118,16 @@ bool HudWindow::create(HINSTANCE instance)
 
 void HudWindow::destroy() noexcept
 {
-    cancel_hide_timer();
+    if (window_ != nullptr) {
+        KillTimer(window_, kStatusTimerId);
+    }
 
     if (window_ != nullptr && edit_hotkey_registered_) {
         UnregisterHotKey(window_, kEditHotkeyId);
         edit_hotkey_registered_ = false;
     }
-    if (window_ != nullptr && grow_hotkey_registered_) {
-        UnregisterHotKey(window_, kGrowHotkeyId);
-        grow_hotkey_registered_ = false;
-    }
-    if (window_ != nullptr && shrink_hotkey_registered_) {
-        UnregisterHotKey(window_, kShrinkHotkeyId);
-        shrink_hotkey_registered_ = false;
-    }
 
+    webview_.close();
     if (window_ != nullptr) {
         DestroyWindow(window_);
         window_ = nullptr;
@@ -151,8 +141,7 @@ void HudWindow::destroy() noexcept
 
 void HudWindow::show_ready()
 {
-    render(DisplayMode::Ready);
-    arm_hide_timer(kReadyDurationMs);
+    set_transient_status(L"READY", L"#5ac8fa", kReadyDurationMs);
 }
 
 void HudWindow::apply_state(const SharedSnapshot &snapshot)
@@ -167,39 +156,25 @@ void HudWindow::apply_state(const SharedSnapshot &snapshot)
         return;
     }
 
-    const DisplayMode previous_output_mode = output_mode_;
-    const bool streaming = has_flag(snapshot, SharedStateStreaming);
-    const bool recording = has_flag(snapshot, SharedStateRecording);
+    const bool was_active = streaming_ || recording_;
+    streaming_ = has_flag(snapshot, SharedStateStreaming);
+    recording_ = has_flag(snapshot, SharedStateRecording);
+    const bool active = streaming_ || recording_;
 
-    if (streaming && recording) {
-        output_mode_ = DisplayMode::LiveAndRecording;
-    } else if (streaming) {
-        output_mode_ = DisplayMode::Live;
-    } else if (recording) {
-        output_mode_ = DisplayMode::Recording;
-    } else {
-        output_mode_ = DisplayMode::Hidden;
-    }
-
-    if (edit_mode_) {
+    if (active) {
+        clear_transient_status();
+    } else if (was_active) {
+        set_transient_status(L"OFFLINE", L"#aeb0b2", kOfflineDurationMs);
         return;
     }
-
-    if (output_mode_ != DisplayMode::Hidden) {
-        cancel_hide_timer();
-        render(output_mode_);
-        return;
-    }
-
-    if (previous_output_mode != DisplayMode::Hidden) {
-        render(DisplayMode::Offline);
-        arm_hide_timer(kOfflineDurationMs);
-    }
+    update_host_state();
 }
 
-LRESULT CALLBACK HudWindow::window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+LRESULT CALLBACK HudWindow::window_proc(
+    HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
-    HudWindow *self = reinterpret_cast<HudWindow *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+    HudWindow *self =
+        reinterpret_cast<HudWindow *>(GetWindowLongPtrW(window, GWLP_USERDATA));
 
     if (message == WM_NCCREATE) {
         const auto *create = reinterpret_cast<const CREATESTRUCTW *>(lparam);
@@ -208,254 +183,25 @@ LRESULT CALLBACK HudWindow::window_proc(HWND window, UINT message, WPARAM wparam
         self->window_ = window;
     }
 
-    if (self != nullptr) {
-        return self->handle_message(window, message, wparam, lparam);
-    }
-
-    return DefWindowProcW(window, message, wparam, lparam);
+    return self != nullptr
+               ? self->handle_message(window, message, wparam, lparam)
+               : DefWindowProcW(window, message, wparam, lparam);
 }
 
-LRESULT HudWindow::handle_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+LRESULT HudWindow::handle_message(
+    HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
+    if (config_changed_message_ != 0U && message == config_changed_message_) {
+        reload_chat_config();
+        return 0L;
+    }
+
     switch (message) {
-    case WM_TIMER:
-        if (wparam == kHideTimerId) {
-            cancel_hide_timer();
-            hide();
-            return 0;
-        }
-        break;
-    case WM_HOTKEY:
-        if (wparam == static_cast<WPARAM>(kEditHotkeyId)) {
-            toggle_edit_mode();
-            return 0;
-        }
-        if (edit_mode_ && wparam == static_cast<WPARAM>(kGrowHotkeyId)) {
-            adjust_scale(kHudScaleStepPercent);
-            return 0;
-        }
-        if (edit_mode_ && wparam == static_cast<WPARAM>(kShrinkHotkeyId)) {
-            adjust_scale(-kHudScaleStepPercent);
-            return 0;
-        }
-        break;
-    case WM_NCHITTEST:
-        return edit_mode_ ? HTCAPTION : HTTRANSPARENT;
-    case WM_MOUSEACTIVATE:
-        return MA_NOACTIVATE;
-    case WM_EXITSIZEMOVE:
-        if (edit_mode_) {
-            capture_current_position();
-        }
-        return 0;
-    case WM_DPICHANGED:
-    case WM_DISPLAYCHANGE:
-    case WM_SETTINGCHANGE:
-        if (edit_mode_) {
-            capture_current_position();
-        }
-        if (display_mode_ != DisplayMode::Hidden) {
-            render(display_mode_);
-        }
-        return 0;
-    case WM_CLOSE:
-        hide();
-        return 0;
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
-    default:
-        break;
-    }
-
-    return DefWindowProcW(window, message, wparam, lparam);
-}
-
-void HudWindow::render(DisplayMode mode)
-{
-    if (window_ == nullptr || mode == DisplayMode::Hidden) {
-        hide();
-        return;
-    }
-
-    display_mode_ = mode;
-
-    const float dpi_scale = static_cast<float>(dpi()) / 96.0F;
-    const float scale =
-        dpi_scale * static_cast<float>(placement_.scale_percent) / 100.0F;
-    const int width = std::max(1, static_cast<int>(std::lround(340.0F * scale)));
-    const int height = std::max(1, static_cast<int>(std::lround(76.0F * scale)));
-    const int margin = std::max(1, static_cast<int>(std::lround(24.0F * scale)));
-
-    POINT destination = resolve_hud_position(placement_, width, height, margin);
-
-    SIZE size{width, height};
-    POINT source{0, 0};
-
-    BITMAPINFO bitmap_info{};
-    bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bitmap_info.bmiHeader.biWidth = width;
-    bitmap_info.bmiHeader.biHeight = -height;
-    bitmap_info.bmiHeader.biPlanes = 1;
-    bitmap_info.bmiHeader.biBitCount = 32;
-    bitmap_info.bmiHeader.biCompression = BI_RGB;
-
-    void *pixels = nullptr;
-    HBITMAP bitmap =
-        CreateDIBSection(nullptr, &bitmap_info, DIB_RGB_COLORS, &pixels, nullptr, 0U);
-    if (bitmap == nullptr || pixels == nullptr) {
-        debug_windows_error(L"CreateDIBSection");
-        return;
-    }
-
-    HDC screen_dc = GetDC(nullptr);
-    if (screen_dc == nullptr) {
-        debug_windows_error(L"GetDC");
-        DeleteObject(bitmap);
-        return;
-    }
-
-    HDC memory_dc = CreateCompatibleDC(screen_dc);
-    if (memory_dc == nullptr) {
-        debug_windows_error(L"CreateCompatibleDC");
-        ReleaseDC(nullptr, screen_dc);
-        DeleteObject(bitmap);
-        return;
-    }
-
-    HGDIOBJ previous_bitmap = SelectObject(memory_dc, bitmap);
-    if (previous_bitmap == nullptr || previous_bitmap == HGDI_ERROR) {
-        debug_windows_error(L"SelectObject");
-        DeleteDC(memory_dc);
-        ReleaseDC(nullptr, screen_dc);
-        DeleteObject(bitmap);
-        return;
-    }
-
-    {
-        Gdiplus::Bitmap surface(
-            width,
-            height,
-            width * 4,
-            PixelFormat32bppPARGB,
-            static_cast<BYTE *>(pixels));
-        Gdiplus::Graphics graphics(&surface);
-        graphics.Clear(Gdiplus::Color(0U, 0U, 0U, 0U));
-        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-        graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
-
-        if (mode == DisplayMode::Editing) {
-            Gdiplus::SolidBrush panel_brush(Gdiplus::Color(224U, 22U, 22U, 26U));
-            Gdiplus::Pen border_pen(Gdiplus::Color(255U, 90U, 200U, 250U), 2.0F * scale);
-            graphics.FillRectangle(
-                &panel_brush, 0.0F, 0.0F, static_cast<float>(width), static_cast<float>(height));
-            graphics.DrawRectangle(
-                &border_pen,
-                1.0F * scale,
-                1.0F * scale,
-                static_cast<float>(width) - 2.0F * scale,
-                static_cast<float>(height) - 2.0F * scale);
-
-            Gdiplus::Font title_font(
-                L"Segoe UI", 17.0F * scale, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
-            Gdiplus::Font hint_font(
-                L"Segoe UI", 11.0F * scale, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-            Gdiplus::SolidBrush text_brush(Gdiplus::Color(255U, 255U, 255U, 255U));
-            Gdiplus::SolidBrush hint_brush(Gdiplus::Color(255U, 190U, 190U, 196U));
-
-            wchar_t title[64]{};
-            const HRESULT title_result = StringCchPrintfW(
-                title,
-                std::size(title),
-                L"DRAG TO POSITION  |  SIZE %d%%",
-                placement_.scale_percent);
-            if (FAILED(title_result)) {
-                StringCchCopyW(title, std::size(title), L"DRAG TO POSITION");
-            }
-
-            constexpr wchar_t hint[] = L"H: LOCK  |  UP / DOWN: SIZE";
-            graphics.DrawString(
-                title,
-                static_cast<INT>(wcslen(title)),
-                &title_font,
-                Gdiplus::PointF(18.0F * scale, 12.0F * scale),
-                &text_brush);
-            graphics.DrawString(
-                hint,
-                static_cast<INT>(std::size(hint) - 1U),
-                &hint_font,
-                Gdiplus::PointF(18.0F * scale, 43.0F * scale),
-                &hint_brush);
-        } else {
-            Gdiplus::Color accent(255U, 174U, 174U, 178U);
-            switch (mode) {
-            case DisplayMode::Live:
-            case DisplayMode::LiveAndRecording:
-                accent = Gdiplus::Color(255U, 255U, 59U, 48U);
-                break;
-            case DisplayMode::Recording:
-                accent = Gdiplus::Color(255U, 255U, 149U, 0U);
-                break;
-            case DisplayMode::Ready:
-                accent = Gdiplus::Color(255U, 90U, 200U, 250U);
-                break;
-            case DisplayMode::Offline:
-            case DisplayMode::Hidden:
-            case DisplayMode::Editing:
-                break;
-            }
-
-            const float dot_size = 12.0F * scale;
-            const float dot_x = 18.0F * scale;
-            const float dot_y = (static_cast<float>(height) - dot_size) / 2.0F;
-
-            Gdiplus::SolidBrush accent_brush(accent);
-            graphics.FillEllipse(&accent_brush, dot_x, dot_y, dot_size, dot_size);
-
-            const wchar_t *label = label_for(mode);
-            const INT label_length = static_cast<INT>(wcslen(label));
-            Gdiplus::Font font(
-                L"Segoe UI",
-                22.0F * scale,
-                Gdiplus::FontStyleBold,
-                Gdiplus::UnitPixel);
-            Gdiplus::SolidBrush shadow_brush(Gdiplus::Color(190U, 0U, 0U, 0U));
-            Gdiplus::SolidBrush text_brush(Gdiplus::Color(255U, 255U, 255U, 255U));
-
-            const float text_x = 42.0F * scale;
-            const float text_y = 19.0F * scale;
-            graphics.DrawString(
-                label,
-                label_length,
-                &font,
-                Gdiplus::PointF(text_x + 2.0F * scale, text_y + 2.0F * scale),
-                &shadow_brush);
-            graphics.DrawString(
-                label,
-                label_length,
-                &font,
-                Gdiplus::PointF(text_x, text_y),
-                &text_brush);
-        }
-    }
-
-    BLENDFUNCTION blend{};
-    blend.BlendOp = AC_SRC_OVER;
-    blend.SourceConstantAlpha = 255U;
-    blend.AlphaFormat = AC_SRC_ALPHA;
-
-    if (!UpdateLayeredWindow(
-            window_,
-            screen_dc,
-            &destination,
-            &size,
-            memory_dc,
-            &source,
-            0U,
-            &blend,
-            ULW_ALPHA)) {
-        debug_windows_error(L"UpdateLayeredWindow");
-    } else {
+    case kWebViewReadyMessage:
+        webview_ready_ = true;
+        reload_chat_config();
+        update_host_state();
+        ShowWindow(window_, SW_SHOWNOACTIVATE);
         SetWindowPos(
             window_,
             HWND_TOPMOST,
@@ -464,101 +210,197 @@ void HudWindow::render(DisplayMode mode)
             0,
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        return 0L;
+    case kWebViewDocumentReadyMessage:
+        update_host_state();
+        return 0L;
+    case kWebViewFailedMessage: {
+        wchar_t detail[320]{};
+        swprintf_s(
+            detail,
+            L"ChatView could not initialize Microsoft Edge WebView2 (0x%08lX).\n\nInstall or repair the Microsoft Edge WebView2 Runtime, then restart OBS Studio.",
+            static_cast<unsigned long>(static_cast<std::uint32_t>(wparam)));
+        MessageBoxW(window_, detail, L"ChatView", MB_OK | MB_ICONERROR);
+        PostQuitMessage(2);
+        return 0L;
+    }
+    case WM_TIMER:
+        if (wparam == kStatusTimerId) {
+            clear_transient_status();
+            return 0L;
+        }
+        break;
+    case WM_HOTKEY:
+        if (wparam == static_cast<WPARAM>(kEditHotkeyId)) {
+            toggle_edit_mode();
+            return 0L;
+        }
+        break;
+    case WM_NCHITTEST:
+        return hit_test(lparam);
+    case WM_MOUSEACTIVATE:
+        return edit_mode_ ? MA_ACTIVATE : MA_NOACTIVATE;
+    case WM_GETMINMAXINFO: {
+        auto *minmax = reinterpret_cast<MINMAXINFO *>(lparam);
+        const SIZE minimum = minimum_hud_track_size(window_);
+        minmax->ptMinTrackSize.x = minimum.cx;
+        minmax->ptMinTrackSize.y = minimum.cy;
+        return 0L;
+    }
+    case WM_ENTERSIZEMOVE:
+        return 0L;
+    case WM_EXITSIZEMOVE:
+        if (edit_mode_) {
+            capture_and_persist_bounds();
+        }
+        return 0L;
+    case WM_MOVE:
+        webview_.notify_parent_position_changed();
+        return 0L;
+    case WM_SIZE:
+        webview_.resize();
+        return 0L;
+    case WM_DPICHANGED: {
+        const RECT *suggested = reinterpret_cast<const RECT *>(lparam);
+        SetWindowPos(
+            window_,
+            nullptr,
+            suggested->left,
+            suggested->top,
+            suggested->right - suggested->left,
+            suggested->bottom - suggested->top,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        webview_.resize();
+        if (edit_mode_) {
+            capture_and_persist_bounds();
+        }
+        return 0L;
+    }
+    case WM_DISPLAYCHANGE:
+        restore_saved_bounds();
+        return 0L;
+    case WM_LBUTTONDOWN:
+        if (edit_mode_) {
+            webview_.focus();
+        }
+        [[fallthrough]];
+    case WM_MOUSEMOVE:
+    case WM_LBUTTONUP:
+    case WM_LBUTTONDBLCLK:
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+    case WM_RBUTTONDBLCLK:
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+    case WM_MBUTTONDBLCLK:
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONUP:
+    case WM_XBUTTONDBLCLK:
+    case WM_MOUSEWHEEL:
+    case WM_MOUSEHWHEEL:
+        if (edit_mode_ && webview_.forward_mouse_message(message, wparam, lparam)) {
+            return 0L;
+        }
+        break;
+    case WM_CLOSE:
+        DestroyWindow(window_);
+        return 0L;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0L;
+    default:
+        break;
     }
 
-    SelectObject(memory_dc, previous_bitmap);
-    DeleteDC(memory_dc);
-    ReleaseDC(nullptr, screen_dc);
-    DeleteObject(bitmap);
+    return DefWindowProcW(window, message, wparam, lparam);
 }
 
-void HudWindow::hide()
+LRESULT HudWindow::hit_test(LPARAM lparam) const noexcept
 {
-    if (window_ != nullptr) {
-        ShowWindow(window_, SW_HIDE);
+    if (!edit_mode_ || window_ == nullptr) {
+        return HTTRANSPARENT;
     }
-    display_mode_ = DisplayMode::Hidden;
-}
 
-void HudWindow::arm_hide_timer(UINT milliseconds)
-{
-    cancel_hide_timer();
-    if (window_ != nullptr) {
-        SetTimer(window_, kHideTimerId, milliseconds, nullptr);
+    RECT bounds{};
+    if (!GetWindowRect(window_, &bounds)) {
+        return HTCLIENT;
     }
-}
 
-void HudWindow::cancel_hide_timer()
-{
-    if (window_ != nullptr) {
-        KillTimer(window_, kHideTimerId);
+    const int border = std::max(6, MulDiv(kResizeBorderDip, static_cast<int>(dpi()), 96));
+    const int header = std::max(28, MulDiv(kDragHeaderDip, static_cast<int>(dpi()), 96));
+    const POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+    const bool left = point.x < bounds.left + border;
+    const bool right = point.x >= bounds.right - border;
+    const bool top = point.y < bounds.top + border;
+    const bool bottom = point.y >= bounds.bottom - border;
+
+    if (top && left) {
+        return HTTOPLEFT;
     }
+    if (top && right) {
+        return HTTOPRIGHT;
+    }
+    if (bottom && left) {
+        return HTBOTTOMLEFT;
+    }
+    if (bottom && right) {
+        return HTBOTTOMRIGHT;
+    }
+    if (left) {
+        return HTLEFT;
+    }
+    if (right) {
+        return HTRIGHT;
+    }
+    if (top) {
+        return HTTOP;
+    }
+    if (bottom) {
+        return HTBOTTOM;
+    }
+    if (point.y < bounds.top + header) {
+        return HTCAPTION;
+    }
+    return HTCLIENT;
 }
 
 void HudWindow::toggle_edit_mode()
 {
-    if (window_ == nullptr) {
+    if (window_ == nullptr || !webview_ready_) {
         return;
     }
 
-    cancel_hide_timer();
-
-    if (!edit_mode_) {
-        edit_mode_ = true;
-        set_click_through(false);
-        render(DisplayMode::Editing);
-        return;
+    if (edit_mode_) {
+        capture_and_persist_bounds();
     }
+    edit_mode_ = !edit_mode_;
+    apply_window_mode();
+    update_host_state();
 
-    capture_current_position();
-    edit_mode_ = false;
-    set_click_through(true);
-
-    if (output_mode_ == DisplayMode::Hidden) {
-        hide();
-    } else {
-        render(output_mode_);
+    if (edit_mode_) {
+        ShowWindow(window_, SW_SHOW);
+        SetForegroundWindow(window_);
+        webview_.focus();
     }
 }
 
-void HudWindow::adjust_scale(int delta_percent)
-{
-    if (window_ == nullptr || !edit_mode_) {
-        return;
-    }
-
-    HudPlacement captured = capture_hud_placement(window_);
-    if (captured.valid) {
-        captured.scale_percent = placement_.scale_percent;
-        placement_ = std::move(captured);
-    }
-
-    const int next_scale = std::clamp(
-        placement_.scale_percent + delta_percent,
-        kMinimumHudScalePercent,
-        kMaximumHudScalePercent);
-    if (next_scale == placement_.scale_percent) {
-        return;
-    }
-
-    placement_.scale_percent = next_scale;
-    render(DisplayMode::Editing);
-    persist_placement();
-}
-
-void HudWindow::set_click_through(bool enabled) noexcept
+void HudWindow::apply_window_mode() noexcept
 {
     if (window_ == nullptr) {
         return;
     }
 
+    LONG_PTR style = GetWindowLongPtrW(window_, GWL_STYLE);
     LONG_PTR extended_style = GetWindowLongPtrW(window_, GWL_EXSTYLE);
-    if (enabled) {
-        extended_style |= WS_EX_TRANSPARENT;
+    if (edit_mode_) {
+        style |= WS_THICKFRAME;
+        extended_style &= ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
     } else {
-        extended_style &= ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT);
+        style &= ~static_cast<LONG_PTR>(WS_THICKFRAME);
+        extended_style |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
     }
 
+    SetWindowLongPtrW(window_, GWL_STYLE, style);
     SetWindowLongPtrW(window_, GWL_EXSTYLE, extended_style);
     SetWindowPos(
         window_,
@@ -568,29 +410,100 @@ void HudWindow::set_click_through(bool enabled) noexcept
         0,
         0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    webview_.resize();
 }
 
-void HudWindow::capture_current_position() noexcept
+void HudWindow::reload_chat_config() noexcept
 {
-    if (window_ == nullptr) {
+    if (!webview_ready_) {
         return;
     }
 
+    ChatConfig config;
+    if (load_chat_config(config)) {
+        if (!webview_.navigate(config.url)) {
+            webview_.show_setup_page();
+        }
+    } else {
+        webview_.show_setup_page();
+    }
+}
+
+void HudWindow::update_host_state() noexcept
+{
+    if (!webview_ready_) {
+        return;
+    }
+
+    std::wstring status = transient_status_;
+    std::wstring tone = transient_tone_;
+    if (status.empty()) {
+        if (streaming_ && recording_) {
+            status = L"LIVE  •  REC";
+            tone = L"#ff3b30";
+        } else if (streaming_) {
+            status = L"LIVE";
+            tone = L"#ff3b30";
+        } else if (recording_) {
+            status = L"REC";
+            tone = L"#ff9500";
+        }
+    }
+
+    webview_.set_host_state(edit_mode_, status, tone);
+}
+
+void HudWindow::set_transient_status(
+    std::wstring text, std::wstring tone, UINT duration_ms)
+{
+    transient_status_ = std::move(text);
+    transient_tone_ = std::move(tone);
+    if (window_ != nullptr) {
+        KillTimer(window_, kStatusTimerId);
+        SetTimer(window_, kStatusTimerId, duration_ms, nullptr);
+    }
+    update_host_state();
+}
+
+void HudWindow::clear_transient_status() noexcept
+{
+    if (window_ != nullptr) {
+        KillTimer(window_, kStatusTimerId);
+    }
+    transient_status_.clear();
+    transient_tone_ = L"#aeb0b2";
+    update_host_state();
+}
+
+void HudWindow::capture_and_persist_bounds() noexcept
+{
     HudPlacement captured = capture_hud_placement(window_);
     if (!captured.valid) {
         return;
     }
 
-    captured.scale_percent = placement_.scale_percent;
     placement_ = std::move(captured);
-    persist_placement();
+    if (!save_hud_placement(placement_)) {
+        OutputDebugStringW(L"[ChatView HUD] Failed to persist HUD bounds\n");
+    }
 }
 
-void HudWindow::persist_placement() const noexcept
+void HudWindow::restore_saved_bounds() noexcept
 {
-    if (placement_.valid && !save_hud_placement(placement_)) {
-        OutputDebugStringW(L"[ChatView HUD] Failed to persist HUD placement\n");
+    if (window_ == nullptr) {
+        return;
     }
+
+    const RECT bounds = resolve_hud_bounds(placement_, kDefaultMarginDip);
+    SetWindowPos(
+        window_,
+        HWND_TOPMOST,
+        bounds.left,
+        bounds.top,
+        bounds.right - bounds.left,
+        bounds.bottom - bounds.top,
+        SWP_NOACTIVATE);
+    webview_.resize();
 }
 
 UINT HudWindow::dpi() const noexcept
@@ -603,29 +516,12 @@ UINT HudWindow::dpi() const noexcept
     const HMODULE user32 = GetModuleHandleW(L"user32.dll");
     const auto get_dpi_for_window = reinterpret_cast<GetDpiForWindowFunction>(
         GetProcAddress(user32, "GetDpiForWindow"));
-
-    return get_dpi_for_window != nullptr ? get_dpi_for_window(window_) : 96U;
-}
-
-const wchar_t *HudWindow::label_for(DisplayMode mode) const noexcept
-{
-    switch (mode) {
-    case DisplayMode::Ready:
-        return L"CHATVIEW READY";
-    case DisplayMode::Live:
-        return L"LIVE";
-    case DisplayMode::Recording:
-        return L"REC";
-    case DisplayMode::LiveAndRecording:
-        return L"LIVE  \u2022  REC";
-    case DisplayMode::Offline:
-        return L"OFFLINE";
-    case DisplayMode::Editing:
-        return L"EDIT MODE";
-    case DisplayMode::Hidden:
-    default:
-        return L"";
+    if (get_dpi_for_window == nullptr) {
+        return 96U;
     }
+
+    const UINT value = get_dpi_for_window(window_);
+    return value == 0U ? 96U : value;
 }
 
 } // namespace chatview

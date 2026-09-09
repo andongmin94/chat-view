@@ -16,7 +16,6 @@ function Resolve-ObsRoot {
     if (-not (Test-Path $executable -PathType Leaf)) {
         throw "OBS Studio was not found at '$root'. Expected '$executable'."
     }
-
     return $root
 }
 
@@ -33,6 +32,10 @@ $files = @(
     @{
         Source = Join-Path $PSScriptRoot 'obs-plugins\64bit\chat-view-hud.exe'
         Destination = Join-Path $obsRoot 'obs-plugins\64bit\chat-view-hud.exe'
+    },
+    @{
+        Source = Join-Path $PSScriptRoot 'obs-plugins\64bit\chat-view-config.exe'
+        Destination = Join-Path $obsRoot 'obs-plugins\64bit\chat-view-config.exe'
     },
     @{
         Source = Join-Path $PSScriptRoot 'data\obs-plugins\chat-view-obs\locale\en-US.ini'
@@ -57,4 +60,4 @@ foreach ($file in $files) {
 }
 
 Write-Host "ChatView OBS was installed to '$obsRoot'."
-Write-Host 'Start OBS Studio to load the plugin.'
+Write-Host 'Start OBS Studio, then open Tools > ChatView Settings.'

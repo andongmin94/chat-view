@@ -40,9 +40,10 @@ int main()
 
     chatview::HudPlacement expected;
     expected.monitor_device = L"\\\\.\\DISPLAY_TEST";
-    expected.offset_x = -123;
-    expected.offset_y = 456;
-    expected.scale_percent = 140;
+    expected.offset_x_dip = -123;
+    expected.offset_y_dip = 456;
+    expected.width_dip = 520;
+    expected.height_dip = 720;
     expected.valid = true;
 
     if (!chatview::save_hud_placement(expected)) {
@@ -55,14 +56,22 @@ int main()
     }
 
     if (!loaded.valid || loaded.monitor_device != expected.monitor_device ||
-        loaded.offset_x != expected.offset_x || loaded.offset_y != expected.offset_y ||
-        loaded.scale_percent != expected.scale_percent) {
+        loaded.offset_x_dip != expected.offset_x_dip ||
+        loaded.offset_y_dip != expected.offset_y_dip ||
+        loaded.width_dip != expected.width_dip ||
+        loaded.height_dip != expected.height_dip) {
         return fail(L"The placement round trip changed data");
+    }
+
+    const RECT fallback_bounds = chatview::resolve_hud_bounds(loaded, 24);
+    if (fallback_bounds.right <= fallback_bounds.left ||
+        fallback_bounds.bottom <= fallback_bounds.top) {
+        return fail(L"A missing saved monitor did not fall back to a visible monitor");
     }
 
     const std::filesystem::path file = root / L"ChatView" / L"hud.ini";
     if (!WritePrivateProfileStringW(
-            L"placement", L"offset_x", L"not-a-number", file.c_str())) {
+            L"placement", L"width_dip", L"not-a-number", file.c_str())) {
         return fail(L"Failed to corrupt the placement test fixture");
     }
 
@@ -70,21 +79,9 @@ int main()
     if (chatview::load_hud_placement(unchanged)) {
         return fail(L"Malformed placement data was accepted");
     }
-
-    if (!unchanged.valid || unchanged.monitor_device != expected.monitor_device ||
-        unchanged.offset_x != expected.offset_x || unchanged.offset_y != expected.offset_y ||
-        unchanged.scale_percent != expected.scale_percent) {
+    if (!unchanged.valid || unchanged.width_dip != expected.width_dip ||
+        unchanged.height_dip != expected.height_dip) {
         return fail(L"A failed load modified the existing placement");
-    }
-
-    if (!chatview::save_hud_placement(expected) ||
-        !WritePrivateProfileStringW(
-            L"placement", L"scale_percent", L"135", file.c_str())) {
-        return fail(L"Failed to corrupt the scale test fixture");
-    }
-
-    if (chatview::load_hud_placement(unchanged)) {
-        return fail(L"An unsupported HUD scale was accepted");
     }
 
     error.clear();
@@ -92,6 +89,5 @@ int main()
     if (error) {
         return fail(L"Failed to remove the placement test directory");
     }
-
     return 0;
 }

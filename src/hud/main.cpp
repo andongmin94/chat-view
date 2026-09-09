@@ -4,39 +4,37 @@
 #include "hud/shared-state-reader.hpp"
 
 #include <Windows.h>
-#include <gdiplus.h>
 #include <shellapi.h>
 
-#include <cstdint>
+#include <cerrno>
+#include <cstdlib>
 #include <exception>
-#include <cwchar>
+#include <limits>
 #include <string>
 
 namespace {
 
-
-class GdiplusSession final {
+class ComSession final {
 public:
-    GdiplusSession() = default;
-
     [[nodiscard]] bool start() noexcept
     {
-        Gdiplus::GdiplusStartupInput startup_input;
-        return Gdiplus::GdiplusStartup(&token_, &startup_input, nullptr) == Gdiplus::Ok;
+        const HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        initialized_ = SUCCEEDED(result);
+        return initialized_;
     }
 
-    ~GdiplusSession()
+    ~ComSession()
     {
-        if (token_ != 0U) {
-            Gdiplus::GdiplusShutdown(token_);
+        if (initialized_) {
+            CoUninitialize();
         }
     }
 
-    GdiplusSession(const GdiplusSession &) = delete;
-    GdiplusSession &operator=(const GdiplusSession &) = delete;
+    ComSession(const ComSession &) = delete;
+    ComSession &operator=(const ComSession &) = delete;
 
 private:
-    ULONG_PTR token_ = 0U;
+    bool initialized_ = false;
 };
 
 struct Options {
@@ -53,10 +51,23 @@ void enable_per_monitor_dpi_awareness()
     const auto set_process_dpi_awareness_context =
         reinterpret_cast<SetProcessDpiAwarenessContextFunction>(
             GetProcAddress(user32, "SetProcessDpiAwarenessContext"));
-
     if (set_process_dpi_awareness_context != nullptr) {
         set_process_dpi_awareness_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
+}
+
+bool parse_parent_process_id(const wchar_t *text, DWORD &process_id) noexcept
+{
+    errno = 0;
+    wchar_t *end = nullptr;
+    const unsigned long value = std::wcstoul(text, &end, 10);
+    if (errno == ERANGE || end == nullptr || end == text || *end != L'\0' ||
+        value == 0UL || value > std::numeric_limits<DWORD>::max()) {
+        return false;
+    }
+
+    process_id = static_cast<DWORD>(value);
+    return true;
 }
 
 bool parse_options(Options &options)
@@ -67,29 +78,22 @@ bool parse_options(Options &options)
         return false;
     }
 
-    for (int index = 1; index < argument_count; ++index) {
+    bool valid = true;
+    for (int index = 1; index < argument_count && valid; ++index) {
         const std::wstring argument = arguments[index];
-
         if (argument == L"--mapping" && index + 1 < argument_count) {
             options.mapping_name = arguments[++index];
         } else if (argument == L"--event" && index + 1 < argument_count) {
             options.event_name = arguments[++index];
         } else if (argument == L"--parent" && index + 1 < argument_count) {
-            wchar_t *end = nullptr;
-            const unsigned long value = wcstoul(arguments[++index], &end, 10);
-            if (end == nullptr || *end != L'\0' || value == 0UL) {
-                LocalFree(arguments);
-                return false;
-            }
-            options.parent_process_id = static_cast<DWORD>(value);
+            valid = parse_parent_process_id(arguments[++index], options.parent_process_id);
         } else {
-            LocalFree(arguments);
-            return false;
+            valid = false;
         }
     }
 
     LocalFree(arguments);
-    return !options.mapping_name.empty() && !options.event_name.empty() &&
+    return valid && !options.mapping_name.empty() && !options.event_name.empty() &&
            options.parent_process_id != 0U;
 }
 
@@ -124,7 +128,6 @@ int run(HINSTANCE instance, const Options &options)
     while (running) {
         const DWORD wait_result =
             MsgWaitForMultipleObjects(handle_count, wait_handles, FALSE, INFINITE, QS_ALLINPUT);
-
         if (wait_result == WAIT_FAILED) {
             break;
         }
@@ -174,9 +177,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
             return 1;
         }
 
-        GdiplusSession gdiplus;
-        if (!gdiplus.start()) {
-            OutputDebugStringW(L"[ChatView HUD] Failed to initialize GDI+\n");
+        ComSession com;
+        if (!com.start()) {
+            OutputDebugStringW(L"[ChatView HUD] Failed to initialize COM\n");
             return 4;
         }
 

@@ -24,12 +24,13 @@ public:
     [[nodiscard]] bool start() noexcept;
     void stop() noexcept;
     void update(bool streaming, bool recording) noexcept;
+    [[nodiscard]] bool open_settings() const noexcept;
 
 private:
     [[nodiscard]] bool create_transport_locked();
     [[nodiscard]] bool ensure_runtime_locked();
     [[nodiscard]] bool launch_runtime_locked();
-    [[nodiscard]] std::wstring find_runtime_path() const;
+    [[nodiscard]] std::wstring find_sibling_path(const wchar_t *file_name) const;
 
     void publish_locked(std::uint32_t flags) noexcept;
     void cleanup_locked() noexcept;

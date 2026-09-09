@@ -20,6 +20,7 @@ if (-not (Test-Path $obsRoot -PathType Container)) {
 $files = @(
     (Join-Path $obsRoot 'obs-plugins\64bit\chat-view-obs.dll'),
     (Join-Path $obsRoot 'obs-plugins\64bit\chat-view-hud.exe'),
+    (Join-Path $obsRoot 'obs-plugins\64bit\chat-view-config.exe'),
     (Join-Path $obsRoot 'data\obs-plugins\chat-view-obs\locale\en-US.ini'),
     (Join-Path $obsRoot 'data\obs-plugins\chat-view-obs\locale\ko-KR.ini')
 )
@@ -42,3 +43,4 @@ if ((Test-Path $dataRoot -PathType Container) -and
 }
 
 Write-Host "ChatView OBS was removed from '$obsRoot'."
+Write-Host 'User settings in %LOCALAPPDATA%\ChatView were left intact.'

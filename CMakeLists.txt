@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.2.0 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.2.1 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -9,10 +9,11 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 option(CHATVIEW_WARNINGS_AS_ERRORS "Treat ChatView compiler warnings as errors" OFF)
 set(WEBVIEW2_SDK_DIR "" CACHE PATH "Extracted Microsoft.Web.WebView2 NuGet package")
+set(OBS_RUNTIME_DEPENDENCY_DIR "" CACHE PATH "OBS dependency prefix used by loader tests")
 include(CTest)
 
 find_package(libobs REQUIRED)
@@ -75,6 +76,7 @@ add_library(chat-view-obs MODULE
     src/plugin/runtime-controller.hpp
     src/common/shared-state.hpp
     src/common/win32-handle.hpp
+    src/common/window-messages.hpp
 )
 target_include_directories(chat-view-obs PRIVATE "${CHATVIEW_SOURCE_DIR}")
 target_link_libraries(chat-view-obs PRIVATE OBS::libobs OBS::obs-frontend-api)
@@ -101,8 +103,10 @@ add_executable(chat-view-hud WIN32
     src/hud/shared-state-reader.hpp
     src/hud/webview-host.cpp
     src/hud/webview-host.hpp
+    src/common/chat-config.hpp
     src/common/shared-state.hpp
     src/common/win32-handle.hpp
+    src/common/window-messages.hpp
 )
 target_include_directories(chat-view-hud PRIVATE
     "${CHATVIEW_SOURCE_DIR}"
@@ -129,6 +133,7 @@ chatview_set_runtime_output(chat-view-hud)
 
 add_executable(chat-view-config WIN32
     src/config/main.cpp
+    src/common/window-messages.hpp
 )
 target_include_directories(chat-view-config PRIVATE "${CHATVIEW_SOURCE_DIR}")
 target_link_libraries(chat-view-config PRIVATE chat-view-common user32 gdi32)
@@ -167,6 +172,7 @@ if(BUILD_TESTING)
         tests/hud-smoke-test.cpp
         src/common/shared-state.hpp
         src/common/win32-handle.hpp
+        src/common/window-messages.hpp
     )
     target_include_directories(chat-view-hud-smoke-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
     target_link_libraries(chat-view-hud-smoke-test PRIVATE user32)
@@ -184,6 +190,34 @@ if(BUILD_TESTING)
         COMMAND chat-view-hud-smoke-test "$<TARGET_FILE:chat-view-hud>"
     )
     set_tests_properties(chat-view-hud-smoke PROPERTIES TIMEOUT 30)
+
+    add_executable(chat-view-obs-load-test
+        tests/obs-module-load-test.cpp
+    )
+    target_compile_definitions(chat-view-obs-load-test PRIVATE
+        UNICODE
+        _UNICODE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        _WIN32_WINNT=0x0A00
+        WINVER=0x0A00
+    )
+    chatview_enable_warnings(chat-view-obs-load-test)
+
+    set(obs_load_test_arguments
+        "$<TARGET_FILE:chat-view-obs>"
+        "$<TARGET_FILE_DIR:OBS::libobs>"
+        "$<TARGET_FILE_DIR:OBS::obs-frontend-api>"
+    )
+    if(OBS_RUNTIME_DEPENDENCY_DIR)
+        list(APPEND obs_load_test_arguments "${OBS_RUNTIME_DEPENDENCY_DIR}/bin")
+    endif()
+
+    add_test(
+        NAME chat-view-obs-load
+        COMMAND chat-view-obs-load-test ${obs_load_test_arguments}
+    )
+    set_tests_properties(chat-view-obs-load PROPERTIES TIMEOUT 10)
 endif()
 
 install(TARGETS chat-view-obs chat-view-hud chat-view-config

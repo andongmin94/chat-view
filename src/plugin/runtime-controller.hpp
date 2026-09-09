@@ -30,19 +30,22 @@ public:
 private:
     [[nodiscard]] bool create_transport_locked();
     [[nodiscard]] bool ensure_runtime_locked();
-    [[nodiscard]] bool launch_runtime_locked();
+    [[nodiscard]] bool launch_runtime_locked(bool wait_until_ready);
     [[nodiscard]] std::wstring find_sibling_path(const wchar_t *file_name) const;
 
     void publish_locked(std::uint32_t flags) noexcept;
+    void terminate_runtime_locked(const char *reason) noexcept;
     void cleanup_locked() noexcept;
 
     std::mutex mutex_;
     UniqueHandle mapping_;
     UniqueHandle state_changed_event_;
+    UniqueHandle runtime_ready_event_;
     UniqueHandle runtime_process_;
     SharedState *shared_state_ = nullptr;
     std::wstring mapping_name_;
     std::wstring event_name_;
+    std::wstring ready_event_name_;
     std::uint64_t generation_ = 0U;
     std::uint32_t current_flags_ = SharedStateNone;
 };

@@ -9,7 +9,6 @@
 #include <dcomp.h>
 #include <dxgi.h>
 #include <windowsx.h>
-#include <winhttp.h>
 #include <wrl.h>
 #include <wrl/event.h>
 
@@ -45,22 +44,42 @@ code { color:#7dd3fc; }
 <main>
 <h1>ChatView needs a chat URL</h1>
 <p>Open <strong>OBS Studio → Tools → ChatView Settings…</strong>.</p>
-<p>Paste a Weflab page URL, CHZZK chat URL, or YouTube live-chat URL, then save.</p>
+<p>Paste a Weflab page, CHZZK broadcast, or YouTube live URL, then save.</p>
 <p><code>Ctrl + Alt + Shift + H</code> unlocks this overlay for moving and resizing.</p>
 </main>
 </body>
 </html>
 )HTML";
 
-constexpr wchar_t kOverlayScript[] = LR"JS(
+constexpr wchar_t kOverlayBootstrapScript[] = LR"JS(
 (() => {
   try {
-    let style = document.getElementById('__chatview_transparency_style');
-    if (!style) {
-      style = document.createElement('style');
-      style.id = '__chatview_transparency_style';
-      style.textContent = 'html,body{background:transparent!important;}::-webkit-scrollbar{display:none!important;}';
-      (document.head || document.documentElement).appendChild(style);
+    const styleId = '__chatview_transparency_style';
+    let pageStyle = document.getElementById(styleId);
+    if (!pageStyle) {
+      pageStyle = document.createElement('style');
+      pageStyle.id = styleId;
+      pageStyle.textContent = `
+        html, body, body > #root, body > #__next {
+          background: transparent !important;
+          background-color: transparent !important;
+        }
+        html {
+          --yt-live-chat-background-color: transparent !important;
+          --yt-live-chat-secondary-background-color: rgba(18, 18, 22, .70) !important;
+          --yt-live-chat-tertiary-background-color: rgba(18, 18, 22, .82) !important;
+        }
+        yt-live-chat-app,
+        yt-live-chat-renderer,
+        yt-live-chat-renderer #contents,
+        yt-live-chat-renderer #item-list,
+        yt-live-chat-renderer #chat {
+          background: transparent !important;
+          background-color: transparent !important;
+        }
+        ::-webkit-scrollbar { display: none !important; }
+      `;
+      (document.head || document.documentElement).appendChild(pageStyle);
     }
 
     let host = document.getElementById('__chatview_native_host');
@@ -69,23 +88,74 @@ constexpr wchar_t kOverlayScript[] = LR"JS(
       host.id = '__chatview_native_host';
       host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
       document.documentElement.appendChild(host);
-      const root = host.attachShadow({mode:'open'});
-      root.innerHTML = `
-        <style>
-          :host { all: initial; }
-          .frame { position:fixed; inset:0; box-sizing:border-box; border:3px solid #5ac8fa; opacity:0; transition:opacity .12s ease; }
-          .edit { position:absolute; left:12px; top:10px; padding:8px 11px; border-radius:10px; background:rgba(20,20,24,.92); color:#fff; font:600 13px/1.2 "Segoe UI",sans-serif; box-shadow:0 6px 24px rgba(0,0,0,.35); }
-          .status { position:absolute; right:12px; top:10px; display:none; align-items:center; gap:7px; padding:7px 10px; border-radius:999px; background:rgba(20,20,24,.82); color:#fff; font:700 12px/1 "Segoe UI",sans-serif; box-shadow:0 5px 20px rgba(0,0,0,.30); }
-          .dot { width:8px; height:8px; border-radius:999px; background:var(--tone,#aeb0b2); box-shadow:0 0 10px var(--tone,#aeb0b2); }
-          :host([data-editing="1"]) .frame { opacity:1; }
-          :host([data-has-status="1"]) .status { display:flex; }
-        </style>
-        <div class="frame"><div class="edit">DRAG HEADER · RESIZE EDGES · CTRL+ALT+SHIFT+H TO LOCK</div></div>
-        <div class="status"><span class="dot"></span><span class="statusText"></span></div>`;
-      window.__chatviewNative = {
-        host,
-        status: root.querySelector('.statusText')
-      };
+
+      const root = host.attachShadow({ mode: 'open' });
+      const shadowStyle = document.createElement('style');
+      shadowStyle.textContent = `
+        :host { all: initial; }
+        .frame {
+          position: fixed;
+          inset: 0;
+          box-sizing: border-box;
+          border: 3px solid #5ac8fa;
+          opacity: 0;
+          transition: opacity .12s ease;
+        }
+        .edit {
+          position: absolute;
+          left: 12px;
+          top: 10px;
+          padding: 8px 11px;
+          border-radius: 10px;
+          background: rgba(20,20,24,.92);
+          color: #fff;
+          font: 600 13px/1.2 "Segoe UI",sans-serif;
+          box-shadow: 0 6px 24px rgba(0,0,0,.35);
+        }
+        .status {
+          position: absolute;
+          right: 12px;
+          top: 10px;
+          display: none;
+          align-items: center;
+          gap: 7px;
+          padding: 7px 10px;
+          border-radius: 999px;
+          background: rgba(20,20,24,.82);
+          color: #fff;
+          font: 700 12px/1 "Segoe UI",sans-serif;
+          box-shadow: 0 5px 20px rgba(0,0,0,.30);
+        }
+        .dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          background: var(--tone,#aeb0b2);
+          box-shadow: 0 0 10px var(--tone,#aeb0b2);
+        }
+        :host([data-editing="1"]) .frame { opacity: 1; }
+        :host([data-has-status="1"]) .status { display: flex; }
+      `;
+
+      const frame = document.createElement('div');
+      frame.className = 'frame';
+      const edit = document.createElement('div');
+      edit.className = 'edit';
+      edit.textContent = 'DRAG HEADER · RESIZE EDGES · CTRL+ALT+SHIFT+H TO LOCK';
+      frame.appendChild(edit);
+
+      const status = document.createElement('div');
+      status.className = 'status';
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      const statusText = document.createElement('span');
+      statusText.className = 'statusText';
+      status.append(dot, statusText);
+
+      root.append(shadowStyle, frame, status);
+      window.__chatviewNative = { host, statusText };
+    } else if (!host.isConnected) {
+      document.documentElement.appendChild(host);
     }
 
     window.__chatviewApplyHostState = (state) => {
@@ -94,7 +164,7 @@ constexpr wchar_t kOverlayScript[] = LR"JS(
       view.host.dataset.editing = state.editing ? '1' : '0';
       view.host.dataset.hasStatus = state.status ? '1' : '0';
       view.host.style.setProperty('--tone', state.tone || '#aeb0b2');
-      view.status.textContent = state.status || '';
+      view.statusText.textContent = state.status || '';
     };
     return true;
   } catch (_) {
@@ -137,9 +207,12 @@ std::wstring javascript_string(const std::wstring &value)
 bool is_allowed_host(const std::wstring &host) noexcept
 {
     return _wcsicmp(host.c_str(), L"weflab.com") == 0 ||
+           _wcsicmp(host.c_str(), L"www.weflab.com") == 0 ||
            _wcsicmp(host.c_str(), L"chzzk.naver.com") == 0 ||
+           _wcsicmp(host.c_str(), L"m.chzzk.naver.com") == 0 ||
            _wcsicmp(host.c_str(), L"www.youtube.com") == 0 ||
-           _wcsicmp(host.c_str(), L"youtube.com") == 0;
+           _wcsicmp(host.c_str(), L"youtube.com") == 0 ||
+           _wcsicmp(host.c_str(), L"m.youtube.com") == 0;
 }
 
 bool is_allowed_document_url(const wchar_t *url) noexcept
@@ -157,9 +230,12 @@ bool is_allowed_document_url(const wchar_t *url) noexcept
     components.dwStructSize = sizeof(components);
     components.dwSchemeLength = static_cast<DWORD>(-1);
     components.dwHostNameLength = static_cast<DWORD>(-1);
-    components.dwUrlPathLength = static_cast<DWORD>(-1);
+    components.dwUserNameLength = static_cast<DWORD>(-1);
+    components.dwPasswordLength = static_cast<DWORD>(-1);
     if (!WinHttpCrackUrl(url, 0U, 0U, &components) ||
         components.nScheme != INTERNET_SCHEME_HTTPS ||
+        components.nPort != INTERNET_DEFAULT_HTTPS_PORT ||
+        components.dwUserNameLength != 0U || components.dwPasswordLength != 0U ||
         components.lpszHostName == nullptr) {
         return false;
     }
@@ -560,22 +636,14 @@ void WebViewHost::post_failure(HRESULT result) const noexcept
     }
 }
 
-void WebViewHost::install_page_overlay() noexcept
-{
-    if (ready_ && webview_) {
-        webview_->ExecuteScript(kOverlayScript, nullptr);
-    }
-}
-
 void WebViewHost::apply_host_state() noexcept
 {
     if (!ready_ || !webview_) {
         return;
     }
 
-    install_page_overlay();
-    std::wstring script =
-        L"window.__chatviewApplyHostState && window.__chatviewApplyHostState({editing:";
+    std::wstring script = kOverlayBootstrapScript;
+    script.append(L"\n;window.__chatviewApplyHostState && window.__chatviewApplyHostState({editing:");
     script.append(editing_ ? L"true" : L"false");
     script.append(L",status:");
     script.append(javascript_string(status_text_));

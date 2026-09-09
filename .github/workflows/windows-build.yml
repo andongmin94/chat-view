@@ -127,6 +127,7 @@ jobs:
             "-DCMAKE_PREFIX_PATH=$prefixPath" `
             "-DCMAKE_INSTALL_PREFIX=$dist" `
             "-DWEBVIEW2_SDK_DIR=$webview2" `
+            "-DOBS_RUNTIME_DEPENDENCY_DIR=$($obsDeps[0].FullName)" `
             -DCHATVIEW_WARNINGS_AS_ERRORS:BOOL=ON
 
           cmake --build build/windows-x64 `
@@ -139,6 +140,49 @@ jobs:
 
           cmake --install build/windows-x64 `
             --config RelWithDebInfo
+
+      - name: Validate self-contained native binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $visualStudio = & $vswhere `
+            -latest `
+            -products '*' `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $visualStudio) {
+            throw 'Visual Studio C++ tools were not found.'
+          }
+
+          $dumpbin = Get-ChildItem `
+            (Join-Path $visualStudio 'VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe') `
+            -File |
+            Sort-Object FullName |
+            Select-Object -Last 1
+          if (-not $dumpbin) {
+            throw 'dumpbin.exe was not found.'
+          }
+
+          $forbiddenDependencies = @(
+            'MSVCP140.dll',
+            'VCRUNTIME140.dll',
+            'VCRUNTIME140_1.dll'
+          )
+          $binaries = @(
+            'dist/obs-plugins/64bit/chat-view-obs.dll',
+            'dist/obs-plugins/64bit/chat-view-hud.exe',
+            'dist/obs-plugins/64bit/chat-view-config.exe'
+          )
+
+          foreach ($binary in $binaries) {
+            $dependencies = (& $dumpbin.FullName /DEPENDENTS $binary | Out-String)
+            foreach ($dependency in $forbiddenDependencies) {
+              if ($dependencies -match [regex]::Escape($dependency)) {
+                throw "$binary unexpectedly depends on $dependency"
+              }
+            }
+          }
 
       - name: Validate package layout
         shell: pwsh
@@ -175,7 +219,7 @@ jobs:
           New-Item -ItemType Directory -Path (Join-Path $fakeObs 'bin/64bit') -Force | Out-Null
           New-Item -ItemType File -Path (Join-Path $fakeObs 'bin/64bit/obs64.exe') -Force | Out-Null
 
-          & ./dist/install.ps1 -ObsPath $fakeObs
+          & ./dist/install.ps1 -ObsPath $fakeObs -SkipObsVersionCheck
 
           $installedFiles = @(
             (Join-Path $fakeObs 'obs-plugins/64bit/chat-view-obs.dll'),

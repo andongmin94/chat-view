@@ -51,7 +51,6 @@ private:
     HRESULT on_controller_created(
         HRESULT result, ICoreWebView2CompositionController *controller) noexcept;
     void post_failure(HRESULT result) const noexcept;
-    void install_page_overlay() noexcept;
     void apply_host_state() noexcept;
 
     HWND window_ = nullptr;

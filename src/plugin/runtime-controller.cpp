@@ -18,7 +18,9 @@ namespace {
 
 constexpr wchar_t kRuntimeExecutableName[] = L"chat-view-hud.exe";
 constexpr wchar_t kSettingsExecutableName[] = L"chat-view-config.exe";
-constexpr DWORD kRuntimeExitWaitMs = 1500U;
+constexpr DWORD kRuntimeReadyWaitMs = 12000U;
+constexpr DWORD kRuntimeExitWaitMs = 2000U;
+constexpr DWORD kRuntimeTerminateWaitMs = 2000U;
 
 std::wstring last_error_message(DWORD error)
 {
@@ -60,6 +62,20 @@ bool is_regular_file(const std::wstring &path) noexcept
            (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0U;
 }
 
+void log_process_exit(HANDLE process, const char *context) noexcept
+{
+    DWORD exit_code = 0U;
+    if (GetExitCodeProcess(process, &exit_code)) {
+        blog(
+            LOG_ERROR,
+            "[ChatView OBS] HUD runtime %s with exit code %lu",
+            context,
+            static_cast<unsigned long>(exit_code));
+    } else {
+        log_windows_error("GetExitCodeProcess", GetLastError());
+    }
+}
+
 } // namespace
 
 RuntimeController::~RuntimeController()
@@ -73,13 +89,13 @@ bool RuntimeController::start() noexcept
         std::scoped_lock lock(mutex_);
         cleanup_locked();
 
-        if (!create_transport_locked() || !launch_runtime_locked()) {
+        if (!create_transport_locked() || !launch_runtime_locked(true)) {
             cleanup_locked();
             return false;
         }
 
         publish_locked(current_flags_);
-        blog(LOG_INFO, "[ChatView OBS] HUD runtime started");
+        blog(LOG_INFO, "[ChatView OBS] HUD runtime started and reported ready");
         return true;
     } catch (const std::exception &error) {
         blog(LOG_ERROR, "[ChatView OBS] HUD startup failed: %s", error.what());
@@ -103,10 +119,10 @@ void RuntimeController::stop() noexcept
         const DWORD wait_result =
             WaitForSingleObject(runtime_process_.get(), kRuntimeExitWaitMs);
         if (wait_result == WAIT_TIMEOUT) {
-            blog(
-                LOG_WARNING,
-                "[ChatView OBS] HUD runtime did not exit within %lu ms",
-                static_cast<unsigned long>(kRuntimeExitWaitMs));
+            terminate_runtime_locked("did not exit after the shutdown request");
+        } else if (wait_result == WAIT_FAILED) {
+            log_windows_error("WaitForSingleObject(HUD shutdown)", GetLastError());
+            terminate_runtime_locked("could not be observed during shutdown");
         }
     }
 
@@ -195,8 +211,10 @@ bool RuntimeController::toggle_edit_mode() const noexcept
 bool RuntimeController::create_transport_locked()
 {
     const DWORD process_id = GetCurrentProcessId();
-    mapping_name_ = L"Local\\ChatViewOBS.State." + std::to_wstring(process_id);
-    event_name_ = L"Local\\ChatViewOBS.Event." + std::to_wstring(process_id);
+    const std::wstring suffix = std::to_wstring(process_id);
+    mapping_name_ = L"Local\\ChatViewOBS.State." + suffix;
+    event_name_ = L"Local\\ChatViewOBS.Event." + suffix;
+    ready_event_name_ = L"Local\\ChatViewOBS.Ready." + suffix;
 
     mapping_.reset(CreateFileMappingW(
         INVALID_HANDLE_VALUE,
@@ -219,7 +237,13 @@ bool RuntimeController::create_transport_locked()
 
     state_changed_event_.reset(CreateEventW(nullptr, FALSE, FALSE, event_name_.c_str()));
     if (!state_changed_event_) {
-        log_windows_error("CreateEventW", GetLastError());
+        log_windows_error("CreateEventW(state changed)", GetLastError());
+        return false;
+    }
+
+    runtime_ready_event_.reset(CreateEventW(nullptr, TRUE, FALSE, ready_event_name_.c_str()));
+    if (!runtime_ready_event_) {
+        log_windows_error("CreateEventW(runtime ready)", GetLastError());
         return false;
     }
 
@@ -240,17 +264,13 @@ bool RuntimeController::ensure_runtime_locked()
     }
 
     if (runtime_process_) {
-        const DWORD wait_result = WaitForSingleObject(runtime_process_.get(), 0U);
-        blog(
-            LOG_WARNING,
-            "[ChatView OBS] HUD runtime exited unexpectedly (wait result %lu); restarting",
-            static_cast<unsigned long>(wait_result));
+        log_process_exit(runtime_process_.get(), "exited unexpectedly");
         runtime_process_.reset();
     }
-    return launch_runtime_locked();
+    return launch_runtime_locked(false);
 }
 
-bool RuntimeController::launch_runtime_locked()
+bool RuntimeController::launch_runtime_locked(bool wait_until_ready)
 {
     const std::wstring runtime_path = find_sibling_path(kRuntimeExecutableName);
     if (runtime_path.empty() || !is_regular_file(runtime_path)) {
@@ -258,11 +278,16 @@ bool RuntimeController::launch_runtime_locked()
         return false;
     }
 
+    if (!ResetEvent(runtime_ready_event_.get())) {
+        log_windows_error("ResetEvent(runtime ready)", GetLastError());
+        return false;
+    }
+
     const DWORD process_id = GetCurrentProcessId();
     std::wstring command_line =
         L"\"" + runtime_path + L"\" --mapping \"" + mapping_name_ +
-        L"\" --event \"" + event_name_ + L"\" --parent " +
-        std::to_wstring(process_id);
+        L"\" --event \"" + event_name_ + L"\" --ready-event \"" +
+        ready_event_name_ + L"\" --parent " + std::to_wstring(process_id);
 
     STARTUPINFOW startup_info{};
     startup_info.cb = sizeof(startup_info);
@@ -283,7 +308,35 @@ bool RuntimeController::launch_runtime_locked()
     }
 
     UniqueHandle thread(process_info.hThread);
-    runtime_process_.reset(process_info.hProcess);
+    UniqueHandle process(process_info.hProcess);
+
+    if (wait_until_ready) {
+        HANDLE wait_handles[2] = {runtime_ready_event_.get(), process.get()};
+        const DWORD wait_result =
+            WaitForMultipleObjects(2U, wait_handles, FALSE, kRuntimeReadyWaitMs);
+        if (wait_result == WAIT_OBJECT_0 + 1U) {
+            log_process_exit(process.get(), "exited before reporting ready");
+            return false;
+        }
+        if (wait_result != WAIT_OBJECT_0) {
+            if (wait_result == WAIT_FAILED) {
+                log_windows_error("WaitForMultipleObjects(HUD ready)", GetLastError());
+            } else {
+                blog(
+                    LOG_ERROR,
+                    "[ChatView OBS] HUD did not report ready within %lu ms",
+                    static_cast<unsigned long>(kRuntimeReadyWaitMs));
+            }
+
+            if (WaitForSingleObject(process.get(), 0U) == WAIT_TIMEOUT) {
+                TerminateProcess(process.get(), 1U);
+                WaitForSingleObject(process.get(), kRuntimeTerminateWaitMs);
+            }
+            return false;
+        }
+    }
+
+    runtime_process_ = std::move(process);
     return true;
 }
 
@@ -330,6 +383,20 @@ void RuntimeController::publish_locked(std::uint32_t flags) noexcept
     }
 }
 
+void RuntimeController::terminate_runtime_locked(const char *reason) noexcept
+{
+    if (!runtime_process_) {
+        return;
+    }
+
+    blog(LOG_WARNING, "[ChatView OBS] HUD runtime %s; terminating it", reason);
+    if (!TerminateProcess(runtime_process_.get(), 1U)) {
+        log_windows_error("TerminateProcess(HUD)", GetLastError());
+        return;
+    }
+    WaitForSingleObject(runtime_process_.get(), kRuntimeTerminateWaitMs);
+}
+
 void RuntimeController::cleanup_locked() noexcept
 {
     if (shared_state_ != nullptr) {
@@ -338,10 +405,12 @@ void RuntimeController::cleanup_locked() noexcept
     }
 
     runtime_process_.reset();
+    runtime_ready_event_.reset();
     state_changed_event_.reset();
     mapping_.reset();
     mapping_name_.clear();
     event_name_.clear();
+    ready_event_name_.clear();
     generation_ = 0U;
     current_flags_ = SharedStateNone;
 }

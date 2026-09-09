@@ -97,12 +97,25 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
 
     if (!SetWindowDisplayAffinity(window_, WDA_EXCLUDEFROMCAPTURE)) {
         debug_windows_error(L"SetWindowDisplayAffinity");
+        return false;
+    }
+
+    DWORD display_affinity = 0U;
+    if (!GetWindowDisplayAffinity(window_, &display_affinity)) {
+        debug_windows_error(L"GetWindowDisplayAffinity");
+        return false;
+    }
+    if (display_affinity != WDA_EXCLUDEFROMCAPTURE) {
+        OutputDebugStringW(
+            L"[ChatView HUD] Capture exclusion was not retained; refusing to display the HUD\n");
+        return false;
     }
 
     config_changed_message_ = RegisterWindowMessageW(kConfigChangedMessageName);
     toggle_edit_message_ = RegisterWindowMessageW(kToggleEditMessageName);
     if (config_changed_message_ == 0U || toggle_edit_message_ == 0U) {
         debug_windows_error(L"RegisterWindowMessageW");
+        return false;
     }
 
     edit_hotkey_registered_ =
@@ -258,8 +271,13 @@ LRESULT HudWindow::handle_message(
     case WM_GETMINMAXINFO: {
         auto *minmax = reinterpret_cast<MINMAXINFO *>(lparam);
         const SIZE minimum = minimum_hud_track_size(window_);
+        const UINT current_dpi = dpi();
         minmax->ptMinTrackSize.x = minimum.cx;
         minmax->ptMinTrackSize.y = minimum.cy;
+        minmax->ptMaxTrackSize.x =
+            MulDiv(kMaximumHudWidthDip, static_cast<int>(current_dpi), 96);
+        minmax->ptMaxTrackSize.y =
+            MulDiv(kMaximumHudHeightDip, static_cast<int>(current_dpi), 96);
         return 0L;
     }
     case WM_ENTERSIZEMOVE:

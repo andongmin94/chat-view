@@ -16,6 +16,7 @@ namespace {
 
 constexpr wchar_t kHudWindowClass[] = L"ChatViewObsHudWindow";
 constexpr WPARAM kEditHotkeyId = 1U;
+constexpr WPARAM kGrowHotkeyId = 2U;
 constexpr DWORD kStartupTimeoutMs = 5000U;
 constexpr DWORD kShutdownTimeoutMs = 5000U;
 constexpr DWORD kWindowStateTimeoutMs = 2000U;
@@ -110,6 +111,20 @@ bool wait_for_style(HWND window, LONG_PTR required, LONG_PTR forbidden) noexcept
     while (GetTickCount64() < deadline) {
         const LONG_PTR style = GetWindowLongPtrW(window, GWL_EXSTYLE);
         if ((style & required) == required && (style & forbidden) == 0) {
+            return true;
+        }
+        Sleep(25U);
+    }
+    return false;
+}
+
+bool wait_for_width_greater(HWND window, LONG previous_width) noexcept
+{
+    const ULONGLONG deadline = GetTickCount64() + kWindowStateTimeoutMs;
+    while (GetTickCount64() < deadline) {
+        RECT window_rect{};
+        if (GetWindowRect(window, &window_rect) &&
+            window_rect.right - window_rect.left > previous_width) {
             return true;
         }
         Sleep(25U);
@@ -241,8 +256,24 @@ int wmain(int argument_count, wchar_t **arguments)
     if (!PostMessageW(window, WM_HOTKEY, kEditHotkeyId, 0)) {
         return fail(L"Failed to request HUD edit mode", child_process.get());
     }
-    if (!wait_for_style(window, WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_NOACTIVATE, WS_EX_TRANSPARENT)) {
+    if (!wait_for_style(
+            window,
+            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+            WS_EX_TRANSPARENT)) {
         return fail(L"The HUD did not enter edit mode", child_process.get());
+    }
+
+    RECT edit_rect{};
+    if (!GetWindowRect(window, &edit_rect)) {
+        return fail(L"Failed to read the edit-mode HUD bounds", child_process.get());
+    }
+    const LONG edit_width = edit_rect.right - edit_rect.left;
+
+    if (!PostMessageW(window, WM_HOTKEY, kGrowHotkeyId, 0)) {
+        return fail(L"Failed to request a larger HUD", child_process.get());
+    }
+    if (!wait_for_width_greater(window, edit_width)) {
+        return fail(L"The HUD did not grow in edit mode", child_process.get());
     }
 
     if (!PostMessageW(window, WM_HOTKEY, kEditHotkeyId, 0)) {
@@ -255,6 +286,11 @@ int wmain(int argument_count, wchar_t **arguments)
     const std::filesystem::path placement_file = local_app_data / L"ChatView" / L"hud.ini";
     if (!std::filesystem::is_regular_file(placement_file)) {
         return fail(L"Locking the HUD did not persist placement", child_process.get());
+    }
+    const UINT saved_scale =
+        GetPrivateProfileIntW(L"placement", L"scale_percent", 0, placement_file.c_str());
+    if (saved_scale != 110U) {
+        return fail(L"The HUD scale was not persisted", child_process.get());
     }
 
     publish(

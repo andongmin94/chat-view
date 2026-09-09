@@ -14,7 +14,7 @@ The current source implements the first end-to-end slice:
 - The HUD is a borderless, per-pixel-alpha, always-on-top Windows overlay.
 - The overlay is non-activating and click-through while locked.
 - A global hotkey switches the HUD into an interactive drag mode and back to locked mode.
-- The selected monitor and work-area-relative position are persisted locally.
+- The selected monitor, work-area-relative position, and HUD scale are persisted locally.
 - Windows capture exclusion is requested with `WDA_EXCLUDEFROMCAPTURE`.
 - `LIVE`, `REC`, `LIVE • REC`, startup, and shutdown transitions are rendered.
 - The HUD exits when OBS exits, even if the plugin cannot send a normal shutdown event.
@@ -60,9 +60,9 @@ The installer validates the OBS executable and copies only the ChatView plugin, 
 
 ## Move and lock the HUD
 
-Press `Ctrl + Alt + Shift + H` to enter edit mode. The transparent status changes to a visible drag panel. Drag that panel to the desired monitor and position, then press the same hotkey again to lock it.
+Press `Ctrl + Alt + Shift + H` to enter edit mode. The transparent status changes to a visible drag panel. Drag that panel to the desired monitor and position. While edit mode is active, use `Ctrl + Alt + Shift + Up` and `Ctrl + Alt + Shift + Down` to change the HUD scale in 10% steps from 50% to 200%. Press `Ctrl + Alt + Shift + H` again to save and lock it.
 
-Locked mode restores click-through behavior immediately. The monitor device and offset inside that monitor's work area are stored in `%LOCALAPPDATA%\ChatView\hud.ini`. A missing monitor falls back to the primary display, and the position is clamped into the visible work area after display-layout changes.
+Locked mode restores click-through behavior immediately. The monitor device, offset inside that monitor's work area, and scale are stored in `%LOCALAPPDATA%\ChatView\hud.ini`. A missing monitor falls back to the primary display, and the position is clamped into the visible work area after display-layout changes.
 
 ## Build
 
@@ -103,7 +103,7 @@ dist/
     └── locale/
 ```
 
-Every push to `OBS` runs a pinned Windows build, the native placement test, and the installer/uninstaller test before uploading the package artifact.
+Every push to `OBS` runs a pinned Windows build, placement contract tests, a real HUD process lifecycle smoke test, and the installer/uninstaller test before uploading the package artifact.
 
 ## Expected behavior
 
@@ -112,15 +112,16 @@ Every push to `OBS` runs a pinned Windows build, the native placement test, and 
 3. Starting a stream shows `LIVE`.
 4. Starting a recording shows `REC`, or `LIVE • REC` when both are active.
 5. Stopping the last active output shows `OFFLINE` briefly and then hides the HUD.
-6. `Ctrl + Alt + Shift + H` exposes a draggable edit panel; pressing it again saves and locks the HUD.
-7. Closing OBS terminates the HUD runtime.
+6. `Ctrl + Alt + Shift + H` exposes a draggable edit panel; the matching Up/Down hotkeys resize it.
+7. Pressing the edit hotkey again persists placement and scale, then restores click-through mode.
+8. Closing OBS terminates the HUD runtime.
 
 The HUD is designed to remain outside capture. Physical HDMI capture cards still receive whatever pixels the game computer outputs and are not affected by Windows capture exclusion.
 
 ## Development order
 
 1. Prove plugin load, process lifecycle, transparent rendering, and OBS state propagation.
-2. Complete edit/locked mode and persisted multi-monitor positioning, then add explicit resizing.
+2. Complete edit/locked mode with persisted multi-monitor positioning and scaling.
 3. Add the first native chat provider and message rendering.
 4. Add game-PC/stream-PC pairing using the same state contract.
 5. Add the creator advertising layer only after the free HUD is stable.

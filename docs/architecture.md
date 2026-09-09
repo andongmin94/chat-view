@@ -69,7 +69,7 @@ The locked window is:
 - click-through;
 - hidden from supported Windows capture paths where possible.
 
-`Ctrl + Alt + Shift + H` toggles a HUD-local edit mode. Edit mode temporarily removes click-through behavior and renders a drag target; locking restores the private HUD defaults. This control remains in the HUD process and does not enlarge the OBS-to-HUD transport.
+`Ctrl + Alt + Shift + H` toggles a HUD-local edit mode. Edit mode temporarily removes click-through behavior and renders a drag target. The matching Up and Down hotkeys adjust HUD scale in bounded 10% steps. Locking persists the result and restores the private HUD defaults. These controls remain in the HUD process and do not enlarge the OBS-to-HUD transport.
 
 `WDA_EXCLUDEFROMCAPTURE` is a Windows capture hint, not DRM and not an HDMI-path guarantee. A future “show on broadcast” feature must use a distinct OBS source instead of disabling the private-HUD safety default.
 
@@ -81,9 +81,10 @@ The persisted contract contains:
 
 - the Win32 monitor device name;
 - horizontal offset from that monitor's work-area origin;
-- vertical offset from that monitor's work-area origin.
+- vertical offset from that monitor's work-area origin;
+- HUD scale percentage.
 
-Using work-area-relative offsets preserves placement when a monitor moves within the virtual desktop. If the saved monitor is absent, the HUD falls back to the primary monitor. Every resolved position is clamped into the selected monitor's visible work area. The current window size is fixed; explicit resize persistence will be added only when resize interaction exists.
+Using work-area-relative offsets preserves placement when a monitor moves within the virtual desktop. If the saved monitor is absent, the HUD falls back to the primary monitor. Every resolved position is clamped into the selected monitor's visible work area. Scale is restricted to 50–200% in 10% steps and is applied on top of the monitor DPI scale.
 
 ## Lifecycle guarantees
 

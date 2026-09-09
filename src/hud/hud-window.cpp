@@ -18,10 +18,14 @@ namespace {
 constexpr wchar_t kWindowClassName[] = L"ChatViewObsHudWindow";
 constexpr UINT_PTR kHideTimerId = 1U;
 constexpr int kEditHotkeyId = 1;
+constexpr int kGrowHotkeyId = 2;
+constexpr int kShrinkHotkeyId = 3;
 constexpr UINT kReadyDurationMs = 2200U;
 constexpr UINT kOfflineDurationMs = 1200U;
 constexpr UINT kEditHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT;
 constexpr UINT kEditHotkeyVirtualKey = 'H';
+constexpr UINT kGrowHotkeyVirtualKey = VK_UP;
+constexpr UINT kShrinkHotkeyVirtualKey = VK_DOWN;
 
 #ifndef WDA_EXCLUDEFROMCAPTURE
 constexpr DWORD WDA_EXCLUDEFROMCAPTURE = 0x00000011;
@@ -90,12 +94,27 @@ bool HudWindow::create(HINSTANCE instance)
         debug_windows_error(L"SetWindowDisplayAffinity");
     }
 
-    load_hud_placement(placement_);
+    HudPlacement loaded_placement;
+    if (load_hud_placement(loaded_placement)) {
+        placement_ = std::move(loaded_placement);
+    }
 
     edit_hotkey_registered_ =
         RegisterHotKey(window_, kEditHotkeyId, kEditHotkeyModifiers, kEditHotkeyVirtualKey) != FALSE;
     if (!edit_hotkey_registered_) {
-        debug_windows_error(L"RegisterHotKey");
+        debug_windows_error(L"RegisterHotKey(edit)");
+    }
+
+    grow_hotkey_registered_ =
+        RegisterHotKey(window_, kGrowHotkeyId, kEditHotkeyModifiers, kGrowHotkeyVirtualKey) != FALSE;
+    if (!grow_hotkey_registered_) {
+        debug_windows_error(L"RegisterHotKey(grow)");
+    }
+
+    shrink_hotkey_registered_ =
+        RegisterHotKey(window_, kShrinkHotkeyId, kEditHotkeyModifiers, kShrinkHotkeyVirtualKey) != FALSE;
+    if (!shrink_hotkey_registered_) {
+        debug_windows_error(L"RegisterHotKey(shrink)");
     }
 
     ShowWindow(window_, SW_HIDE);
@@ -109,6 +128,14 @@ void HudWindow::destroy() noexcept
     if (window_ != nullptr && edit_hotkey_registered_) {
         UnregisterHotKey(window_, kEditHotkeyId);
         edit_hotkey_registered_ = false;
+    }
+    if (window_ != nullptr && grow_hotkey_registered_) {
+        UnregisterHotKey(window_, kGrowHotkeyId);
+        grow_hotkey_registered_ = false;
+    }
+    if (window_ != nullptr && shrink_hotkey_registered_) {
+        UnregisterHotKey(window_, kShrinkHotkeyId);
+        shrink_hotkey_registered_ = false;
     }
 
     if (window_ != nullptr) {
@@ -203,6 +230,14 @@ LRESULT HudWindow::handle_message(HWND window, UINT message, WPARAM wparam, LPAR
             toggle_edit_mode();
             return 0;
         }
+        if (edit_mode_ && wparam == static_cast<WPARAM>(kGrowHotkeyId)) {
+            adjust_scale(kHudScaleStepPercent);
+            return 0;
+        }
+        if (edit_mode_ && wparam == static_cast<WPARAM>(kShrinkHotkeyId)) {
+            adjust_scale(-kHudScaleStepPercent);
+            return 0;
+        }
         break;
     case WM_NCHITTEST:
         return edit_mode_ ? HTCAPTION : HTTRANSPARENT;
@@ -245,12 +280,15 @@ void HudWindow::render(DisplayMode mode)
 
     display_mode_ = mode;
 
-    const float scale = static_cast<float>(dpi()) / 96.0F;
+    const float dpi_scale = static_cast<float>(dpi()) / 96.0F;
+    const float scale =
+        dpi_scale * static_cast<float>(placement_.scale_percent) / 100.0F;
     const int width = std::max(1, static_cast<int>(std::lround(340.0F * scale)));
     const int height = std::max(1, static_cast<int>(std::lround(76.0F * scale)));
     const int margin = std::max(1, static_cast<int>(std::lround(24.0F * scale)));
 
     POINT destination = resolve_hud_position(placement_, width, height, margin);
+
     SIZE size{width, height};
     POINT source{0, 0};
 
@@ -325,11 +363,20 @@ void HudWindow::render(DisplayMode mode)
             Gdiplus::SolidBrush text_brush(Gdiplus::Color(255U, 255U, 255U, 255U));
             Gdiplus::SolidBrush hint_brush(Gdiplus::Color(255U, 190U, 190U, 196U));
 
-            constexpr wchar_t title[] = L"DRAG TO POSITION";
-            constexpr wchar_t hint[] = L"CTRL + ALT + SHIFT + H TO LOCK";
+            wchar_t title[64]{};
+            const HRESULT title_result = StringCchPrintfW(
+                title,
+                std::size(title),
+                L"DRAG TO POSITION  |  SIZE %d%%",
+                placement_.scale_percent);
+            if (FAILED(title_result)) {
+                StringCchCopyW(title, std::size(title), L"DRAG TO POSITION");
+            }
+
+            constexpr wchar_t hint[] = L"H: LOCK  |  UP / DOWN: SIZE";
             graphics.DrawString(
                 title,
-                static_cast<INT>(std::size(title) - 1U),
+                static_cast<INT>(wcslen(title)),
                 &title_font,
                 Gdiplus::PointF(18.0F * scale, 12.0F * scale),
                 &text_brush);
@@ -474,6 +521,31 @@ void HudWindow::toggle_edit_mode()
     }
 }
 
+void HudWindow::adjust_scale(int delta_percent)
+{
+    if (window_ == nullptr || !edit_mode_) {
+        return;
+    }
+
+    HudPlacement captured = capture_hud_placement(window_);
+    if (captured.valid) {
+        captured.scale_percent = placement_.scale_percent;
+        placement_ = std::move(captured);
+    }
+
+    const int next_scale = std::clamp(
+        placement_.scale_percent + delta_percent,
+        kMinimumHudScalePercent,
+        kMaximumHudScalePercent);
+    if (next_scale == placement_.scale_percent) {
+        return;
+    }
+
+    placement_.scale_percent = next_scale;
+    render(DisplayMode::Editing);
+    persist_placement();
+}
+
 void HudWindow::set_click_through(bool enabled) noexcept
 {
     if (window_ == nullptr) {
@@ -509,8 +581,14 @@ void HudWindow::capture_current_position() noexcept
         return;
     }
 
+    captured.scale_percent = placement_.scale_percent;
     placement_ = std::move(captured);
-    if (!save_hud_placement(placement_)) {
+    persist_placement();
+}
+
+void HudWindow::persist_placement() const noexcept
+{
+    if (placement_.valid && !save_hud_placement(placement_)) {
         OutputDebugStringW(L"[ChatView HUD] Failed to persist HUD placement\n");
     }
 }

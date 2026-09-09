@@ -8,10 +8,16 @@
 
 namespace chatview {
 
+inline constexpr int kDefaultHudScalePercent = 100;
+inline constexpr int kMinimumHudScalePercent = 50;
+inline constexpr int kMaximumHudScalePercent = 200;
+inline constexpr int kHudScaleStepPercent = 10;
+
 struct HudPlacement {
     std::wstring monitor_device;
     LONG offset_x = 0;
     LONG offset_y = 0;
+    int scale_percent = kDefaultHudScalePercent;
     bool valid = false;
 };
 

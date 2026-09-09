@@ -46,8 +46,10 @@ private:
     void arm_hide_timer(UINT milliseconds);
     void cancel_hide_timer();
     void toggle_edit_mode();
+    void adjust_scale(int delta_percent);
     void set_click_through(bool enabled) noexcept;
     void capture_current_position() noexcept;
+    void persist_placement() const noexcept;
     [[nodiscard]] UINT dpi() const noexcept;
     [[nodiscard]] const wchar_t *label_for(DisplayMode mode) const noexcept;
 
@@ -59,6 +61,8 @@ private:
     std::uint64_t last_generation_ = 0U;
     bool edit_mode_ = false;
     bool edit_hotkey_registered_ = false;
+    bool grow_hotkey_registered_ = false;
+    bool shrink_hotkey_registered_ = false;
 };
 
 } // namespace chatview

@@ -42,6 +42,7 @@ int main()
     expected.monitor_device = L"\\\\.\\DISPLAY_TEST";
     expected.offset_x = -123;
     expected.offset_y = 456;
+    expected.scale_percent = 140;
     expected.valid = true;
 
     if (!chatview::save_hud_placement(expected)) {
@@ -54,7 +55,8 @@ int main()
     }
 
     if (!loaded.valid || loaded.monitor_device != expected.monitor_device ||
-        loaded.offset_x != expected.offset_x || loaded.offset_y != expected.offset_y) {
+        loaded.offset_x != expected.offset_x || loaded.offset_y != expected.offset_y ||
+        loaded.scale_percent != expected.scale_percent) {
         return fail(L"The placement round trip changed data");
     }
 
@@ -70,8 +72,19 @@ int main()
     }
 
     if (!unchanged.valid || unchanged.monitor_device != expected.monitor_device ||
-        unchanged.offset_x != expected.offset_x || unchanged.offset_y != expected.offset_y) {
+        unchanged.offset_x != expected.offset_x || unchanged.offset_y != expected.offset_y ||
+        unchanged.scale_percent != expected.scale_percent) {
         return fail(L"A failed load modified the existing placement");
+    }
+
+    if (!chatview::save_hud_placement(expected) ||
+        !WritePrivateProfileStringW(
+            L"placement", L"scale_percent", L"135", file.c_str())) {
+        return fail(L"Failed to corrupt the scale test fixture");
+    }
+
+    if (chatview::load_hud_placement(unchanged)) {
+        return fail(L"An unsupported HUD scale was accepted");
     }
 
     error.clear();

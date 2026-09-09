@@ -21,6 +21,7 @@ constexpr wchar_t kPlacementSection[] = L"placement";
 constexpr wchar_t kMonitorKey[] = L"monitor";
 constexpr wchar_t kOffsetXKey[] = L"offset_x";
 constexpr wchar_t kOffsetYKey[] = L"offset_y";
+constexpr wchar_t kScalePercentKey[] = L"scale_percent";
 
 struct MonitorLookupContext {
     const std::wstring *device = nullptr;
@@ -84,7 +85,8 @@ bool get_monitor_info(HMONITOR monitor, MONITORINFOEXW &info) noexcept
     return GetMonitorInfoW(monitor, reinterpret_cast<MONITORINFO *>(&info)) != FALSE;
 }
 
-BOOL CALLBACK find_monitor_by_device(HMONITOR monitor, HDC, LPRECT, LPARAM data)
+BOOL CALLBACK find_monitor_by_device(
+    HMONITOR monitor, HDC, LPRECT, LPARAM data)
 {
     auto *context = reinterpret_cast<MonitorLookupContext *>(data);
     if (context == nullptr || context->device == nullptr) {
@@ -141,20 +143,29 @@ bool load_hud_placement(HudPlacement &placement) noexcept
         std::array<wchar_t, 128U> monitor{};
         std::array<wchar_t, 32U> offset_x{};
         std::array<wchar_t, 32U> offset_y{};
-        if (!read_profile_value(
-                path, kMonitorKey, monitor.data(), static_cast<DWORD>(monitor.size())) ||
+        std::array<wchar_t, 32U> scale_percent{};
+        if (!read_profile_value(path, kMonitorKey, monitor.data(), static_cast<DWORD>(monitor.size())) ||
+            !read_profile_value(path, kOffsetXKey, offset_x.data(), static_cast<DWORD>(offset_x.size())) ||
+            !read_profile_value(path, kOffsetYKey, offset_y.data(), static_cast<DWORD>(offset_y.size())) ||
             !read_profile_value(
-                path, kOffsetXKey, offset_x.data(), static_cast<DWORD>(offset_x.size())) ||
-            !read_profile_value(
-                path, kOffsetYKey, offset_y.data(), static_cast<DWORD>(offset_y.size()))) {
+                path,
+                kScalePercentKey,
+                scale_percent.data(),
+                static_cast<DWORD>(scale_percent.size()))) {
             return false;
         }
 
         HudPlacement loaded;
+        LONG loaded_scale_percent = 0;
         if (!parse_long(offset_x.data(), loaded.offset_x) ||
-            !parse_long(offset_y.data(), loaded.offset_y)) {
+            !parse_long(offset_y.data(), loaded.offset_y) ||
+            !parse_long(scale_percent.data(), loaded_scale_percent) ||
+            loaded_scale_percent < kMinimumHudScalePercent ||
+            loaded_scale_percent > kMaximumHudScalePercent ||
+            loaded_scale_percent % kHudScaleStepPercent != 0) {
             return false;
         }
+        loaded.scale_percent = static_cast<int>(loaded_scale_percent);
 
         loaded.monitor_device = monitor.data();
         loaded.valid = !loaded.monitor_device.empty();
@@ -172,7 +183,10 @@ bool load_hud_placement(HudPlacement &placement) noexcept
 bool save_hud_placement(const HudPlacement &placement) noexcept
 {
     try {
-        if (!placement.valid || placement.monitor_device.empty()) {
+        if (!placement.valid || placement.monitor_device.empty() ||
+            placement.scale_percent < kMinimumHudScalePercent ||
+            placement.scale_percent > kMaximumHudScalePercent ||
+            placement.scale_percent % kHudScaleStepPercent != 0) {
             return false;
         }
 
@@ -191,6 +205,8 @@ bool save_hud_placement(const HudPlacement &placement) noexcept
         append_profile_entry(section, kMonitorKey, placement.monitor_device);
         append_profile_entry(section, kOffsetXKey, std::to_wstring(placement.offset_x));
         append_profile_entry(section, kOffsetYKey, std::to_wstring(placement.offset_y));
+        append_profile_entry(
+            section, kScalePercentKey, std::to_wstring(placement.scale_percent));
         section.push_back(L'\0');
 
         return WritePrivateProfileSectionW(kPlacementSection, section.c_str(), path.c_str()) != FALSE;
@@ -213,15 +229,14 @@ POINT resolve_hud_position(
         position.x = info.rcWork.left + placement.offset_x;
         position.y = info.rcWork.top + placement.offset_y;
     } else {
-        position.x =
-            info.rcWork.right - static_cast<LONG>(width) - static_cast<LONG>(margin);
+        position.x = info.rcWork.right - static_cast<LONG>(width) - static_cast<LONG>(margin);
         position.y = info.rcWork.top + static_cast<LONG>(margin);
     }
 
-    const LONG max_x =
-        std::max(info.rcWork.left, info.rcWork.right - static_cast<LONG>(width));
-    const LONG max_y =
-        std::max(info.rcWork.top, info.rcWork.bottom - static_cast<LONG>(height));
+    const LONG max_x = std::max(
+        info.rcWork.left, info.rcWork.right - static_cast<LONG>(width));
+    const LONG max_y = std::max(
+        info.rcWork.top, info.rcWork.bottom - static_cast<LONG>(height));
     position.x = std::clamp(position.x, info.rcWork.left, max_x);
     position.y = std::clamp(position.y, info.rcWork.top, max_y);
     return position;

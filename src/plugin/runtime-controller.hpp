@@ -25,6 +25,7 @@ public:
     void stop() noexcept;
     void update(bool streaming, bool recording) noexcept;
     [[nodiscard]] bool open_settings() const noexcept;
+    [[nodiscard]] bool toggle_edit_mode() const noexcept;
 
 private:
     [[nodiscard]] bool create_transport_locked();

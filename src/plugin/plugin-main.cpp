@@ -45,6 +45,13 @@ void open_settings(void *)
     }
 }
 
+void toggle_edit_mode(void *)
+{
+    if (runtime_controller && !runtime_controller->toggle_edit_mode()) {
+        blog(LOG_ERROR, "[ChatView OBS] Overlay edit mode could not be toggled");
+    }
+}
+
 } // namespace
 
 MODULE_EXPORT const char *obs_module_name(void)
@@ -68,6 +75,8 @@ bool obs_module_load(void)
         }
 
         obs_frontend_add_event_callback(on_frontend_event, nullptr);
+        obs_frontend_add_tools_menu_item(
+            obs_module_text("ChatView.EditOverlay"), toggle_edit_mode, nullptr);
         obs_frontend_add_tools_menu_item(
             obs_module_text("ChatView.Settings"), open_settings, nullptr);
         publish_frontend_state();

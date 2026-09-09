@@ -6,8 +6,6 @@
 
 namespace chatview {
 
-inline constexpr wchar_t kConfigChangedMessageName[] = L"ChatViewOBS.ConfigChanged.v1";
-
 struct ChatConfig {
     std::wstring url;
 };

@@ -2,6 +2,8 @@
 
 #include "plugin/runtime-controller.hpp"
 
+#include "common/window-messages.hpp"
+
 #include <obs-module.h>
 
 #include <Windows.h>
@@ -173,6 +175,21 @@ bool RuntimeController::open_settings() const noexcept
         blog(LOG_ERROR, "[ChatView OBS] Failed to open settings");
     }
     return false;
+}
+
+bool RuntimeController::toggle_edit_mode() const noexcept
+{
+    const UINT message = RegisterWindowMessageW(kToggleEditMessageName);
+    if (message == 0U) {
+        log_windows_error("RegisterWindowMessageW(toggle edit)", GetLastError());
+        return false;
+    }
+
+    if (!SendNotifyMessageW(HWND_BROADCAST, message, 0U, 0L)) {
+        log_windows_error("SendNotifyMessageW(toggle edit)", GetLastError());
+        return false;
+    }
+    return true;
 }
 
 bool RuntimeController::create_transport_locked()

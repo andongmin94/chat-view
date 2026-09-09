@@ -49,6 +49,7 @@ private:
     HINSTANCE instance_ = nullptr;
     HANDLE ready_event_ = nullptr;
     UINT config_changed_message_ = 0U;
+    UINT toggle_edit_message_ = 0U;
     WebViewHost webview_;
     HudPlacement placement_;
     std::wstring transient_status_;

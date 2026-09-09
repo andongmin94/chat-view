@@ -3,6 +3,7 @@
 #include "hud/hud-window.hpp"
 
 #include "common/chat-config.hpp"
+#include "common/window-messages.hpp"
 
 #include <Windows.h>
 #include <windowsx.h>
@@ -99,6 +100,11 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
     }
 
     config_changed_message_ = RegisterWindowMessageW(kConfigChangedMessageName);
+    toggle_edit_message_ = RegisterWindowMessageW(kToggleEditMessageName);
+    if (config_changed_message_ == 0U || toggle_edit_message_ == 0U) {
+        debug_windows_error(L"RegisterWindowMessageW");
+    }
+
     edit_hotkey_registered_ =
         RegisterHotKey(
             window_,
@@ -119,7 +125,9 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
 
 void HudWindow::destroy() noexcept
 {
-    KillTimer(window_, kStatusTimerId);
+    if (window_ != nullptr) {
+        KillTimer(window_, kStatusTimerId);
+    }
 
     if (window_ != nullptr && edit_hotkey_registered_) {
         UnregisterHotKey(window_, kEditHotkeyId);
@@ -193,6 +201,10 @@ LRESULT HudWindow::handle_message(
 {
     if (config_changed_message_ != 0U && message == config_changed_message_) {
         reload_chat_config();
+        return 0L;
+    }
+    if (toggle_edit_message_ != 0U && message == toggle_edit_message_) {
+        toggle_edit_mode();
         return 0L;
     }
 
@@ -461,8 +473,8 @@ void HudWindow::set_transient_status(
 {
     transient_status_ = std::move(text);
     transient_tone_ = std::move(tone);
-    KillTimer(window_, kStatusTimerId);
     if (window_ != nullptr) {
+        KillTimer(window_, kStatusTimerId);
         SetTimer(window_, kStatusTimerId, duration_ms, nullptr);
     }
     update_host_state();

@@ -24,6 +24,12 @@ if (Get-Process -Name 'obs64' -ErrorAction SilentlyContinue) {
 }
 
 $obsRoot = Resolve-ObsRoot -Path $ObsPath
+$runtimeInstaller = Join-Path $PSScriptRoot 'ensure-webview2-runtime.ps1'
+if (-not (Test-Path $runtimeInstaller -PathType Leaf)) {
+    throw "Package file is missing: $runtimeInstaller"
+}
+& $runtimeInstaller
+
 $files = @(
     @{
         Source = Join-Path $PSScriptRoot 'obs-plugins\64bit\chat-view-obs.dll'

@@ -71,6 +71,12 @@ jobs:
             -Version $env:WEBVIEW2_VERSION `
             -Destination .ci/webview2
 
+      - name: Ensure WebView2 Runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./scripts/ensure-webview2-runtime.ps1
+
       - name: Build OBS development libraries
         shell: pwsh
         run: |
@@ -147,6 +153,7 @@ jobs:
             'dist/data/obs-plugins/chat-view-obs/locale/ko-KR.ini',
             'dist/install.ps1',
             'dist/uninstall.ps1',
+            'dist/ensure-webview2-runtime.ps1',
             'dist/README.md',
             'dist/LICENSE'
           )

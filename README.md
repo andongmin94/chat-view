@@ -1,30 +1,31 @@
 # ChatView OBS
 
-ChatView OBS is a Windows-first OBS Studio plugin that drives a private, transparent streamer HUD outside the OBS window.
+ChatView OBS is a Windows OBS Studio plugin that displays a private, transparent chat HUD on the streamer's desktop while keeping the renderer outside the OBS process.
 
 The `OBS` branch is an independent native implementation. It does not embed or preserve the Electron application from `main`.
 
-## Current milestone
+## Status
 
-The current end-to-end path provides:
+This branch currently provides an installable single-PC alpha:
 
-- a native OBS frontend plugin;
-- an out-of-process Win32 HUD runtime;
-- a versioned shared-memory transport with an event wake-up;
-- streaming and recording state indicators;
-- the current OBS scene name, updated when the scene changes;
-- a per-pixel-alpha, always-on-top, non-activating overlay;
-- click-through locked mode and a draggable edit mode;
-- persisted monitor, work-area-relative position, and 50–200% HUD scale;
-- a Windows capture-exclusion request through `WDA_EXCLUDEFROMCAPTURE`;
-- bounded shutdown and automatic runtime restart on a later state update;
-- a pinned Windows CI build, native tests, installer test, and packaged artifact.
+- native OBS frontend plugin;
+- out-of-process Win32 HUD runtime;
+- transparent WebView2 composition rendering;
+- Weflab page URLs and CHZZK chat URLs;
+- OBS **Tools → ChatView Settings...** configuration;
+- click-through locked mode;
+- draggable and resizable edit mode;
+- persisted monitor and DPI-independent bounds;
+- LIVE and REC status indicators;
+- Windows capture-exclusion request through `WDA_EXCLUDEFROMCAPTURE`;
+- bounded shutdown and automatic HUD restart on a later OBS state update;
+- pinned Windows CI, native tests, installer test, and packaged artifact.
 
-The HUD stays out of the OBS process deliberately. A desktop-rendering failure must not take down the broadcaster.
+The renderer remains out of process deliberately. A browser or desktop-rendering failure must not take down OBS Studio.
 
-## Install a CI package
+## Install
 
-1. Download and extract `chat-view-obs-windows-x64.zip` from the latest successful Windows build.
+1. Download and extract `chat-view-obs-windows-x64.zip` from a successful Windows workflow run.
 2. Close OBS Studio.
 3. Open an elevated PowerShell terminal in the extracted directory.
 4. Run:
@@ -33,42 +34,87 @@ The HUD stays out of the OBS process deliberately. A desktop-rendering failure m
 ./install.ps1
 ```
 
-The default OBS root is `C:\Program Files\obs-studio`. A different installation can be selected explicitly:
+The installer verifies the Microsoft Edge WebView2 Runtime and installs it when missing. It then copies the plugin, HUD, settings application, and locale files into the default OBS directory:
+
+```text
+C:\Program Files\obs-studio
+```
+
+Use a different OBS root explicitly when required:
 
 ```powershell
 ./install.ps1 -ObsPath "D:\Apps\obs-studio"
 ```
 
-Remove the same known files with:
+Remove the installed files with:
 
 ```powershell
 ./uninstall.ps1
 ```
 
-## Move, resize, and lock the HUD
+User settings in `%LOCALAPPDATA%\ChatView` are retained on uninstall.
 
-Press `Ctrl + Alt + Shift + H` to enter edit mode. Drag the visible panel to the desired monitor and position.
+## Configure chat
 
-While edit mode is active:
+Start OBS Studio and open:
 
 ```text
-Ctrl + Alt + Shift + Up      increase scale by 10%
-Ctrl + Alt + Shift + Down    decrease scale by 10%
-Ctrl + Alt + Shift + H       save and lock
+Tools → ChatView Settings...
 ```
 
-Locked mode immediately restores click-through behavior. The monitor device, offset inside its work area, and scale are stored in `%LOCALAPPDATA%\ChatView\hud.ini`. A missing monitor falls back to the primary display, and an invalid position is clamped into the visible work area.
+Paste one of the currently supported HTTPS URLs:
 
-## Expected behavior
+```text
+https://weflab.com/page/...
+https://chzzk.naver.com/chat/...
+```
 
-1. Start OBS Studio.
-2. `CHATVIEW READY` appears briefly on the saved monitor or the primary monitor.
-3. Starting a stream shows `LIVE`; starting a recording shows `REC`; both active shows `LIVE • REC`.
-4. The second line displays the current OBS scene and updates on a scene change.
-5. Stopping the final active output shows `OFFLINE` briefly and hides the HUD.
-6. Closing OBS terminates the HUD runtime.
+Saving broadcasts a local configuration-change message, so the running HUD reloads without restarting OBS.
 
-The Windows capture-exclusion API is a best-effort operating-system hint. A physical HDMI capture card still receives the pixels emitted by the game computer.
+The URL validator rejects non-HTTPS URLs, credentials embedded in URLs, non-default ports, unrelated hosts, and unsupported paths. New top-level WebView navigation outside the allowlist is cancelled.
+
+## Move, resize, and lock
+
+Press:
+
+```text
+Ctrl + Alt + Shift + H
+```
+
+to unlock the HUD. In edit mode:
+
+- drag the header area to move the HUD;
+- drag an edge or corner to resize it;
+- press the same shortcut again to save and lock it.
+
+Locked mode restores always-on-top, non-activating, click-through behavior. Bounds are stored as monitor-relative device-independent pixels in:
+
+```text
+%LOCALAPPDATA%\ChatView\hud.ini
+```
+
+If the saved monitor disappears, the HUD falls back to the primary monitor and clamps itself into the visible work area.
+
+## Runtime behavior
+
+```text
+OBS Studio
+└── chat-view-obs.dll
+    ├── observes stream and recording state
+    ├── owns the local shared-state transport
+    ├── launches the settings application
+    └── owns the HUD process lifecycle
+             │
+             │ versioned shared memory + event
+             ▼
+      chat-view-hud.exe
+      ├── owns the transparent desktop window
+      ├── hosts WebView2 through DirectComposition
+      ├── loads the configured chat URL
+      └── exits when OBS exits
+```
+
+`WDA_EXCLUDEFROMCAPTURE` is a best-effort Windows capture hint. It does not remove the HUD from a physical HDMI signal sent to a capture card.
 
 ## Build
 
@@ -78,12 +124,14 @@ The Windows capture-exclusion API is a best-effort operating-system hint. A phys
 - Visual Studio 2026 with Desktop development with C++
 - Windows 11 SDK 10.0.26100
 - CMake 3.28 or newer
-- an OBS Studio development prefix exposing `libobsConfig.cmake` and `obs-frontend-apiConfig.cmake`
+- OBS Studio development prefix exposing `libobsConfig.cmake` and `obs-frontend-apiConfig.cmake`
+- Microsoft WebView2 SDK restored by `scripts/restore-webview2.ps1`
 
 The active CI target is OBS Studio 32.2.2 on Windows x64.
 
 ```powershell
 $env:OBS_CMAKE_PREFIX = "C:\path\to\obs-development-prefix"
+$env:WEBVIEW2_SDK_DIR = ./scripts/restore-webview2.ps1
 
 cmake --preset windows-x64
 cmake --build --preset windows-x64-relwithdebinfo
@@ -91,22 +139,37 @@ ctest --test-dir build/windows-x64 --build-config RelWithDebInfo --output-on-fai
 cmake --install build/windows-x64 --config RelWithDebInfo
 ```
 
-The install tree is written to `dist/` and contains the plugin DLL, HUD executable, locale files, installer scripts, license, and this README.
+The install tree is written to `dist/` and contains:
+
+```text
+dist/
+├── install.ps1
+├── uninstall.ps1
+├── ensure-webview2-runtime.ps1
+├── README.md
+├── LICENSE
+├── obs-plugins/64bit/
+│   ├── chat-view-obs.dll
+│   ├── chat-view-hud.exe
+│   └── chat-view-config.exe
+└── data/obs-plugins/chat-view-obs/locale/
+```
 
 ## Repository layout
 
 ```text
-src/common/   Shared protocol and Win32 ownership helpers
+src/common/   Configuration and shared-state contracts
 src/plugin/   OBS controller and HUD process lifecycle
-src/hud/      Transparent HUD, placement persistence, and state reader
+src/hud/      WebView2 HUD, interaction, and placement persistence
+src/config/   Native settings application
 data/locale/  OBS locale resources
-scripts/      Package installation and removal
-tests/        Native placement and HUD lifecycle tests
+scripts/      Build dependency, installation, and removal scripts
+tests/        Configuration, placement, and real HUD process tests
 docs/         Architecture constraints
 ```
 
 ## Remaining product work
 
-The native private-HUD foundation is working, but the application is not feature-complete. The next product layer is the first live-chat provider, including credential/configuration storage, message ingestion, bounded message history, and native HUD rendering. Dual-PC transport and the creator advertising layer follow only after the free single-PC chat path is stable.
+This is not the finished product. Before a public release it still needs interactive qualification on real streamer PCs across game capture, display capture, multi-monitor DPI layouts, and common anti-cheat environments. Dual-PC pairing, first-party multi-platform chat aggregation, account/backend services, and the creator advertising system remain later layers.
 
-See [`docs/architecture.md`](docs/architecture.md) for the constraints that govern the implementation.
+See [`docs/architecture.md`](docs/architecture.md) for the decisions that constrain implementation.

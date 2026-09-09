@@ -3,6 +3,7 @@
 #pragma once
 
 #include "common/shared-state.hpp"
+#include "hud/hud-placement.hpp"
 
 #include <Windows.h>
 #include <objidl.h>
@@ -54,9 +55,8 @@ private:
     HINSTANCE instance_ = nullptr;
     DisplayMode display_mode_ = DisplayMode::Hidden;
     DisplayMode output_mode_ = DisplayMode::Hidden;
-    POINT position_{};
+    HudPlacement placement_;
     std::uint64_t last_generation_ = 0U;
-    bool has_custom_position_ = false;
     bool edit_mode_ = false;
     bool edit_hotkey_registered_ = false;
 };

@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cwchar>
 #include <iterator>
+#include <utility>
 
 namespace chatview {
 namespace {
@@ -88,6 +89,8 @@ bool HudWindow::create(HINSTANCE instance)
     if (!SetWindowDisplayAffinity(window_, WDA_EXCLUDEFROMCAPTURE)) {
         debug_windows_error(L"SetWindowDisplayAffinity");
     }
+
+    load_hud_placement(placement_);
 
     edit_hotkey_registered_ =
         RegisterHotKey(window_, kEditHotkeyId, kEditHotkeyModifiers, kEditHotkeyVirtualKey) != FALSE;
@@ -213,6 +216,9 @@ LRESULT HudWindow::handle_message(HWND window, UINT message, WPARAM wparam, LPAR
     case WM_DPICHANGED:
     case WM_DISPLAYCHANGE:
     case WM_SETTINGCHANGE:
+        if (edit_mode_) {
+            capture_current_position();
+        }
         if (display_mode_ != DisplayMode::Hidden) {
             render(display_mode_);
         }
@@ -244,31 +250,7 @@ void HudWindow::render(DisplayMode mode)
     const int height = std::max(1, static_cast<int>(std::lround(76.0F * scale)));
     const int margin = std::max(1, static_cast<int>(std::lround(24.0F * scale)));
 
-    const HMONITOR monitor = has_custom_position_
-                                 ? MonitorFromPoint(position_, MONITOR_DEFAULTTONEAREST)
-                                 : MonitorFromWindow(window_, MONITOR_DEFAULTTOPRIMARY);
-
-    MONITORINFO monitor_info{};
-    monitor_info.cbSize = sizeof(monitor_info);
-    if (!GetMonitorInfoW(monitor, &monitor_info)) {
-        debug_windows_error(L"GetMonitorInfoW");
-        return;
-    }
-
-    POINT destination{};
-    if (has_custom_position_) {
-        destination = position_;
-    } else {
-        destination.x = monitor_info.rcWork.right - width - margin;
-        destination.y = monitor_info.rcWork.top + margin;
-    }
-
-    const LONG max_x = std::max(monitor_info.rcWork.left, monitor_info.rcWork.right - width);
-    const LONG max_y = std::max(monitor_info.rcWork.top, monitor_info.rcWork.bottom - height);
-    destination.x = std::clamp(destination.x, monitor_info.rcWork.left, max_x);
-    destination.y = std::clamp(destination.y, monitor_info.rcWork.top, max_y);
-    position_ = destination;
-
+    POINT destination = resolve_hud_position(placement_, width, height, margin);
     SIZE size{width, height};
     POINT source{0, 0};
 
@@ -522,14 +504,15 @@ void HudWindow::capture_current_position() noexcept
         return;
     }
 
-    RECT window_rect{};
-    if (!GetWindowRect(window_, &window_rect)) {
+    HudPlacement captured = capture_hud_placement(window_);
+    if (!captured.valid) {
         return;
     }
 
-    position_.x = window_rect.left;
-    position_.y = window_rect.top;
-    has_custom_position_ = true;
+    placement_ = std::move(captured);
+    if (!save_hud_placement(placement_)) {
+        OutputDebugStringW(L"[ChatView HUD] Failed to persist HUD placement\n");
+    }
 }
 
 UINT HudWindow::dpi() const noexcept

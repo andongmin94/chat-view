@@ -108,6 +108,10 @@ jobs:
             --config RelWithDebInfo `
             --parallel
 
+          ctest --test-dir build/windows-x64 `
+            --build-config RelWithDebInfo `
+            --output-on-failure
+
           cmake --install build/windows-x64 `
             --config RelWithDebInfo
 

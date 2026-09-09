@@ -12,6 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
 option(CHATVIEW_WARNINGS_AS_ERRORS "Treat ChatView compiler warnings as errors" OFF)
+include(CTest)
 
 find_package(libobs REQUIRED)
 find_package(obs-frontend-api REQUIRED)
@@ -45,6 +46,8 @@ set_target_properties(chat-view-obs PROPERTIES
 
 add_executable(chat-view-hud WIN32
     src/hud/main.cpp
+    src/hud/hud-placement.cpp
+    src/hud/hud-placement.hpp
     src/hud/hud-window.cpp
     src/hud/hud-window.hpp
     src/hud/shared-state-reader.cpp
@@ -90,6 +93,34 @@ if(MSVC)
             target_compile_options(${target} PRIVATE /WX)
         endif()
     endforeach()
+endif()
+
+if(BUILD_TESTING)
+    add_executable(chat-view-hud-placement-test
+        tests/hud-placement-test.cpp
+        src/hud/hud-placement.cpp
+        src/hud/hud-placement.hpp
+    )
+    target_include_directories(chat-view-hud-placement-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    target_link_libraries(chat-view-hud-placement-test PRIVATE user32)
+    target_compile_definitions(chat-view-hud-placement-test PRIVATE
+        UNICODE
+        _UNICODE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        _WIN32_WINNT=0x0A00
+        WINVER=0x0A00
+    )
+
+    if(MSVC)
+        target_compile_options(
+            chat-view-hud-placement-test PRIVATE /W4 /permissive- /Zc:__cplusplus /utf-8)
+        if(CHATVIEW_WARNINGS_AS_ERRORS)
+            target_compile_options(chat-view-hud-placement-test PRIVATE /WX)
+        endif()
+    endif()
+
+    add_test(NAME chat-view-hud-placement COMMAND chat-view-hud-placement-test)
 endif()
 
 install(TARGETS chat-view-obs chat-view-hud

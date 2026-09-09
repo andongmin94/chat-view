@@ -29,6 +29,30 @@ src/
 
 data/locale/  OBS plugin locale resources
 docs/         Architecture and product constraints
+scripts/      Package installation and removal
+```
+
+## Install a CI package
+
+1. Download and extract `chat-view-obs-windows-x64.zip` from the latest successful Windows build.
+2. Close OBS Studio.
+3. Open an elevated PowerShell terminal in the extracted package directory.
+4. Run:
+
+```powershell
+./install.ps1
+```
+
+The default OBS root is `C:\Program Files\obs-studio`. Pass a different root explicitly when needed:
+
+```powershell
+./install.ps1 -ObsPath "D:\Apps\obs-studio"
+```
+
+The installer validates the OBS executable and copies only the ChatView plugin, HUD runtime, and locale files. Remove the same known files with:
+
+```powershell
+./uninstall.ps1
 ```
 
 ## Build
@@ -58,6 +82,10 @@ The install tree is produced in `dist/`:
 
 ```text
 dist/
+├── install.ps1
+├── uninstall.ps1
+├── README.md
+├── LICENSE
 ├── obs-plugins/64bit/
 │   ├── chat-view-obs.dll
 │   └── chat-view-hud.exe
@@ -65,7 +93,7 @@ dist/
     └── locale/
 ```
 
-Copy the contents of `dist/` into the OBS Studio installation root for a development test. Every push to `OBS` also runs a pinned Windows build and uploads the same layout as a CI artifact.
+Every push to `OBS` runs a pinned Windows build, exercises the installer and uninstaller against a temporary OBS tree, and uploads the same package layout as a CI artifact.
 
 ## Expected behavior
 

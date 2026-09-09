@@ -100,3 +100,11 @@ install(TARGETS chat-view-obs chat-view-hud
 install(DIRECTORY data/
     DESTINATION "data/obs-plugins/chat-view-obs"
 )
+
+install(FILES
+    README.md
+    LICENSE
+    scripts/install.ps1
+    scripts/uninstall.ps1
+    DESTINATION "."
+)

@@ -121,6 +121,36 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME chat-view-hud-placement COMMAND chat-view-hud-placement-test)
+
+    add_executable(chat-view-hud-smoke-test
+        tests/hud-smoke-test.cpp
+        src/common/shared-state.hpp
+        src/common/win32-handle.hpp
+    )
+    target_include_directories(chat-view-hud-smoke-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    target_link_libraries(chat-view-hud-smoke-test PRIVATE user32)
+    target_compile_definitions(chat-view-hud-smoke-test PRIVATE
+        UNICODE
+        _UNICODE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        _WIN32_WINNT=0x0A00
+        WINVER=0x0A00
+    )
+
+    if(MSVC)
+        target_compile_options(
+            chat-view-hud-smoke-test PRIVATE /W4 /permissive- /Zc:__cplusplus /utf-8)
+        if(CHATVIEW_WARNINGS_AS_ERRORS)
+            target_compile_options(chat-view-hud-smoke-test PRIVATE /WX)
+        endif()
+    endif()
+
+    add_test(
+        NAME chat-view-hud-smoke
+        COMMAND chat-view-hud-smoke-test "$<TARGET_FILE:chat-view-hud>"
+    )
+    set_tests_properties(chat-view-hud-smoke PROPERTIES TIMEOUT 15)
 endif()
 
 install(TARGETS chat-view-obs chat-view-hud

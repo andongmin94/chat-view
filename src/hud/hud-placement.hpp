@@ -15,7 +15,7 @@ struct HudPlacement {
     bool valid = false;
 };
 
-[[nodiscard]] bool load_hud_placement(HudPlacement &placement) noexcept;
+bool load_hud_placement(HudPlacement &placement) noexcept;
 [[nodiscard]] bool save_hud_placement(const HudPlacement &placement) noexcept;
 [[nodiscard]] POINT resolve_hud_position(
     const HudPlacement &placement, int width, int height, int margin) noexcept;

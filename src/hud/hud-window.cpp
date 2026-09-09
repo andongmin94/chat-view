@@ -7,17 +7,20 @@
 #include <strsafe.h>
 
 #include <algorithm>
-#include <iterator>
 #include <cmath>
 #include <cwchar>
+#include <iterator>
 
 namespace chatview {
 namespace {
 
 constexpr wchar_t kWindowClassName[] = L"ChatViewObsHudWindow";
 constexpr UINT_PTR kHideTimerId = 1U;
+constexpr int kEditHotkeyId = 1;
 constexpr UINT kReadyDurationMs = 2200U;
 constexpr UINT kOfflineDurationMs = 1200U;
+constexpr UINT kEditHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT;
+constexpr UINT kEditHotkeyVirtualKey = 'H';
 
 #ifndef WDA_EXCLUDEFROMCAPTURE
 constexpr DWORD WDA_EXCLUDEFROMCAPTURE = 0x00000011;
@@ -86,6 +89,12 @@ bool HudWindow::create(HINSTANCE instance)
         debug_windows_error(L"SetWindowDisplayAffinity");
     }
 
+    edit_hotkey_registered_ =
+        RegisterHotKey(window_, kEditHotkeyId, kEditHotkeyModifiers, kEditHotkeyVirtualKey) != FALSE;
+    if (!edit_hotkey_registered_) {
+        debug_windows_error(L"RegisterHotKey");
+    }
+
     ShowWindow(window_, SW_HIDE);
     return true;
 }
@@ -93,6 +102,11 @@ bool HudWindow::create(HINSTANCE instance)
 void HudWindow::destroy() noexcept
 {
     cancel_hide_timer();
+
+    if (window_ != nullptr && edit_hotkey_registered_) {
+        UnregisterHotKey(window_, kEditHotkeyId);
+        edit_hotkey_registered_ = false;
+    }
 
     if (window_ != nullptr) {
         DestroyWindow(window_);
@@ -123,32 +137,31 @@ void HudWindow::apply_state(const SharedSnapshot &snapshot)
         return;
     }
 
+    const DisplayMode previous_output_mode = output_mode_;
     const bool streaming = has_flag(snapshot, SharedStateStreaming);
     const bool recording = has_flag(snapshot, SharedStateRecording);
 
     if (streaming && recording) {
-        has_seen_active_state_ = true;
-        cancel_hide_timer();
-        render(DisplayMode::LiveAndRecording);
+        output_mode_ = DisplayMode::LiveAndRecording;
+    } else if (streaming) {
+        output_mode_ = DisplayMode::Live;
+    } else if (recording) {
+        output_mode_ = DisplayMode::Recording;
+    } else {
+        output_mode_ = DisplayMode::Hidden;
+    }
+
+    if (edit_mode_) {
         return;
     }
 
-    if (streaming) {
-        has_seen_active_state_ = true;
+    if (output_mode_ != DisplayMode::Hidden) {
         cancel_hide_timer();
-        render(DisplayMode::Live);
+        render(output_mode_);
         return;
     }
 
-    if (recording) {
-        has_seen_active_state_ = true;
-        cancel_hide_timer();
-        render(DisplayMode::Recording);
-        return;
-    }
-
-    if (has_seen_active_state_) {
-        has_seen_active_state_ = false;
+    if (previous_output_mode != DisplayMode::Hidden) {
         render(DisplayMode::Offline);
         arm_hide_timer(kOfflineDurationMs);
     }
@@ -182,15 +195,26 @@ LRESULT HudWindow::handle_message(HWND window, UINT message, WPARAM wparam, LPAR
             return 0;
         }
         break;
+    case WM_HOTKEY:
+        if (wparam == static_cast<WPARAM>(kEditHotkeyId)) {
+            toggle_edit_mode();
+            return 0;
+        }
+        break;
     case WM_NCHITTEST:
-        return HTTRANSPARENT;
+        return edit_mode_ ? HTCAPTION : HTTRANSPARENT;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
+    case WM_EXITSIZEMOVE:
+        if (edit_mode_) {
+            capture_current_position();
+        }
+        return 0;
     case WM_DPICHANGED:
     case WM_DISPLAYCHANGE:
     case WM_SETTINGCHANGE:
-        if (mode_ != DisplayMode::Hidden) {
-            render(mode_);
+        if (display_mode_ != DisplayMode::Hidden) {
+            render(display_mode_);
         }
         return 0;
     case WM_CLOSE:
@@ -213,25 +237,38 @@ void HudWindow::render(DisplayMode mode)
         return;
     }
 
-    mode_ = mode;
+    display_mode_ = mode;
 
     const float scale = static_cast<float>(dpi()) / 96.0F;
     const int width = std::max(1, static_cast<int>(std::lround(340.0F * scale)));
     const int height = std::max(1, static_cast<int>(std::lround(76.0F * scale)));
     const int margin = std::max(1, static_cast<int>(std::lround(24.0F * scale)));
 
+    const HMONITOR monitor = has_custom_position_
+                                 ? MonitorFromPoint(position_, MONITOR_DEFAULTTONEAREST)
+                                 : MonitorFromWindow(window_, MONITOR_DEFAULTTOPRIMARY);
+
     MONITORINFO monitor_info{};
     monitor_info.cbSize = sizeof(monitor_info);
-    const HMONITOR monitor = MonitorFromWindow(window_, MONITOR_DEFAULTTOPRIMARY);
     if (!GetMonitorInfoW(monitor, &monitor_info)) {
         debug_windows_error(L"GetMonitorInfoW");
         return;
     }
 
-    POINT destination{
-        monitor_info.rcWork.right - width - margin,
-        monitor_info.rcWork.top + margin,
-    };
+    POINT destination{};
+    if (has_custom_position_) {
+        destination = position_;
+    } else {
+        destination.x = monitor_info.rcWork.right - width - margin;
+        destination.y = monitor_info.rcWork.top + margin;
+    }
+
+    const LONG max_x = std::max(monitor_info.rcWork.left, monitor_info.rcWork.right - width);
+    const LONG max_y = std::max(monitor_info.rcWork.top, monitor_info.rcWork.bottom - height);
+    destination.x = std::clamp(destination.x, monitor_info.rcWork.left, max_x);
+    destination.y = std::clamp(destination.y, monitor_info.rcWork.top, max_y);
+    position_ = destination;
+
     SIZE size{width, height};
     POINT source{0, 0};
 
@@ -287,54 +324,90 @@ void HudWindow::render(DisplayMode mode)
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
         graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
 
-        Gdiplus::Color accent(255U, 174U, 174U, 178U);
-        switch (mode) {
-        case DisplayMode::Live:
-        case DisplayMode::LiveAndRecording:
-            accent = Gdiplus::Color(255U, 255U, 59U, 48U);
-            break;
-        case DisplayMode::Recording:
-            accent = Gdiplus::Color(255U, 255U, 149U, 0U);
-            break;
-        case DisplayMode::Ready:
-            accent = Gdiplus::Color(255U, 90U, 200U, 250U);
-            break;
-        case DisplayMode::Offline:
-        case DisplayMode::Hidden:
-            break;
+        if (mode == DisplayMode::Editing) {
+            Gdiplus::SolidBrush panel_brush(Gdiplus::Color(224U, 22U, 22U, 26U));
+            Gdiplus::Pen border_pen(Gdiplus::Color(255U, 90U, 200U, 250U), 2.0F * scale);
+            graphics.FillRectangle(
+                &panel_brush, 0.0F, 0.0F, static_cast<float>(width), static_cast<float>(height));
+            graphics.DrawRectangle(
+                &border_pen,
+                1.0F * scale,
+                1.0F * scale,
+                static_cast<float>(width) - 2.0F * scale,
+                static_cast<float>(height) - 2.0F * scale);
+
+            Gdiplus::Font title_font(
+                L"Segoe UI", 17.0F * scale, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+            Gdiplus::Font hint_font(
+                L"Segoe UI", 11.0F * scale, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+            Gdiplus::SolidBrush text_brush(Gdiplus::Color(255U, 255U, 255U, 255U));
+            Gdiplus::SolidBrush hint_brush(Gdiplus::Color(255U, 190U, 190U, 196U));
+
+            constexpr wchar_t title[] = L"DRAG TO POSITION";
+            constexpr wchar_t hint[] = L"CTRL + ALT + SHIFT + H TO LOCK";
+            graphics.DrawString(
+                title,
+                static_cast<INT>(std::size(title) - 1U),
+                &title_font,
+                Gdiplus::PointF(18.0F * scale, 12.0F * scale),
+                &text_brush);
+            graphics.DrawString(
+                hint,
+                static_cast<INT>(std::size(hint) - 1U),
+                &hint_font,
+                Gdiplus::PointF(18.0F * scale, 43.0F * scale),
+                &hint_brush);
+        } else {
+            Gdiplus::Color accent(255U, 174U, 174U, 178U);
+            switch (mode) {
+            case DisplayMode::Live:
+            case DisplayMode::LiveAndRecording:
+                accent = Gdiplus::Color(255U, 255U, 59U, 48U);
+                break;
+            case DisplayMode::Recording:
+                accent = Gdiplus::Color(255U, 255U, 149U, 0U);
+                break;
+            case DisplayMode::Ready:
+                accent = Gdiplus::Color(255U, 90U, 200U, 250U);
+                break;
+            case DisplayMode::Offline:
+            case DisplayMode::Hidden:
+            case DisplayMode::Editing:
+                break;
+            }
+
+            const float dot_size = 12.0F * scale;
+            const float dot_x = 18.0F * scale;
+            const float dot_y = (static_cast<float>(height) - dot_size) / 2.0F;
+
+            Gdiplus::SolidBrush accent_brush(accent);
+            graphics.FillEllipse(&accent_brush, dot_x, dot_y, dot_size, dot_size);
+
+            const wchar_t *label = label_for(mode);
+            const INT label_length = static_cast<INT>(wcslen(label));
+            Gdiplus::Font font(
+                L"Segoe UI",
+                22.0F * scale,
+                Gdiplus::FontStyleBold,
+                Gdiplus::UnitPixel);
+            Gdiplus::SolidBrush shadow_brush(Gdiplus::Color(190U, 0U, 0U, 0U));
+            Gdiplus::SolidBrush text_brush(Gdiplus::Color(255U, 255U, 255U, 255U));
+
+            const float text_x = 42.0F * scale;
+            const float text_y = 19.0F * scale;
+            graphics.DrawString(
+                label,
+                label_length,
+                &font,
+                Gdiplus::PointF(text_x + 2.0F * scale, text_y + 2.0F * scale),
+                &shadow_brush);
+            graphics.DrawString(
+                label,
+                label_length,
+                &font,
+                Gdiplus::PointF(text_x, text_y),
+                &text_brush);
         }
-
-        const float dot_size = 12.0F * scale;
-        const float dot_x = 18.0F * scale;
-        const float dot_y = (static_cast<float>(height) - dot_size) / 2.0F;
-
-        Gdiplus::SolidBrush accent_brush(accent);
-        graphics.FillEllipse(&accent_brush, dot_x, dot_y, dot_size, dot_size);
-
-        const wchar_t *label = label_for(mode);
-        const INT label_length = static_cast<INT>(wcslen(label));
-        Gdiplus::Font font(
-            L"Segoe UI",
-            22.0F * scale,
-            Gdiplus::FontStyleBold,
-            Gdiplus::UnitPixel);
-        Gdiplus::SolidBrush shadow_brush(Gdiplus::Color(190U, 0U, 0U, 0U));
-        Gdiplus::SolidBrush text_brush(Gdiplus::Color(255U, 255U, 255U, 255U));
-
-        const float text_x = 42.0F * scale;
-        const float text_y = 19.0F * scale;
-        graphics.DrawString(
-            label,
-            label_length,
-            &font,
-            Gdiplus::PointF(text_x + 2.0F * scale, text_y + 2.0F * scale),
-            &shadow_brush);
-        graphics.DrawString(
-            label,
-            label_length,
-            &font,
-            Gdiplus::PointF(text_x, text_y),
-            &text_brush);
     }
 
     BLENDFUNCTION blend{};
@@ -375,7 +448,7 @@ void HudWindow::hide()
     if (window_ != nullptr) {
         ShowWindow(window_, SW_HIDE);
     }
-    mode_ = DisplayMode::Hidden;
+    display_mode_ = DisplayMode::Hidden;
 }
 
 void HudWindow::arm_hide_timer(UINT milliseconds)
@@ -391,6 +464,72 @@ void HudWindow::cancel_hide_timer()
     if (window_ != nullptr) {
         KillTimer(window_, kHideTimerId);
     }
+}
+
+void HudWindow::toggle_edit_mode()
+{
+    if (window_ == nullptr) {
+        return;
+    }
+
+    cancel_hide_timer();
+
+    if (!edit_mode_) {
+        edit_mode_ = true;
+        set_click_through(false);
+        render(DisplayMode::Editing);
+        return;
+    }
+
+    capture_current_position();
+    edit_mode_ = false;
+    set_click_through(true);
+
+    if (output_mode_ == DisplayMode::Hidden) {
+        hide();
+    } else {
+        render(output_mode_);
+    }
+}
+
+void HudWindow::set_click_through(bool enabled) noexcept
+{
+    if (window_ == nullptr) {
+        return;
+    }
+
+    LONG_PTR extended_style = GetWindowLongPtrW(window_, GWL_EXSTYLE);
+    if (enabled) {
+        extended_style |= WS_EX_TRANSPARENT;
+    } else {
+        extended_style &= ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT);
+    }
+
+    SetWindowLongPtrW(window_, GWL_EXSTYLE, extended_style);
+    SetWindowPos(
+        window_,
+        HWND_TOPMOST,
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+}
+
+void HudWindow::capture_current_position() noexcept
+{
+    if (window_ == nullptr) {
+        return;
+    }
+
+    RECT window_rect{};
+    if (!GetWindowRect(window_, &window_rect)) {
+        return;
+    }
+
+    position_.x = window_rect.left;
+    position_.y = window_rect.top;
+    has_custom_position_ = true;
 }
 
 UINT HudWindow::dpi() const noexcept
@@ -420,6 +559,8 @@ const wchar_t *HudWindow::label_for(DisplayMode mode) const noexcept
         return L"LIVE  \u2022  REC";
     case DisplayMode::Offline:
         return L"OFFLINE";
+    case DisplayMode::Editing:
+        return L"EDIT MODE";
     case DisplayMode::Hidden:
     default:
         return L"";

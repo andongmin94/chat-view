@@ -34,6 +34,7 @@ private:
         Recording,
         LiveAndRecording,
         Offline,
+        Editing,
     };
 
     static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
@@ -43,14 +44,21 @@ private:
     void hide();
     void arm_hide_timer(UINT milliseconds);
     void cancel_hide_timer();
+    void toggle_edit_mode();
+    void set_click_through(bool enabled) noexcept;
+    void capture_current_position() noexcept;
     [[nodiscard]] UINT dpi() const noexcept;
     [[nodiscard]] const wchar_t *label_for(DisplayMode mode) const noexcept;
 
     HWND window_ = nullptr;
     HINSTANCE instance_ = nullptr;
-    DisplayMode mode_ = DisplayMode::Hidden;
+    DisplayMode display_mode_ = DisplayMode::Hidden;
+    DisplayMode output_mode_ = DisplayMode::Hidden;
+    POINT position_{};
     std::uint64_t last_generation_ = 0U;
-    bool has_seen_active_state_ = false;
+    bool has_custom_position_ = false;
+    bool edit_mode_ = false;
+    bool edit_hotkey_registered_ = false;
 };
 
 } // namespace chatview

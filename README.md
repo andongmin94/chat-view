@@ -12,7 +12,8 @@ The current source implements the first end-to-end slice:
 - The plugin launches `chat-view-hud.exe` as a separate process.
 - OBS and the HUD exchange a small versioned state through Windows shared memory and an event.
 - The HUD is a borderless, per-pixel-alpha, always-on-top Windows overlay.
-- The overlay is non-activating and click-through.
+- The overlay is non-activating and click-through while locked.
+- A global hotkey switches the HUD into an interactive drag mode and back to locked mode.
 - Windows capture exclusion is requested with `WDA_EXCLUDEFROMCAPTURE`.
 - `LIVE`, `REC`, `LIVE • REC`, startup, and shutdown transitions are rendered.
 - The HUD exits when OBS exits, even if the plugin cannot send a normal shutdown event.
@@ -54,6 +55,12 @@ The installer validates the OBS executable and copies only the ChatView plugin, 
 ```powershell
 ./uninstall.ps1
 ```
+
+## Move and lock the HUD
+
+Press `Ctrl + Alt + Shift + H` to enter edit mode. The transparent status changes to a visible drag panel. Drag that panel to the desired monitor and position, then press the same hotkey again to lock it.
+
+Locked mode restores click-through behavior immediately. The current milestone retains the chosen position for the lifetime of the HUD process; disk persistence is the next placement layer.
 
 ## Build
 
@@ -102,14 +109,15 @@ Every push to `OBS` runs a pinned Windows build, exercises the installer and uni
 3. Starting a stream shows `LIVE`.
 4. Starting a recording shows `REC`, or `LIVE • REC` when both are active.
 5. Stopping the last active output shows `OFFLINE` briefly and then hides the HUD.
-6. Closing OBS terminates the HUD runtime.
+6. `Ctrl + Alt + Shift + H` exposes a draggable edit panel; pressing it again locks the HUD.
+7. Closing OBS terminates the HUD runtime.
 
 The HUD is designed to remain outside capture. Physical HDMI capture cards still receive whatever pixels the game computer outputs and are not affected by Windows capture exclusion.
 
 ## Development order
 
 1. Prove plugin load, process lifecycle, transparent rendering, and OBS state propagation.
-2. Add an edit mode, monitor selection, bounds persistence, and a global lock hotkey.
+2. Add edit/locked mode, then persisted multi-monitor placement and bounds.
 3. Add the first native chat provider and message rendering.
 4. Add game-PC/stream-PC pairing using the same state contract.
 5. Add the creator advertising layer only after the free HUD is stable.

@@ -196,7 +196,6 @@ install(FILES
     LICENSE
     scripts/install.ps1
     scripts/uninstall.ps1
-    scripts/restore-webview2.ps1
     scripts/ensure-webview2-runtime.ps1
     DESTINATION "."
 )

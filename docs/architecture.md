@@ -2,119 +2,142 @@
 
 ## Product boundary
 
-ChatView OBS is not an OBS dock that happens to contain chat. Its primary surface is an operating-system-level HUD displayed over the streamer's game, browser, or desktop.
+ChatView OBS is not an OBS dock. Its primary surface is an operating-system-level HUD displayed over the streamer's game, browser, or desktop.
 
-The OBS plugin is a controller. The external HUD runtime owns windows, local presentation state, and desktop rendering.
+The OBS plugin is a controller. The external HUD runtime owns browser composition, the desktop window, and local presentation state.
 
 ```text
 OBS Studio
 └── chat-view-obs.dll
-    ├── reads frontend output and scene state
-    ├── owns the local state transport
+    ├── observes stream and recording state
+    ├── owns the local status transport
+    ├── launches configuration UI
     └── owns the HUD process lifecycle
              │
              │ versioned shared state
              ▼
       chat-view-hud.exe
-      ├── owns the transparent window
-      ├── owns rendering and placement
+      ├── owns the transparent top-level window
+      ├── hosts WebView2 with DirectComposition
+      ├── owns interaction and placement
       └── exits with its OBS parent
 ```
 
-## Why the HUD is out of process
+## Fault boundary
 
-The plugin runs inside OBS. A null dereference, rendering-driver fault, or blocking operation inside the plugin can affect the broadcast process itself.
+The plugin runs inside OBS. A null dereference, blocked callback, or browser/rendering failure inside the plugin could affect the broadcast process.
 
-The HUD therefore runs out of process from the first functional version. This is the permanent fault boundary for desktop rendering and is also the natural boundary for later dual-PC operation.
+Browser and desktop rendering therefore run out of process from the first useful version. This is a permanent fault boundary, not a compatibility layer. It also leaves a clean process boundary for later game-PC/stream-PC operation.
 
 The plugin remains deliberately small:
 
 - subscribe to OBS frontend events;
-- serialize bounded product state;
+- serialize bounded status state;
 - launch, monitor, and stop the HUD runtime;
-- never perform network, browser, or rendering work on an OBS callback thread.
+- launch the settings application;
+- never perform browser, network, or rendering work on an OBS callback thread.
 
-## Local controller transport
+## Local status transport
 
-The local transport uses a named Windows file mapping plus an auto-reset event.
-
-The mapped structure contains:
-
-- a fixed magic value;
-- an explicit protocol version;
-- a sequence lock;
-- state flags;
-- a monotonically increasing generation;
-- a bounded UTF-8 current-scene field.
-
-The sequence lock prevents the HUD from accepting a partially written state. The event avoids polling. The mapping and event are scoped to the current Windows session and named with the OBS process ID.
-
-Protocol version 2 carries:
+The single-PC transport uses a named Windows file mapping and an auto-reset event. Protocol version 3 carries only:
 
 - streaming active;
 - recording active;
 - shutdown requested;
-- current OBS scene name.
+- a monotonically increasing generation.
 
-A layout change requires a protocol-version increment. No compatibility layer is retained between incompatible layouts because the plugin and HUD are shipped as one package.
+The mapped structure has a fixed magic value, explicit protocol version, and sequence lock. The sequence lock prevents the HUD from accepting a partial write, while the event avoids polling. Names are scoped to the current Windows session and the OBS process ID.
 
-## Desktop HUD properties
+The plugin and HUD ship as one package. Incompatible layouts increment the protocol version; obsolete layouts are not retained.
 
-The runtime creates a top-level Win32 layered window with per-pixel alpha. Locked mode paints no opaque full-window background.
+## Chat content boundary
 
-The locked window is:
+The current alpha renders an explicitly configured web chat page rather than implementing platform protocols inside OBS.
+
+Supported top-level URLs are currently restricted to:
+
+```text
+https://weflab.com/page/...
+https://chzzk.naver.com/chat/...
+```
+
+Configuration is stored by the separate native settings application in `%LOCALAPPDATA%\ChatView\config.ini`. Saving broadcasts a registered local Windows message so the HUD reloads immediately.
+
+Validation requires HTTPS, the default HTTPS port, no URL credentials, an exact allowlisted host, and an expected path prefix. Top-level navigation outside the allowlist is cancelled and new windows are suppressed. Page subresources continue to load normally.
+
+This web-content boundary is the smallest complete path that preserves the existing ChatView use case. First-party platform aggregation is a later backend/runtime layer and must not be half-integrated as unused provider code.
+
+## Transparent WebView2 composition
+
+The HUD uses a WebView2 composition controller hosted by a DirectComposition visual tree. This avoids an opaque child HWND and permits transparent web content in the top-level overlay.
+
+The runtime:
+
+- creates a D3D11 BGRA device, with WARP fallback;
+- creates a DirectComposition device, target, and root visual;
+- creates an `ICoreWebView2CompositionController`;
+- sets the WebView default background to transparent;
+- injects a small isolated Shadow DOM control layer for edit bounds and OBS status;
+- forces document and body backgrounds transparent without rewriting the provider UI.
+
+The WebView2 Evergreen Runtime is checked by the package installer and installed from Microsoft's signed bootstrapper when absent. The SDK used at build time is pinned separately in CI.
+
+## Desktop window modes
+
+Locked mode is the broadcasting default. The top-level window is:
 
 - borderless;
 - absent from the taskbar;
 - always on top;
 - non-activating;
 - click-through;
-- hidden from supported Windows capture paths where possible.
+- requested to be excluded from supported Windows capture paths;
+- created with `WS_EX_NOREDIRECTIONBITMAP` for DirectComposition.
 
-`Ctrl + Alt + Shift + H` toggles a HUD-local edit mode. Edit mode temporarily removes click-through behavior and renders a drag target. Matching Up and Down hotkeys adjust a bounded scale. Locking saves the result and restores the private-HUD defaults. These controls remain inside the HUD process and do not enlarge the OBS transport.
+`Ctrl + Alt + Shift + H` toggles edit mode. Edit mode temporarily enables activation and native move/resize hit testing. The injected control layer shows a visible frame, while the webpage remains the content surface. Locking persists the final bounds and restores the private HUD defaults.
 
-`WDA_EXCLUDEFROMCAPTURE` is a Windows capture hint, not DRM and not an HDMI-path guarantee. A future show-on-broadcast feature must use a distinct OBS source rather than weakening the private-HUD safety default.
+`WDA_EXCLUDEFROMCAPTURE` is a best-effort Windows capture hint, not DRM and not an HDMI-path guarantee. A future broadcast-visible overlay must be a separate OBS source rather than weakening the private-HUD default.
 
-## Local placement storage
+## Placement storage
 
-Placement is local presentation state, not OBS product state. The HUD stores it in `%LOCALAPPDATA%\ChatView\hud.ini`.
+Placement is local presentation state and belongs to the HUD runtime. It is stored in `%LOCALAPPDATA%\ChatView\hud.ini` as:
 
-The persisted contract contains:
+- Win32 monitor device name;
+- horizontal and vertical offsets from the monitor work-area origin in device-independent pixels;
+- width and height in device-independent pixels.
 
-- the Win32 monitor device name;
-- horizontal and vertical offsets from that monitor's work-area origin;
-- a HUD scale percentage from 50% to 200% in 10% steps.
-
-Work-area-relative offsets preserve placement when a monitor moves within the virtual desktop. If the saved monitor is absent, the HUD falls back to the primary monitor. Every resolved position is clamped into the selected monitor's visible work area. DPI scaling and the user-selected scale are composed at render time.
+Using monitor-relative DIPs preserves useful placement across virtual-desktop reordering and DPI changes. Missing monitors fall back to the primary display. Restored dimensions and positions are clamped into the current work area.
 
 ## Lifecycle guarantees
 
-- The runtime path is resolved beside the loaded plugin DLL.
-- The runtime receives its OBS parent process ID.
-- Normal plugin unload publishes a shutdown flag and wake event.
-- The runtime also waits on the OBS process handle, so it exits after abnormal OBS termination.
-- The plugin restarts a crashed runtime on the next relevant frontend-state update.
-- Plugin unload waits only for a bounded interval and cannot indefinitely block OBS shutdown.
+- Runtime and settings executable paths are resolved beside the loaded plugin DLL.
+- The HUD receives its OBS parent process ID.
+- Normal unload publishes a shutdown state and wakes the HUD.
+- The HUD also waits on the OBS process handle and exits after abnormal OBS termination.
+- The plugin can restart an unexpectedly exited HUD on a later frontend-state update.
+- Plugin unload uses a bounded wait and does not indefinitely block OBS shutdown.
+- WebView2 asynchronous callbacks are serviced by an alertable, input-available Win32 message loop.
 
 ## Testing boundary
 
-The Windows workflow builds against pinned OBS Studio 32.2.2 development libraries and then runs:
+The Windows workflow builds against pinned OBS Studio 32.2.2 development libraries and a pinned WebView2 SDK. It then runs:
 
-- placement persistence and malformed-input tests;
-- a real HUD process smoke test covering shared memory, scene updates, locked/edit modes, scale persistence, and shutdown;
+- URL validation and configuration persistence tests;
+- placement validation, monitor fallback, and malformed-input tests;
+- a real WebView2 HUD process smoke test covering initialization readiness, locked/edit modes, native resize, persistence, capture-exclusion request, shared-state shutdown, and delayed WebView profile cleanup;
 - package layout validation;
 - installer and uninstaller tests against an isolated OBS directory tree.
 
-These tests do not replace an interactive test on a real broadcaster workstation, but they prevent the package from being published when the native controller-to-HUD path is broken.
+These checks prevent publishing a package with a broken controller-to-HUD path. They do not replace interactive qualification on a real broadcaster workstation, GPU driver stack, game, and capture configuration.
 
-## Next product layer
+## Layering order
 
-The next complete vertical slice is live chat:
+Development proceeds only from a working product layer:
 
-1. one provider with an explicit configuration and credential boundary;
-2. provider work outside OBS callback threads;
-3. a bounded, timestamped message model;
-4. native text layout and expiry in the HUD;
-5. reconnect and rate-limit behavior covered by deterministic tests.
+1. installable single-PC OBS-controlled transparent web chat HUD;
+2. real-workstation qualification and UI hardening;
+3. authenticated dual-PC pairing with a separate transport implementation;
+4. first-party multi-platform chat aggregation and backend services;
+5. creator advertising and verified campaign accounting.
 
-Provider messages and credentials do not belong in the fixed OBS status mapping. They require a separate runtime-owned subsystem. Dual-PC transport and advertising are deferred until the free single-PC chat path is stable.
+Advertising does not enter the codebase until the free HUD is stable enough to earn installation on its own.

@@ -6,12 +6,14 @@
 #include <Windows.h>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cwchar>
 #include <filesystem>
 #include <iostream>
 #include <string>
 #include <system_error>
+#include <thread>
 
 namespace {
 
@@ -20,6 +22,7 @@ constexpr WPARAM kEditHotkeyId = 1U;
 constexpr DWORD kStartupTimeoutMs = 25000U;
 constexpr DWORD kShutdownTimeoutMs = 8000U;
 constexpr DWORD kWindowStateTimeoutMs = 3000U;
+constexpr auto kProfileCleanupTimeout = std::chrono::seconds(10);
 
 #ifndef WDA_EXCLUDEFROMCAPTURE
 constexpr DWORD WDA_EXCLUDEFROMCAPTURE = 0x00000011;
@@ -120,6 +123,23 @@ bool wait_for_width_greater(HWND window, LONG previous_width) noexcept
     return false;
 }
 
+bool remove_tree_with_retry(const std::filesystem::path &path) noexcept
+{
+    const auto deadline = std::chrono::steady_clock::now() + kProfileCleanupTimeout;
+    std::error_code error;
+
+    do {
+        error.clear();
+        std::filesystem::remove_all(path, error);
+        if (!error && !std::filesystem::exists(path, error)) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    } while (std::chrono::steady_clock::now() < deadline);
+
+    return false;
+}
+
 void publish(chatview::SharedState *state, HANDLE event, std::uint32_t flags) noexcept
 {
     InterlockedIncrement(&state->sequence);
@@ -214,9 +234,11 @@ int wmain(int argument_count, wchar_t **arguments)
 
     const std::filesystem::path local_app_data =
         std::filesystem::temp_directory_path() / (L"chatview-hud-smoke-" + suffix);
+    if (!remove_tree_with_retry(local_app_data)) {
+        return fail(L"Failed to reset the smoke-test profile directory");
+    }
+
     std::error_code error;
-    std::filesystem::remove_all(local_app_data, error);
-    error.clear();
     std::filesystem::create_directories(local_app_data, error);
     if (error) {
         return fail(L"Failed to create the smoke-test profile directory");
@@ -345,9 +367,7 @@ int wmain(int argument_count, wchar_t **arguments)
         return fail(L"The HUD exited with an error");
     }
 
-    error.clear();
-    std::filesystem::remove_all(local_app_data, error);
-    if (error) {
+    if (!remove_tree_with_retry(local_app_data)) {
         return fail(L"Failed to remove the smoke-test profile directory");
     }
     return 0;

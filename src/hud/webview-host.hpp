@@ -5,6 +5,7 @@
 #include <Windows.h>
 #include <d3d11.h>
 #include <dcomp.h>
+#include <winhttp.h>
 #include <wrl/client.h>
 
 #include <WebView2.h>

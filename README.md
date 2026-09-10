@@ -119,7 +119,7 @@ OBS Studio
       └── exits when OBS exits
 ```
 
-`WDA_EXCLUDEFROMCAPTURE` is a best-effort Windows capture hint. It does not remove the HUD from a physical HDMI signal sent to a capture card. As a second software-side barrier, ChatView hides the private HUD whenever OBS reports an active or showing Display Capture source while streaming, recording, replay buffering, or virtual-camera output is running. At output start it temporarily treats any configured Display Capture source as risky until OBS source activation settles. Failed starts expire automatically, and the HUD returns only after the risk condition clears. While hidden by that policy, the HUD pauses the periodic hidden-window affinity query and instead verifies capture exclusion immediately before and after restoration.
+`WDA_EXCLUDEFROMCAPTURE` is a best-effort Windows capture hint. It does not remove the HUD from a physical HDMI signal sent to a capture card. As a second software-side barrier, ChatView hides the private HUD whenever OBS reports an active or showing Display Capture source while streaming, recording, replay buffering, or virtual-camera output is running. At output start it temporarily treats any configured Display Capture source as risky until OBS source activation settles. Failed starts expire automatically, and the HUD returns only after the risk condition clears. While hidden by that policy, the HUD pauses the periodic hidden-window affinity query. It explicitly reapplies and verifies capture exclusion before showing again, then verifies once more after restoration.
 
 ## Build
 

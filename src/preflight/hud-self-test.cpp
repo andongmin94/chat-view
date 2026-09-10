@@ -795,7 +795,7 @@ int wmain(int argument_count, wchar_t **arguments)
             DWORD exit_code = STILL_ACTIVE;
             GetExitCodeProcess(child_process.get(), &exit_code);
             std::wcerr
-                << L"The HUD exited while capture suppression was active "
+                << L"The HUD exited during the capture-suppression transition "
                 << L"(exit code " << exit_code << L")\n";
             return 1;
         }

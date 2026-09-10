@@ -673,6 +673,13 @@ bool HudWindow::apply_capture_policy() noexcept
         return true;
     }
 
+    if (!SetWindowDisplayAffinity(
+            window_, WDA_EXCLUDEFROMCAPTURE)) {
+        debug_windows_error(
+            L"SetWindowDisplayAffinity(restore HUD)");
+        fail_closed_capture_exclusion();
+        return false;
+    }
     if (!capture_exclusion_intact()) {
         fail_closed_capture_exclusion();
         return false;

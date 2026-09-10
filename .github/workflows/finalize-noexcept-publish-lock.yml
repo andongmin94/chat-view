@@ -1,0 +1,42 @@
+name: Finalize no-throw publish lock hardening
+
+on:
+  push:
+    branches:
+      - OBS
+    paths:
+      - .github/workflows/finalize-noexcept-publish-lock.yml
+      - scripts/finalize-noexcept-publish-lock.py
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    name: Converge publish locking and clean patch files
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out OBS branch
+        uses: actions/checkout@v4
+        with:
+          ref: OBS
+          fetch-depth: 0
+
+      - name: Converge implementation
+        run: python scripts/finalize-noexcept-publish-lock.py
+
+      - name: Validate resulting diff
+        run: git diff --check
+
+      - name: Commit final implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No finalization changes were produced." >&2
+            exit 1
+          fi
+          git commit -m "reliability: finalize non-throwing OBS publish locking"
+          git push origin HEAD:OBS

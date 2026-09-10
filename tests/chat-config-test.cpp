@@ -203,6 +203,10 @@ int main()
             canonical_soop,
             L"SOOP chat URL normalization failed") ||
         !expect_normalized(
+            L"https://play.sooplive.com/features",
+            L"https://play.sooplive.com/features?vtype=chat",
+            L"Valid SOOP channel named like a site route was rejected") ||
+        !expect_normalized(
             std::wstring(L"https://www.youtube.com/watch?v=") +
                 kYouTubeVideoId + L"&feature=share",
             canonical_youtube,
@@ -242,9 +246,6 @@ int main()
             L"https://chzzk.naver.com/live/not-a-channel-id",
             L"Malformed CHZZK channel ID was accepted") ||
         !expect_rejected(
-            L"https://play.sooplive.com/features",
-            L"Reserved SOOP player path was accepted as a channel") ||
-        !expect_rejected(
             L"https://play.sooplive.com/index0959/not-a-broadcast",
             L"Malformed SOOP broadcast ID was accepted") ||
         !expect_rejected(
@@ -259,6 +260,9 @@ int main()
         !expect_rejected(
             L"https://www.youtube.com/watch?v=first&v=second",
             L"Ambiguous duplicate YouTube video IDs were accepted") ||
+        !expect_rejected(
+            L"https://www.youtube.com/watch?v&v=dQw4w9WgXcQ",
+            L"Bare duplicate YouTube video key was accepted") ||
         !expect_rejected(
             L"https://user:password@www.youtube.com/watch?v=dQw4w9WgXcQ",
             L"URL credentials were accepted") ||

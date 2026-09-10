@@ -134,6 +134,10 @@ std::optional<std::wstring_view> query_value(
     while (!extra.empty()) {
         const std::size_t separator = extra.find(L'&');
         const std::wstring_view pair = extra.substr(0U, separator);
+        if (pair == key) {
+            return std::nullopt;
+        }
+
         const std::size_t equals = pair.find(L'=');
         if (equals != std::wstring_view::npos &&
             pair.substr(0U, equals) == key) {
@@ -207,44 +211,6 @@ bool is_ascii_digits(
     return true;
 }
 
-bool equals_ascii_case_insensitive(
-    std::wstring_view left, std::wstring_view right) noexcept
-{
-    if (left.size() != right.size()) {
-        return false;
-    }
-
-    for (std::size_t index = 0U; index < left.size(); ++index) {
-        const auto lowercase = [](wchar_t character) noexcept {
-            return character >= L'A' && character <= L'Z'
-                       ? static_cast<wchar_t>(
-                             character - L'A' + L'a')
-                       : character;
-        };
-        if (lowercase(left[index]) != lowercase(right[index])) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool is_reserved_soop_channel_id(std::wstring_view value) noexcept
-{
-    constexpr std::array<std::wstring_view, 5U> reserved{
-        L"features",
-        L"games",
-        L"guide",
-        L"guidelines",
-        L"manager",
-    };
-    return std::any_of(
-        reserved.begin(),
-        reserved.end(),
-        [value](std::wstring_view candidate) {
-            return equals_ascii_case_insensitive(value, candidate);
-        });
-}
-
 std::optional<std::wstring_view> soop_channel_from_player_path(
     std::wstring_view path) noexcept
 {
@@ -263,8 +229,7 @@ std::optional<std::wstring_view> soop_channel_from_player_path(
     const std::size_t separator = path.find(L'/');
     const std::wstring_view channel_id = path.substr(0U, separator);
     if (!is_ascii_identifier(
-            channel_id, 1U, kMaximumSoopChannelIdLength) ||
-        is_reserved_soop_channel_id(channel_id)) {
+            channel_id, 1U, kMaximumSoopChannelIdLength)) {
         return std::nullopt;
     }
 
@@ -377,9 +342,8 @@ std::wstring normalize_soop_url(const ParsedUrl &parsed)
     } else if (is_soop_station_host(parsed.host)) {
         channel_id = path_segment_after(parsed.path, L"/station/");
         if (channel_id.has_value() &&
-            (!is_ascii_identifier(
-                 *channel_id, 1U, kMaximumSoopChannelIdLength) ||
-             is_reserved_soop_channel_id(*channel_id))) {
+            !is_ascii_identifier(
+                *channel_id, 1U, kMaximumSoopChannelIdLength)) {
             channel_id.reset();
         }
     }

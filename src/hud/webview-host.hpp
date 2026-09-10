@@ -81,6 +81,7 @@ private:
     EventRegistrationToken navigation_starting_token_{};
     EventRegistrationToken navigation_completed_token_{};
     EventRegistrationToken new_window_requested_token_{};
+    EventRegistrationToken permission_requested_token_{};
     EventRegistrationToken process_failed_token_{};
 };
 

@@ -5,7 +5,6 @@
 #include <Windows.h>
 #include <d3d11.h>
 #include <dcomp.h>
-#include <winhttp.h>
 #include <wrl/client.h>
 
 #include <WebView2.h>
@@ -18,6 +17,8 @@ namespace chatview {
 inline constexpr UINT kWebViewReadyMessage = WM_APP + 40U;
 inline constexpr UINT kWebViewFailedMessage = WM_APP + 41U;
 inline constexpr UINT kWebViewDocumentReadyMessage = WM_APP + 42U;
+inline constexpr UINT kWebViewProcessFailedMessage = WM_APP + 43U;
+inline constexpr UINT kWebViewNavigationFailedMessage = WM_APP + 44U;
 
 class WebViewHost final {
 public:
@@ -34,9 +35,12 @@ public:
     void resize() noexcept;
     void notify_parent_position_changed() noexcept;
     [[nodiscard]] bool navigate(const std::wstring &url) noexcept;
+    [[nodiscard]] bool reload() noexcept;
     void show_setup_page() noexcept;
     void set_host_state(
-        bool editing, const std::wstring &status_text, const std::wstring &status_tone) noexcept;
+        bool editing,
+        const std::wstring &status_text,
+        const std::wstring &status_tone) noexcept;
     [[nodiscard]] bool forward_mouse_message(
         UINT message, WPARAM wparam, LPARAM lparam) noexcept;
     void focus() noexcept;
@@ -54,11 +58,14 @@ private:
     HRESULT on_bootstrap_registered(HRESULT result) noexcept;
     [[nodiscard]] HRESULT finish_controller_initialization() noexcept;
     void post_failure(HRESULT result) const noexcept;
+    void post_process_failure(COREWEBVIEW2_PROCESS_FAILED_KIND kind) const noexcept;
+    void post_navigation_failure(COREWEBVIEW2_WEB_ERROR_STATUS status) const noexcept;
     void apply_host_state() noexcept;
 
     HWND window_ = nullptr;
     bool ready_ = false;
     bool editing_ = false;
+    std::wstring current_url_;
     std::wstring status_text_;
     std::wstring status_tone_ = L"#aeb0b2";
     std::shared_ptr<CallbackState> callback_state_;
@@ -74,6 +81,7 @@ private:
     EventRegistrationToken navigation_starting_token_{};
     EventRegistrationToken navigation_completed_token_{};
     EventRegistrationToken new_window_requested_token_{};
+    EventRegistrationToken process_failed_token_{};
 };
 
 } // namespace chatview

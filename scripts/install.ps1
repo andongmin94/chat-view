@@ -10,6 +10,11 @@ $ErrorActionPreference = 'Stop'
 
 $SupportedObsVersion = '32.2.2'
 $MinimumWindowsBuild = 19041
+$packageVerifier = Join-Path $PSScriptRoot 'verify-package.ps1'
+if (-not (Test-Path -LiteralPath $packageVerifier -PathType Leaf)) {
+    throw "Package verifier is missing: '$packageVerifier'."
+}
+& $packageVerifier -PackageRoot $PSScriptRoot
 
 function Test-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -281,7 +286,7 @@ function Copy-ChatViewFilesTransactionally {
         $backup = $backups[$index]
         try {
             if (-not (Test-Path -LiteralPath $backup.Path -PathType Leaf)) {
-                throw "backup file is missing"
+                throw 'backup file is missing'
             }
             Move-Item `
                 -LiteralPath $backup.Path `
@@ -398,6 +403,11 @@ Invoke-NativePreflight `
     ) `
     -FailureMessage 'The ChatView plugin could not be loaded against this OBS installation'
 
+if (Get-Process -Name 'obs64' -ErrorAction SilentlyContinue) {
+    throw 'OBS Studio started during installation. Close it and run the installer again.'
+}
+Assert-InstalledChatViewProcessesStopped -ObsRoot $obsRoot
+
 $files = foreach ($file in $packageFiles) {
     [pscustomobject]@{
         Source = $file.Source
@@ -407,4 +417,4 @@ $files = foreach ($file in $packageFiles) {
 Copy-ChatViewFilesTransactionally -Files $files
 
 Write-Host "ChatView OBS $SupportedObsVersion-compatible build was installed to '$obsRoot'."
-Write-Host 'All local preflight checks passed. Start OBS Studio, then open Tools > ChatView Settings.'
+Write-Host 'All package and local preflight checks passed. Start OBS Studio, then open Tools > ChatView Settings.'

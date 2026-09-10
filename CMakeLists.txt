@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.2.3 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.2.4 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -275,5 +275,6 @@ install(FILES
     scripts/uninstall.cmd
     scripts/uninstall.ps1
     scripts/ensure-webview2-runtime.ps1
+    scripts/verify-package.ps1
     DESTINATION "."
 )

@@ -147,6 +147,78 @@ jobs:
           cmake --install build/windows-x64 `
             --config RelWithDebInfo
 
+      - name: Create and validate package manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          & ./scripts/create-package-manifest.ps1 `
+            -PackageRoot dist `
+            -Commit $env:GITHUB_SHA
+          & ./dist/verify-package.ps1 `
+            -PackageRoot dist `
+            -ExpectedCommit $env:GITHUB_SHA
+
+          function Assert-PackageRejected {
+            param(
+              [Parameter(Mandatory)]
+              [string]$Name,
+
+              [Parameter(Mandatory)]
+              [scriptblock]$Mutation
+            )
+
+            $copy = Join-Path $env:GITHUB_WORKSPACE ".ci/package-$Name"
+            Remove-Item -LiteralPath $copy -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path $copy -Force | Out-Null
+            Copy-Item -Path 'dist/*' -Destination $copy -Recurse -Force
+            & $Mutation $copy
+
+            $rejected = $false
+            try {
+              & (Join-Path $copy 'verify-package.ps1') `
+                -PackageRoot $copy `
+                -ExpectedCommit $env:GITHUB_SHA
+            }
+            catch {
+              $rejected = $true
+              Write-Host "Expected $Name rejection: $($_.Exception.Message)"
+            }
+
+            if (-not $rejected) {
+              throw "The package verifier accepted the $Name fixture."
+            }
+          }
+
+          Assert-PackageRejected -Name 'tampered' -Mutation {
+            param($root)
+            [System.IO.File]::AppendAllText(
+              (Join-Path $root 'README.md'),
+              "`ntampered")
+          }
+          Assert-PackageRejected -Name 'extra-file' -Mutation {
+            param($root)
+            [System.IO.File]::WriteAllText(
+              (Join-Path $root 'unexpected.txt'),
+              'unexpected')
+          }
+          Assert-PackageRejected -Name 'missing-file' -Mutation {
+            param($root)
+            Remove-Item -LiteralPath (Join-Path $root 'LICENSE') -Force
+          }
+          Assert-PackageRejected -Name 'unsafe-path' -Mutation {
+            param($root)
+            $manifestPath = Join-Path $root 'package-manifest.json'
+            $manifest = Get-Content $manifestPath -Raw -Encoding UTF8 |
+              ConvertFrom-Json
+            $manifest.files[0].path = '../escape'
+            $json = $manifest | ConvertTo-Json -Depth 4
+            [System.IO.File]::WriteAllText(
+              $manifestPath,
+              $json + [Environment]::NewLine,
+              [System.Text.UTF8Encoding]::new($false))
+          }
+
       - name: Validate self-contained native binaries
         shell: pwsh
         run: |
@@ -210,6 +282,8 @@ jobs:
             'dist/uninstall.cmd',
             'dist/uninstall.ps1',
             'dist/ensure-webview2-runtime.ps1',
+            'dist/verify-package.ps1',
+            'dist/package-manifest.json',
             'dist/README.md',
             'dist/LICENSE'
           )

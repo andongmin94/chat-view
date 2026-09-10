@@ -6,6 +6,7 @@
 
 namespace chatview {
 
+// OBS Studio 32.2.2 uses this unversioned ID for Windows Display Capture.
 inline constexpr std::string_view kObsDisplayCaptureSourceId =
     "monitor_capture";
 

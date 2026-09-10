@@ -7,6 +7,7 @@
 #include <Windows.h>
 #include <dwmapi.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -89,7 +90,7 @@ LRESULT CALLBACK capture_probe_window_proc(
                 FillRect(
                     device,
                     &bounds,
-                    static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+                    reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
             }
             EndPaint(window, &paint);
         }
@@ -147,10 +148,12 @@ public:
             return false;
         }
 
-        const int width =
-            std::min(kCaptureProbeWidth, work_area.right - work_area.left);
-        const int height =
-            std::min(kCaptureProbeHeight, work_area.bottom - work_area.top);
+        const int work_width =
+            static_cast<int>(work_area.right - work_area.left);
+        const int work_height =
+            static_cast<int>(work_area.bottom - work_area.top);
+        const int width = std::min(kCaptureProbeWidth, work_width);
+        const int height = std::min(kCaptureProbeHeight, work_height);
         if (width < 32 || height < 32) {
             return false;
         }

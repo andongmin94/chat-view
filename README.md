@@ -22,6 +22,7 @@ This branch currently provides an installable single-PC alpha:
 - fail-closed Display Capture interlock while streaming, recording, replay buffering, or virtual-camera output is active;
 - bounded shutdown and an automatic restart circuit that stops crash loops;
 - explicit **Tools → Restart ChatView HUD** recovery without restarting OBS;
+- actual OBS Display Capture → scene → main-texture pixel qualification in official OBS Studio;
 - pinned Windows CI, native tests, installer test, and packaged artifact.
 
 The renderer remains out of process deliberately. A browser or desktop-rendering failure must not take down OBS Studio. The provider page cannot call ChatView control functions: native status is delivered one way into a closed Shadow DOM layer.
@@ -120,6 +121,8 @@ OBS Studio
 ```
 
 `WDA_EXCLUDEFROMCAPTURE` is a best-effort Windows capture hint. It does not remove the HUD from a physical HDMI signal sent to a capture card. As a second software-side barrier, ChatView hides the private HUD whenever OBS reports an active or showing Display Capture source while streaming, recording, replay buffering, or virtual-camera output is running. At output start it temporarily treats any configured Display Capture source as risky until OBS source activation settles. Failed starts expire automatically, and the HUD returns only after the risk condition clears. While hidden by that policy, the HUD pauses the periodic hidden-window affinity query. It explicitly reapplies and verifies capture exclusion before showing again, then verifies once more after restoration.
+
+The Windows workflow also loads a CI-only qualification module into the official OBS portable build. That module creates a real `monitor_capture` source, routes it through the current scene, reads back `obs_render_main_texture()`, and performs a calibrated foreground/background pixel comparison. The required assertion is that hiding the protected top-level window removes its pixels from the OBS program compositor. Whether Windows capture affinity is honored by the runner's selected DXGI/WGC path is recorded separately and is not confused with the fail-closed hide guarantee. This test covers Display Capture → scene → OBS main texture; it does not claim to validate encoder, muxer, streaming-service, or physical capture-card paths.
 
 ## Build
 

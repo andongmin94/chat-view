@@ -192,7 +192,7 @@ void pump_probe_messages() noexcept
 }
 
 LRESULT CALLBACK probe_window_proc(
-    HWND window, UINT message, WPARAM, LPARAM lparam)
+    HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
     auto *data = reinterpret_cast<ProbeWindowData *>(
         GetWindowLongPtrW(window, GWLP_USERDATA));
@@ -223,7 +223,7 @@ LRESULT CALLBACK probe_window_proc(
         return 0L;
     }
     default:
-        return DefWindowProcW(window, message, 0U, lparam);
+        return DefWindowProcW(window, message, wparam, lparam);
     }
 }
 

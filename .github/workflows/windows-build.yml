@@ -352,6 +352,9 @@ jobs:
             (Join-Path $obsRoot 'data/obs-plugins/chat-view-obs/locale/ko-KR.ini')
           )
           $runtimeTest = (Resolve-Path 'build/windows-x64/RelWithDebInfo/chat-view-obs-runtime-test.exe').Path
+          $qualificationTest = (Resolve-Path 'build/windows-x64/RelWithDebInfo/chat-view-obs-capture-qualification-test.exe').Path
+          $qualificationPlugin = (Resolve-Path 'build/windows-x64/rundir/obs-plugins/64bit/chat-view-obs-capture-qualification.dll').Path
+          $qualificationDestination = Join-Path $obsRoot 'obs-plugins/64bit/chat-view-obs-capture-qualification.dll'
 
           for ($cycle = 1; $cycle -le 3; $cycle++) {
             Write-Host "Official OBS lifecycle cycle $cycle/3"
@@ -363,6 +366,11 @@ jobs:
                 if (-not (Test-Path $file -PathType Leaf)) {
                   throw "Installer cycle $cycle did not create: $file"
                 }
+              }
+
+              if ($cycle -eq 1) {
+                Copy-Item -LiteralPath $qualificationPlugin -Destination $qualificationDestination -Force
+                & $qualificationTest $obsRoot
               }
 
               & $runtimeTest $obsRoot
@@ -379,6 +387,7 @@ jobs:
               Get-Process -Name 'obs64' -ErrorAction SilentlyContinue |
                 Stop-Process -Force -ErrorAction SilentlyContinue
               Start-Sleep -Milliseconds 500
+              Remove-Item -LiteralPath $qualificationDestination -Force -ErrorAction SilentlyContinue
               & ./dist/uninstall.ps1 -ObsPath $obsRoot
             }
 

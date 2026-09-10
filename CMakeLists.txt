@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.2.10 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.2.11 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -299,6 +299,38 @@ if(BUILD_TESTING)
     target_include_directories(chat-view-obs-runtime-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
     chatview_enable_win32(chat-view-obs-runtime-test)
     chatview_enable_warnings(chat-view-obs-runtime-test)
+
+    add_library(chat-view-obs-capture-qualification MODULE
+        tests/obs-capture-qualification-plugin.cpp
+    )
+    target_link_libraries(
+        chat-view-obs-capture-qualification PRIVATE
+        OBS::libobs
+        OBS::obs-frontend-api
+        dwmapi
+        user32
+    )
+    chatview_enable_win32(chat-view-obs-capture-qualification)
+    set_target_properties(
+        chat-view-obs-capture-qualification PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "chat-view-obs-capture-qualification"
+    )
+    chatview_enable_warnings(chat-view-obs-capture-qualification)
+    chatview_set_runtime_output(chat-view-obs-capture-qualification)
+
+    add_executable(chat-view-obs-capture-qualification-test
+        tests/obs-capture-qualification-test.cpp
+        src/common/win32-handle.hpp
+    )
+    target_include_directories(
+        chat-view-obs-capture-qualification-test PRIVATE
+        "${CHATVIEW_SOURCE_DIR}"
+    )
+    target_link_libraries(
+        chat-view-obs-capture-qualification-test PRIVATE user32)
+    chatview_enable_win32(chat-view-obs-capture-qualification-test)
+    chatview_enable_warnings(chat-view-obs-capture-qualification-test)
 endif()
 
 install(TARGETS chat-view-obs chat-view-hud chat-view-config

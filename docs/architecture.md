@@ -145,12 +145,13 @@ The Windows workflow builds against pinned OBS Studio 32.2.2 development librari
 - a calibrated pixel-level Windows capture-exclusion capability probe followed by a real WebView2 HUD process smoke test covering initialization readiness, locked/edit modes, native resize, persistence, capture-exclusion request, shared-state shutdown, and delayed WebView profile cleanup;
 - deterministic restart-policy tests covering backoff, circuit opening, saturation, and explicit reset;
 - capture-risk policy tests plus startup and runtime HUD hide/resume checks through the versioned shared-state transport;
+- a CI-only module loaded by official OBS Studio that creates a real Windows `monitor_capture` source, composes it through the current scene, reads back `obs_render_main_texture()`, calibrates visible foreground/background pixels, and requires a hidden protected window to disappear from the program compositor;
 - package layout validation;
 - installer and uninstaller tests against an isolated OBS directory tree.
 
 The uploaded artifact contains the install tree directly, so users extract it once and run `install.cmd`.
 
-These checks prevent publishing a package with a broken controller-to-HUD path. They do not replace interactive qualification on a real broadcaster workstation, GPU driver stack, game, and capture configuration.
+These checks prevent publishing a package with a broken controller-to-HUD path. The compositor qualification reaches the real Display Capture source and OBS main texture, but it stops before encoder, muxer, streaming-service, and physical HDMI paths. It therefore does not replace interactive qualification on a real broadcaster workstation, GPU driver stack, game, and capture configuration.
 
 ## Layering order
 

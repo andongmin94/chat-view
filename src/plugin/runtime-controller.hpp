@@ -32,8 +32,7 @@ public:
 private:
     [[nodiscard]] bool create_transport_locked();
     [[nodiscard]] bool create_runtime_job_locked();
-    [[nodiscard]] bool launch_runtime_locked(bool wait_until_ready);
-    [[nodiscard]] bool restart_runtime_with_backoff() noexcept;
+    [[nodiscard]] bool launch_runtime_locked();
     [[nodiscard]] HWND find_runtime_window_locked() const noexcept;
     [[nodiscard]] std::wstring find_sibling_path(const wchar_t *file_name) const;
 
@@ -45,6 +44,7 @@ private:
     std::mutex mutex_;
     std::thread supervisor_thread_;
     std::atomic_bool stopping_{true};
+    std::atomic<std::uint32_t> current_flags_{SharedStateNone};
     UniqueHandle supervisor_stop_event_;
     UniqueHandle runtime_job_;
     UniqueHandle mapping_;
@@ -57,7 +57,6 @@ private:
     std::wstring ready_event_name_;
     DWORD runtime_process_id_ = 0U;
     std::uint64_t generation_ = 0U;
-    std::uint32_t current_flags_ = SharedStateNone;
 };
 
 } // namespace chatview

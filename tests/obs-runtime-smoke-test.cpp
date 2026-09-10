@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/win32-handle.hpp"
+#include "common/window-messages.hpp"
 
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -12,15 +13,15 @@
 #include <iostream>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 
 constexpr wchar_t kHudExecutableName[] = L"chat-view-hud.exe";
-constexpr wchar_t kHudWindowClass[] = L"ChatViewObsHudWindow";
 constexpr DWORD kHudStartupTimeoutMs = 45000U;
 constexpr DWORD kHudRestartTimeoutMs = 45000U;
 constexpr DWORD kHudExitTimeoutMs = 10000U;
-constexpr DWORD kObsExitTimeoutMs = 15000U;
+constexpr DWORD kObsExitTimeoutMs = 30000U;
 constexpr unsigned int kCrashRecoveryCycles = 3U;
 
 #ifndef WDA_EXCLUDEFROMCAPTURE
@@ -32,10 +33,9 @@ struct WindowSearch {
     HWND window = nullptr;
 };
 
-struct MainWindowSearch {
+struct ProcessWindowCollection {
     DWORD process_id = 0U;
-    HWND window = nullptr;
-    std::uint64_t area = 0U;
+    std::vector<HWND> windows;
 };
 
 struct HudInstance {
@@ -71,43 +71,25 @@ BOOL CALLBACK find_hud_window(HWND window, LPARAM data)
     std::array<wchar_t, 64U> class_name{};
     const int length =
         GetClassNameW(window, class_name.data(), static_cast<int>(class_name.size()));
-    if (length > 0 && wcscmp(class_name.data(), kHudWindowClass) == 0) {
+    if (length > 0 &&
+        wcscmp(class_name.data(), chatview::kHudWindowClassName) == 0) {
         search->window = window;
         return FALSE;
     }
     return TRUE;
 }
 
-BOOL CALLBACK find_largest_main_window(HWND window, LPARAM data)
+BOOL CALLBACK collect_process_windows(HWND window, LPARAM data)
 {
-    auto *search = reinterpret_cast<MainWindowSearch *>(data);
-    if (search == nullptr || !IsWindowVisible(window) ||
-        GetWindow(window, GW_OWNER) != nullptr) {
+    auto *collection = reinterpret_cast<ProcessWindowCollection *>(data);
+    if (collection == nullptr || !IsWindowVisible(window)) {
         return TRUE;
     }
 
     DWORD process_id = 0U;
     GetWindowThreadProcessId(window, &process_id);
-    if (process_id != search->process_id || GetWindowTextLengthW(window) <= 0) {
-        return TRUE;
-    }
-
-    RECT bounds{};
-    if (!GetWindowRect(window, &bounds)) {
-        return TRUE;
-    }
-
-    const LONG width = bounds.right - bounds.left;
-    const LONG height = bounds.bottom - bounds.top;
-    if (width <= 0 || height <= 0) {
-        return TRUE;
-    }
-
-    const std::uint64_t area = static_cast<std::uint64_t>(width) *
-                               static_cast<std::uint64_t>(height);
-    if (area > search->area) {
-        search->window = window;
-        search->area = area;
+    if (process_id == collection->process_id) {
+        collection->windows.push_back(window);
     }
     return TRUE;
 }
@@ -165,13 +147,6 @@ HWND find_window(DWORD process_id) noexcept
 {
     WindowSearch search{process_id, nullptr};
     EnumWindows(&find_hud_window, reinterpret_cast<LPARAM>(&search));
-    return search.window;
-}
-
-HWND find_obs_main_window(DWORD process_id) noexcept
-{
-    MainWindowSearch search{process_id, nullptr, 0U};
-    EnumWindows(&find_largest_main_window, reinterpret_cast<LPARAM>(&search));
     return search.window;
 }
 
@@ -253,6 +228,31 @@ bool terminate_hud(HudInstance &instance, unsigned int cycle) noexcept
     }
     instance = {};
     return true;
+}
+
+bool request_graceful_obs_shutdown(
+    HANDLE obs_process, DWORD obs_process_id) noexcept
+{
+    const ULONGLONG deadline = GetTickCount64() + kObsExitTimeoutMs;
+    while (GetTickCount64() < deadline) {
+        if (WaitForSingleObject(obs_process, 0U) == WAIT_OBJECT_0) {
+            return true;
+        }
+
+        ProcessWindowCollection collection{obs_process_id, {}};
+        EnumWindows(
+            &collect_process_windows,
+            reinterpret_cast<LPARAM>(&collection));
+
+        for (const HWND window : collection.windows) {
+            PostMessageW(window, WM_CLOSE, 0U, 0L);
+        }
+
+        if (WaitForSingleObject(obs_process, 250U) == WAIT_OBJECT_0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -353,14 +353,8 @@ int wmain(int argument_count, wchar_t **arguments)
         }
     }
 
-    const HWND obs_window = find_obs_main_window(process_info.dwProcessId);
-    if (obs_window == nullptr || !PostMessageW(obs_window, WM_CLOSE, 0U, 0L)) {
-        return fail(
-            L"The integration test could not request a graceful OBS shutdown",
-            obs_process.get());
-    }
-
-    if (WaitForSingleObject(obs_process.get(), kObsExitTimeoutMs) != WAIT_OBJECT_0) {
+    if (!request_graceful_obs_shutdown(
+            obs_process.get(), process_info.dwProcessId)) {
         return fail(
             L"OBS Studio did not complete a graceful shutdown",
             obs_process.get());

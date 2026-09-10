@@ -425,8 +425,11 @@ bool WebViewHost::navigate(const std::wstring &url) noexcept
 
 bool WebViewHost::reload() noexcept
 {
-    if (!ready_ || !webview_ || current_url_.empty()) {
+    if (!ready_ || !webview_) {
         return false;
+    }
+    if (current_url_.empty()) {
+        return SUCCEEDED(webview_->NavigateToString(kSetupPage));
     }
     return SUCCEEDED(webview_->Navigate(current_url_.c_str()));
 }
@@ -617,6 +620,13 @@ HRESULT WebViewHost::on_controller_created(
         return S_OK;
     }
 
+    ComPtr<ICoreWebView2_8> webview8;
+    result = webview_.As(&webview8);
+    if (FAILED(result) || FAILED(webview8->put_IsMuted(TRUE))) {
+        post_failure(FAILED(result) ? result : E_FAIL);
+        return S_OK;
+    }
+
     result = composition_controller_->put_RootVisualTarget(
         root_visual_.Get());
     if (FAILED(result)) {
@@ -635,6 +645,14 @@ HRESULT WebViewHost::on_controller_created(
     result = controller2->put_DefaultBackgroundColor(transparent);
     if (FAILED(result)) {
         post_failure(result);
+        return S_OK;
+    }
+
+    ComPtr<ICoreWebView2Controller4> controller4;
+    result = controller_.As(&controller4);
+    if (FAILED(result) ||
+        FAILED(controller4->put_AllowExternalDrop(FALSE))) {
+        post_failure(FAILED(result) ? result : E_FAIL);
         return S_OK;
     }
 

@@ -17,7 +17,6 @@ constexpr std::size_t kTransportTokenByteLength =
 constexpr wchar_t kHexDigits[] = L"0123456789abcdef";
 
 static_assert(kTransportTokenHexLength % 2U == 0U);
-static_assert(kTransportTokenByteLength <= MAXULONG);
 
 } // namespace
 

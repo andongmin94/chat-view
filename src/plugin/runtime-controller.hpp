@@ -45,6 +45,7 @@ private:
     std::thread supervisor_thread_;
     std::atomic_bool stopping_{true};
     std::atomic<std::uint32_t> current_flags_{SharedStateNone};
+    std::atomic<HANDLE> state_publish_handle_{nullptr};
     UniqueHandle supervisor_stop_event_;
     UniqueHandle state_publish_event_;
     UniqueHandle runtime_job_;

@@ -26,7 +26,7 @@ jobs:
   build:
     name: Windows x64
     runs-on: windows-2025-vs2026
-    timeout-minutes: 65
+    timeout-minutes: 90
 
     steps:
       - name: Check out ChatView
@@ -137,6 +137,11 @@ jobs:
 
           ctest --test-dir build/windows-x64 `
             --build-config RelWithDebInfo `
+            --output-on-failure
+
+          ctest --test-dir build/windows-x64 `
+            --build-config RelWithDebInfo `
+            --repeat until-fail:5 `
             --output-on-failure
 
           cmake --install build/windows-x64 `
@@ -272,37 +277,41 @@ jobs:
             (Join-Path $obsRoot 'data/obs-plugins/chat-view-obs/locale/en-US.ini'),
             (Join-Path $obsRoot 'data/obs-plugins/chat-view-obs/locale/ko-KR.ini')
           )
+          $runtimeTest = (Resolve-Path 'build/windows-x64/RelWithDebInfo/chat-view-obs-runtime-test.exe').Path
 
-          try {
-            & ./dist/install.ps1 -ObsPath $obsRoot
+          for ($cycle = 1; $cycle -le 3; $cycle++) {
+            Write-Host "Official OBS lifecycle cycle $cycle/3"
+            try {
+              & ./dist/install.ps1 -ObsPath $obsRoot
+              & ./dist/install.ps1 -ObsPath $obsRoot
 
-            foreach ($file in $installedFiles) {
-              if (-not (Test-Path $file -PathType Leaf)) {
-                throw "Installer did not create: $file"
+              foreach ($file in $installedFiles) {
+                if (-not (Test-Path $file -PathType Leaf)) {
+                  throw "Installer cycle $cycle did not create: $file"
+                }
               }
+
+              & $runtimeTest $obsRoot
+            }
+            catch {
+              Get-ChildItem $runtime -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '\.(txt|log)$' } |
+                Select-String -Pattern 'ChatView|Failed to load|module' -SimpleMatch:$false -ErrorAction SilentlyContinue |
+                Select-Object -Last 200 |
+                ForEach-Object { Write-Host $_.Line }
+              throw
+            }
+            finally {
+              Get-Process -Name 'obs64' -ErrorAction SilentlyContinue |
+                Stop-Process -Force -ErrorAction SilentlyContinue
+              Start-Sleep -Milliseconds 500
+              & ./dist/uninstall.ps1 -ObsPath $obsRoot
             }
 
-            $runtimeTest = (Resolve-Path 'build/windows-x64/RelWithDebInfo/chat-view-obs-runtime-test.exe').Path
-            & $runtimeTest $obsRoot
-          }
-          catch {
-            Get-ChildItem $runtime -Recurse -File -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -match '\.(txt|log)$' } |
-              Select-String -Pattern 'ChatView|Failed to load|module' -SimpleMatch:$false -ErrorAction SilentlyContinue |
-              Select-Object -Last 200 |
-              ForEach-Object { Write-Host $_.Line }
-            throw
-          }
-          finally {
-            Get-Process -Name 'obs64' -ErrorAction SilentlyContinue |
-              Stop-Process -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Milliseconds 500
-            & ./dist/uninstall.ps1 -ObsPath $obsRoot
-          }
-
-          foreach ($file in $installedFiles) {
-            if (Test-Path $file) {
-              throw "Uninstaller did not remove: $file"
+            foreach ($file in $installedFiles) {
+              if (Test-Path $file) {
+                throw "Uninstaller cycle $cycle did not remove: $file"
+              }
             }
           }
 

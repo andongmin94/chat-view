@@ -151,7 +151,7 @@ add_executable(chat-view-self-test
     src/common/window-messages.hpp
 )
 target_include_directories(chat-view-self-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
-target_link_libraries(chat-view-self-test PRIVATE user32)
+target_link_libraries(chat-view-self-test PRIVATE dwmapi gdi32 user32)
 chatview_enable_win32(chat-view-self-test)
 set_target_properties(chat-view-self-test PROPERTIES OUTPUT_NAME "chat-view-self-test")
 chatview_enable_warnings(chat-view-self-test)

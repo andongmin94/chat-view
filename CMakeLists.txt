@@ -169,6 +169,21 @@ if(BUILD_TESTING)
     chatview_enable_warnings(chat-view-chat-config-test)
     add_test(NAME chat-view-chat-config COMMAND chat-view-chat-config-test)
 
+    add_executable(chat-view-config-single-instance-test
+        tests/config-single-instance-test.cpp
+        src/common/win32-handle.hpp
+    )
+    target_include_directories(
+        chat-view-config-single-instance-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    target_link_libraries(chat-view-config-single-instance-test PRIVATE user32)
+    chatview_enable_win32(chat-view-config-single-instance-test)
+    chatview_enable_warnings(chat-view-config-single-instance-test)
+    add_test(
+        NAME chat-view-config-single-instance
+        COMMAND chat-view-config-single-instance-test "$<TARGET_FILE:chat-view-config>"
+    )
+    set_tests_properties(chat-view-config-single-instance PROPERTIES TIMEOUT 15)
+
     add_executable(chat-view-hud-placement-test
         tests/hud-placement-test.cpp
         src/hud/hud-placement.cpp

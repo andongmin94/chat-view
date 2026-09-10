@@ -42,6 +42,8 @@ private:
     void schedule_navigation_retry(
         COREWEBVIEW2_WEB_ERROR_STATUS status) noexcept;
     void cancel_navigation_retry() noexcept;
+    [[nodiscard]] bool capture_exclusion_intact() const noexcept;
+    void fail_closed_capture_exclusion() noexcept;
     void update_host_state() noexcept;
     void set_transient_status(
         std::wstring text, std::wstring tone, UINT duration_ms);
@@ -68,6 +70,7 @@ private:
     bool edit_mode_ = false;
     bool edit_hotkey_registered_ = false;
     bool webview_ready_ = false;
+    bool capture_exclusion_failed_ = false;
 };
 
 } // namespace chatview

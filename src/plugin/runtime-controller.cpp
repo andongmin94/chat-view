@@ -13,6 +13,7 @@
 #include <cwchar>
 #include <exception>
 #include <filesystem>
+#include <shared_mutex>
 #include <string>
 #include <utility>
 
@@ -160,6 +161,12 @@ bool RuntimeController::start() noexcept
 void RuntimeController::stop() noexcept
 {
     stopping_.store(true, std::memory_order_release);
+
+    {
+        std::unique_lock publish_lock(state_publish_mutex_);
+        state_publish_handle_ = nullptr;
+    }
+
     if (supervisor_stop_event_ && !SetEvent(supervisor_stop_event_.get())) {
         log_windows_error("SetEvent(supervisor stop)", GetLastError());
     }
@@ -217,9 +224,9 @@ void RuntimeController::update(bool streaming, bool recording) noexcept
         return;
     }
 
-    const HANDLE publish_event =
-        state_publish_handle_.load(std::memory_order_acquire);
-    if (publish_event != nullptr && !SetEvent(publish_event)) {
+    std::shared_lock publish_lock(state_publish_mutex_);
+    if (state_publish_handle_ != nullptr &&
+        !SetEvent(state_publish_handle_)) {
         log_windows_error("SetEvent(state publish)", GetLastError());
     }
 }
@@ -327,8 +334,10 @@ bool RuntimeController::create_transport_locked()
         log_windows_error("CreateEventW(state publish)", GetLastError());
         return false;
     }
-    state_publish_handle_.store(
-        state_publish_event_.get(), std::memory_order_release);
+    {
+        std::unique_lock publish_lock(state_publish_mutex_);
+        state_publish_handle_ = state_publish_event_.get();
+    }
 
     mapping_.reset(CreateFileMappingW(
         INVALID_HANDLE_VALUE,
@@ -691,7 +700,11 @@ void RuntimeController::terminate_runtime_locked(const char *reason) noexcept
 
 void RuntimeController::cleanup_locked() noexcept
 {
-    state_publish_handle_.store(nullptr, std::memory_order_release);
+    {
+        std::unique_lock publish_lock(state_publish_mutex_);
+        state_publish_handle_ = nullptr;
+        state_publish_event_.reset();
+    }
 
     if (shared_state_ != nullptr) {
         UnmapViewOfFile(shared_state_);
@@ -704,7 +717,6 @@ void RuntimeController::cleanup_locked() noexcept
     state_changed_event_.reset();
     mapping_.reset();
     runtime_job_.reset();
-    state_publish_event_.reset();
     supervisor_stop_event_.reset();
     mapping_name_.clear();
     event_name_.clear();

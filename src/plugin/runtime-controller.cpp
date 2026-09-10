@@ -113,6 +113,9 @@ BOOL CALLBACK find_runtime_window(HWND window, LPARAM data)
 
 DWORD next_restart_delay(DWORD current) noexcept
 {
+    if (current == 0U) {
+        return kRestartInitialDelayMs;
+    }
     if (current >= kRestartMaximumDelayMs / 2U) {
         return kRestartMaximumDelayMs;
     }
@@ -135,23 +138,25 @@ bool RuntimeController::start() noexcept
             std::scoped_lock lock(mutex_);
             stopping_.store(false, std::memory_order_release);
 
-            if (!create_transport_locked() || !create_runtime_job_locked() ||
-                !launch_runtime_locked()) {
+            if (!create_transport_locked() || !create_runtime_job_locked()) {
                 stopping_.store(true, std::memory_order_release);
                 cleanup_locked();
                 return false;
             }
-
-            publish_locked(current_flags_.load(std::memory_order_acquire));
         }
 
         supervisor_thread_ = std::thread(&RuntimeController::supervisor_loop, this);
-        blog(LOG_INFO, "[ChatView OBS] HUD runtime started and reported ready");
+        blog(LOG_INFO, "[ChatView OBS] HUD supervisor started");
         return true;
     } catch (const std::exception &error) {
-        blog(LOG_ERROR, "[ChatView OBS] HUD startup failed: %s", error.what());
+        blog(
+            LOG_ERROR,
+            "[ChatView OBS] HUD supervisor startup failed: %s",
+            error.what());
     } catch (...) {
-        blog(LOG_ERROR, "[ChatView OBS] HUD startup failed with an unknown exception");
+        blog(
+            LOG_ERROR,
+            "[ChatView OBS] HUD supervisor startup failed with an unknown exception");
     }
 
     stop();
@@ -225,8 +230,7 @@ void RuntimeController::update(bool streaming, bool recording) noexcept
     }
 
     std::shared_lock publish_lock(state_publish_mutex_);
-    if (state_publish_handle_ != nullptr &&
-        !SetEvent(state_publish_handle_)) {
+    if (state_publish_handle_ != nullptr && !SetEvent(state_publish_handle_)) {
         log_windows_error("SetEvent(state publish)", GetLastError());
     }
 }
@@ -534,7 +538,7 @@ std::wstring RuntimeController::find_sibling_path(const wchar_t *file_name) cons
 
 void RuntimeController::supervisor_loop() noexcept
 {
-    DWORD restart_delay = kRestartInitialDelayMs;
+    DWORD restart_delay = 0U;
 
     try {
         while (!stopping_.load(std::memory_order_acquire)) {
@@ -583,7 +587,7 @@ void RuntimeController::supervisor_loop() noexcept
                 if (launched) {
                     blog(
                         LOG_INFO,
-                        "[ChatView OBS] HUD runtime restarted and reported ready");
+                        "[ChatView OBS] HUD runtime started and reported ready");
                 } else {
                     restart_delay = next_restart_delay(restart_delay);
                 }
@@ -607,7 +611,7 @@ void RuntimeController::supervisor_loop() noexcept
                 continue;
             }
             if (wait_result == WAIT_TIMEOUT) {
-                restart_delay = kRestartInitialDelayMs;
+                restart_delay = 0U;
                 continue;
             }
             if (wait_result == WAIT_FAILED) {

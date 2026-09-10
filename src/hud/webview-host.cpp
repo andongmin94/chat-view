@@ -3,6 +3,7 @@
 #include "hud/webview-host.hpp"
 
 #include "common/chat-config.hpp"
+#include "hud/host-state-message.hpp"
 
 #include <Windows.h>
 #include <d3d11.h>
@@ -53,186 +54,175 @@ code { color:#7dd3fc; }
 
 constexpr wchar_t kOverlayBootstrapScript[] = LR"JS(
 (() => {
-  if (window.top !== window || window.__chatviewBootstrapInstalled) return;
-  window.__chatviewBootstrapInstalled = true;
-  window.__chatviewPendingState = { editing: false, status: '', tone: '#aeb0b2' };
+  if (window.top !== window || !window.chrome || !window.chrome.webview) return;
 
-  const apply = () => {
-    const view = window.__chatviewNative;
-    const state = window.__chatviewPendingState;
-    if (!view || !state) return;
-    view.host.dataset.editing = state.editing ? '1' : '0';
-    view.host.dataset.hasStatus = state.status ? '1' : '0';
-    view.host.style.setProperty('--tone', state.tone || '#aeb0b2');
-    view.statusText.textContent = state.status || '';
+  const defaultTone = '#aeb0b2';
+  const host = document.createElement('chatview-private-hud-root');
+  const root = host.attachShadow({ mode: 'closed' });
+  const shadowStyle = document.createElement('style');
+  shadowStyle.textContent = `
+    :host { all: initial; }
+    .frame {
+      position: fixed;
+      inset: 0;
+      box-sizing: border-box;
+      border: 3px solid #5ac8fa;
+      opacity: 0;
+      transition: opacity .12s ease;
+      pointer-events: none;
+    }
+    .edit {
+      position: absolute;
+      left: 12px;
+      top: 10px;
+      padding: 8px 11px;
+      border-radius: 10px;
+      background: rgba(20,20,24,.92);
+      color: #fff;
+      font: 600 13px/1.2 "Segoe UI",sans-serif;
+      box-shadow: 0 6px 24px rgba(0,0,0,.35);
+    }
+    .status {
+      position: absolute;
+      right: 12px;
+      top: 10px;
+      display: none;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(20,20,24,.82);
+      color: #fff;
+      font: 700 12px/1 "Segoe UI",sans-serif;
+      box-shadow: 0 5px 20px rgba(0,0,0,.30);
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: ${defaultTone};
+      box-shadow: 0 0 10px ${defaultTone};
+    }
+  `;
+
+  const frame = document.createElement('div');
+  frame.className = 'frame';
+  const edit = document.createElement('div');
+  edit.className = 'edit';
+  edit.textContent = 'DRAG HEADER · RESIZE EDGES · CTRL+ALT+SHIFT+H TO LOCK';
+  frame.appendChild(edit);
+
+  const status = document.createElement('div');
+  status.className = 'status';
+  const dot = document.createElement('span');
+  dot.className = 'dot';
+  const statusText = document.createElement('span');
+  status.append(dot, statusText);
+  root.append(shadowStyle, frame, status);
+
+  const transparencyCss = `
+    html, body, body > #root, body > #__next {
+      background: transparent !important;
+      background-color: transparent !important;
+    }
+    html {
+      --yt-live-chat-background-color: transparent !important;
+      --yt-live-chat-secondary-background-color: rgba(18, 18, 22, .70) !important;
+      --yt-live-chat-tertiary-background-color: rgba(18, 18, 22, .82) !important;
+    }
+    yt-live-chat-app,
+    yt-live-chat-renderer,
+    yt-live-chat-renderer #contents,
+    yt-live-chat-renderer #item-list,
+    yt-live-chat-renderer #chat {
+      background: transparent !important;
+      background-color: transparent !important;
+    }
+    ::-webkit-scrollbar { display: none !important; }
+  `;
+  const pageStyle = document.createElement('style');
+  pageStyle.textContent = transparencyCss;
+
+  const restoreHostShell = () => {
+    host.removeAttribute('hidden');
+    host.style.setProperty('all', 'initial', 'important');
+    host.style.setProperty('position', 'fixed', 'important');
+    host.style.setProperty('inset', '0', 'important');
+    host.style.setProperty('display', 'block', 'important');
+    host.style.setProperty('visibility', 'visible', 'important');
+    host.style.setProperty('opacity', '1', 'important');
+    host.style.setProperty('z-index', '2147483647', 'important');
+    host.style.setProperty('pointer-events', 'none', 'important');
   };
 
-  const install = () => {
+  let observer = null;
+  const ensureInstalled = () => {
     try {
-      if (!document.documentElement) {
-        setTimeout(install, 0);
+      const documentRoot = document.documentElement;
+      if (!documentRoot) {
+        setTimeout(ensureInstalled, 0);
         return;
       }
 
-      const styleId = '__chatview_transparency_style';
-      let pageStyle = document.getElementById(styleId);
-      if (!pageStyle) {
-        pageStyle = document.createElement('style');
-        pageStyle.id = styleId;
-        pageStyle.textContent = `
-          html, body, body > #root, body > #__next {
-            background: transparent !important;
-            background-color: transparent !important;
-          }
-          html {
-            --yt-live-chat-background-color: transparent !important;
-            --yt-live-chat-secondary-background-color: rgba(18, 18, 22, .70) !important;
-            --yt-live-chat-tertiary-background-color: rgba(18, 18, 22, .82) !important;
-          }
-          yt-live-chat-app,
-          yt-live-chat-renderer,
-          yt-live-chat-renderer #contents,
-          yt-live-chat-renderer #item-list,
-          yt-live-chat-renderer #chat {
-            background: transparent !important;
-            background-color: transparent !important;
-          }
-          ::-webkit-scrollbar { display: none !important; }
-        `;
-        (document.head || document.documentElement).appendChild(pageStyle);
+      restoreHostShell();
+      if (host.parentNode !== documentRoot ||
+          documentRoot.lastElementChild !== host) {
+        documentRoot.appendChild(host);
       }
 
-      let host = document.getElementById('__chatview_native_host');
-      if (!host || !window.__chatviewNative) {
-        host = document.createElement('div');
-        host.id = '__chatview_native_host';
-        host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
-        document.documentElement.appendChild(host);
-
-        const root = host.attachShadow({ mode: 'open' });
-        const shadowStyle = document.createElement('style');
-        shadowStyle.textContent = `
-          :host { all: initial; }
-          .frame {
-            position: fixed;
-            inset: 0;
-            box-sizing: border-box;
-            border: 3px solid #5ac8fa;
-            opacity: 0;
-            transition: opacity .12s ease;
-          }
-          .edit {
-            position: absolute;
-            left: 12px;
-            top: 10px;
-            padding: 8px 11px;
-            border-radius: 10px;
-            background: rgba(20,20,24,.92);
-            color: #fff;
-            font: 600 13px/1.2 "Segoe UI",sans-serif;
-            box-shadow: 0 6px 24px rgba(0,0,0,.35);
-          }
-          .status {
-            position: absolute;
-            right: 12px;
-            top: 10px;
-            display: none;
-            align-items: center;
-            gap: 7px;
-            padding: 7px 10px;
-            border-radius: 999px;
-            background: rgba(20,20,24,.82);
-            color: #fff;
-            font: 700 12px/1 "Segoe UI",sans-serif;
-            box-shadow: 0 5px 20px rgba(0,0,0,.30);
-          }
-          .dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 999px;
-            background: var(--tone,#aeb0b2);
-            box-shadow: 0 0 10px var(--tone,#aeb0b2);
-          }
-          :host([data-editing="1"]) .frame { opacity: 1; }
-          :host([data-has-status="1"]) .status { display: flex; }
-        `;
-
-        const frame = document.createElement('div');
-        frame.className = 'frame';
-        const edit = document.createElement('div');
-        edit.className = 'edit';
-        edit.textContent = 'DRAG HEADER · RESIZE EDGES · CTRL+ALT+SHIFT+H TO LOCK';
-        frame.appendChild(edit);
-
-        const status = document.createElement('div');
-        status.className = 'status';
-        const dot = document.createElement('span');
-        dot.className = 'dot';
-        const statusText = document.createElement('span');
-        statusText.className = 'statusText';
-        status.append(dot, statusText);
-
-        root.append(shadowStyle, frame, status);
-        window.__chatviewNative = { host, statusText };
-      } else if (!host.isConnected) {
-        document.documentElement.appendChild(host);
+      if (pageStyle.textContent !== transparencyCss) {
+        pageStyle.textContent = transparencyCss;
+      }
+      const styleParent = document.head || documentRoot;
+      if (pageStyle.parentNode !== styleParent) {
+        styleParent.appendChild(pageStyle);
       }
 
-      if (!window.__chatviewHostObserver) {
-        window.__chatviewHostObserver = new MutationObserver(() => {
-          const view = window.__chatviewNative;
-          if (view && !view.host.isConnected && document.documentElement) {
-            document.documentElement.appendChild(view.host);
-          }
-        });
-        window.__chatviewHostObserver.observe(document.documentElement, { childList: true });
+      if (observer) {
+        observer.observe(styleParent, { childList: true });
       }
-      apply();
     } catch (_) {
-      setTimeout(install, 50);
+      setTimeout(ensureInstalled, 50);
     }
   };
 
-  window.__chatviewEnsureHost = install;
-  window.__chatviewApplyHostState = (state) => {
-    window.__chatviewPendingState = state || window.__chatviewPendingState;
-    install();
-    apply();
+  const applyState = (candidate) => {
+    if (!candidate || candidate.type !== 'host-state' ||
+        typeof candidate.editing !== 'boolean') {
+      return;
+    }
+
+    const statusValue = typeof candidate.status === 'string'
+      ? candidate.status.slice(0, 96)
+      : '';
+    const toneValue = typeof candidate.tone === 'string' &&
+      /^#[0-9a-fA-F]{6}$/.test(candidate.tone)
+        ? candidate.tone
+        : defaultTone;
+
+    ensureInstalled();
+    frame.style.opacity = candidate.editing ? '1' : '0';
+    status.style.display = statusValue ? 'flex' : 'none';
+    statusText.textContent = statusValue;
+    dot.style.background = toneValue;
+    dot.style.boxShadow = `0 0 10px ${toneValue}`;
   };
-  install();
+
+  observer = new MutationObserver(ensureInstalled);
+  ensureInstalled();
+  if (document.documentElement) {
+    observer.observe(document.documentElement, { childList: true });
+  }
+  observer.observe(host, {
+    attributes: true,
+    attributeFilter: ['style', 'hidden']
+  });
+
+  window.chrome.webview.addEventListener('message', (event) => {
+    applyState(event.data);
+  });
 })();
 )JS";
-
-std::wstring javascript_string(const std::wstring &value)
-{
-    std::wstring output;
-    output.reserve(value.size() + 2U);
-    output.push_back(L'"');
-    for (const wchar_t character : value) {
-        switch (character) {
-        case L'\\':
-            output.append(L"\\\\");
-            break;
-        case L'"':
-            output.append(L"\\\"");
-            break;
-        case L'\r':
-            output.append(L"\\r");
-            break;
-        case L'\n':
-            output.append(L"\\n");
-            break;
-        case L'\t':
-            output.append(L"\\t");
-            break;
-        default:
-            output.push_back(character < 0x20 ? L' ' : character);
-            break;
-        }
-    }
-    output.push_back(L'"');
-    return output;
-}
 
 HRESULT create_d3d_device(ComPtr<ID3D11Device> &device) noexcept
 {
@@ -668,7 +658,7 @@ HRESULT WebViewHost::on_controller_created(
         FAILED(settings->put_IsStatusBarEnabled(FALSE)) ||
         FAILED(settings->put_AreDevToolsEnabled(FALSE)) ||
         FAILED(settings->put_IsZoomControlEnabled(FALSE)) ||
-        FAILED(settings->put_IsWebMessageEnabled(FALSE)) ||
+        FAILED(settings->put_IsWebMessageEnabled(TRUE)) ||
         FAILED(settings->put_AreHostObjectsAllowed(FALSE))) {
         post_failure(E_FAIL);
         return S_OK;
@@ -937,17 +927,17 @@ void WebViewHost::apply_host_state() noexcept
         return;
     }
 
-    std::wstring script =
-        L"window.__chatviewEnsureHost && window.__chatviewEnsureHost();"
-        L"window.__chatviewApplyHostState && "
-        L"window.__chatviewApplyHostState({editing:";
-    script.append(editing_ ? L"true" : L"false");
-    script.append(L",status:");
-    script.append(javascript_string(status_text_));
-    script.append(L",tone:");
-    script.append(javascript_string(status_tone_));
-    script.append(L"});");
-    webview_->ExecuteScript(script.c_str(), nullptr);
+    const std::wstring message = serialize_host_state_message(
+        editing_, status_text_, status_tone_);
+    if (message.empty()) {
+        post_failure(E_OUTOFMEMORY);
+        return;
+    }
+
+    const HRESULT result = webview_->PostWebMessageAsJson(message.c_str());
+    if (FAILED(result)) {
+        post_failure(result);
+    }
 }
 
 } // namespace chatview

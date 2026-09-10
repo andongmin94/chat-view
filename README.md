@@ -23,7 +23,7 @@ This branch currently provides an installable single-PC alpha:
 - explicit **Tools → Restart ChatView HUD** recovery without restarting OBS;
 - pinned Windows CI, native tests, installer test, and packaged artifact.
 
-The renderer remains out of process deliberately. A browser or desktop-rendering failure must not take down OBS Studio.
+The renderer remains out of process deliberately. A browser or desktop-rendering failure must not take down OBS Studio. The provider page cannot call ChatView control functions: native status is delivered one way into a closed Shadow DOM layer.
 
 ## Install
 

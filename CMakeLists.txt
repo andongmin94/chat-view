@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.2.7 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.2.8 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -82,6 +82,7 @@ add_library(chat-view-obs MODULE
     src/plugin/transport-token.cpp
     src/plugin/transport-token.hpp
     src/common/shared-state.hpp
+    src/common/srw-lock.hpp
     src/common/win32-handle.hpp
     src/common/window-messages.hpp
 )
@@ -96,6 +97,8 @@ chatview_set_runtime_output(chat-view-obs)
 
 add_executable(chat-view-hud WIN32
     src/hud/main.cpp
+    src/hud/host-state-message.cpp
+    src/hud/host-state-message.hpp
     src/hud/hud-placement.cpp
     src/hud/hud-placement.hpp
     src/hud/hud-window.cpp
@@ -240,6 +243,19 @@ if(BUILD_TESTING)
     add_test(
         NAME chat-view-restart-policy
         COMMAND chat-view-restart-policy-test
+    )
+
+    add_executable(chat-view-host-state-message-test
+        tests/host-state-message-test.cpp
+        src/hud/host-state-message.cpp
+        src/hud/host-state-message.hpp
+    )
+    target_include_directories(
+        chat-view-host-state-message-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_warnings(chat-view-host-state-message-test)
+    add_test(
+        NAME chat-view-host-state-message
+        COMMAND chat-view-host-state-message-test
     )
 
     add_test(

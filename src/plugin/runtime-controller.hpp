@@ -3,6 +3,7 @@
 #pragma once
 
 #include "common/shared-state.hpp"
+#include "common/srw-lock.hpp"
 #include "common/win32-handle.hpp"
 
 #include <Windows.h>
@@ -10,7 +11,6 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
-#include <shared_mutex>
 #include <string>
 #include <thread>
 
@@ -44,7 +44,7 @@ private:
     void cleanup_locked() noexcept;
 
     std::mutex mutex_;
-    std::shared_mutex state_publish_mutex_;
+    SRWLOCK state_publish_lock_ = SRWLOCK_INIT;
     std::thread supervisor_thread_;
     std::atomic_bool stopping_{true};
     std::atomic_bool restart_requested_{false};

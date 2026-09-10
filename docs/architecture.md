@@ -37,6 +37,8 @@ The plugin remains deliberately small:
 - launch the settings application;
 - never perform browser, network, or rendering work on an OBS callback thread.
 
+The callback wake handle is protected with non-throwing Win32 SRW locks. No C++ lock construction occurs in the `noexcept` frontend callback path.
+
 ## Local status transport
 
 The single-PC transport uses a named Windows file mapping and an auto-reset event. Protocol version 3 carries only:
@@ -85,8 +87,10 @@ The runtime:
 - creates a DirectComposition device, target, and root visual;
 - creates an `ICoreWebView2CompositionController`;
 - sets the WebView default background to transparent;
-- injects a small isolated Shadow DOM control layer for edit bounds and OBS status;
+- injects a closed Shadow DOM control layer for edit bounds and OBS status;
 - forces document and body backgrounds transparent without rewriting the provider UI.
+
+OBS state reaches that closed control layer only through native-to-page JSON messages. The provider page receives no callable ChatView control function, and the native host registers no page-to-native message handler.
 
 The WebView2 Evergreen Runtime is checked by the package installer and installed from Microsoft's signed bootstrapper when absent. The SDK used at build time is pinned separately in CI.
 

@@ -15,7 +15,6 @@
 #include <cwchar>
 #include <exception>
 #include <filesystem>
-#include <shared_mutex>
 #include <string>
 #include <utility>
 
@@ -158,7 +157,7 @@ void RuntimeController::stop() noexcept
     stopping_.store(true, std::memory_order_release);
 
     {
-        std::unique_lock publish_lock(state_publish_mutex_);
+        ExclusiveSrwLockGuard publish_lock(state_publish_lock_);
         state_publish_handle_ = nullptr;
     }
 
@@ -219,7 +218,7 @@ void RuntimeController::update(bool streaming, bool recording) noexcept
         return;
     }
 
-    std::shared_lock publish_lock(state_publish_mutex_);
+    SharedSrwLockGuard publish_lock(state_publish_lock_);
     if (state_publish_handle_ != nullptr && !SetEvent(state_publish_handle_)) {
         log_windows_error("SetEvent(state publish)", GetLastError());
     }
@@ -233,7 +232,7 @@ bool RuntimeController::restart_hud() noexcept
     }
 
     restart_requested_.store(true, std::memory_order_release);
-    std::shared_lock publish_lock(state_publish_mutex_);
+    SharedSrwLockGuard publish_lock(state_publish_lock_);
     if (state_publish_handle_ == nullptr) {
         restart_requested_.store(false, std::memory_order_release);
         return false;
@@ -423,7 +422,7 @@ bool RuntimeController::create_transport_locked()
     shared_state_->generation = 0U;
 
     {
-        std::unique_lock publish_lock(state_publish_mutex_);
+        ExclusiveSrwLockGuard publish_lock(state_publish_lock_);
         state_publish_handle_ = state_publish_event_.get();
     }
     return true;
@@ -899,7 +898,7 @@ void RuntimeController::terminate_runtime_locked(
 void RuntimeController::cleanup_locked() noexcept
 {
     {
-        std::unique_lock publish_lock(state_publish_mutex_);
+        ExclusiveSrwLockGuard publish_lock(state_publish_lock_);
         state_publish_handle_ = nullptr;
         state_publish_event_.reset();
     }

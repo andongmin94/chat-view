@@ -37,6 +37,11 @@ private:
     void toggle_edit_mode();
     void apply_window_mode() noexcept;
     void reload_chat_config() noexcept;
+    void handle_webview_process_failure(
+        COREWEBVIEW2_PROCESS_FAILED_KIND kind) noexcept;
+    void schedule_navigation_retry(
+        COREWEBVIEW2_WEB_ERROR_STATUS status) noexcept;
+    void cancel_navigation_retry() noexcept;
     void update_host_state() noexcept;
     void set_transient_status(
         std::wstring text, std::wstring tone, UINT duration_ms);
@@ -54,7 +59,10 @@ private:
     HudPlacement placement_;
     std::wstring transient_status_;
     std::wstring transient_tone_ = L"#aeb0b2";
+    std::wstring navigation_status_;
+    std::wstring navigation_tone_ = L"#ffcc00";
     std::uint64_t last_generation_ = 0U;
+    unsigned int navigation_retry_attempt_ = 0U;
     bool streaming_ = false;
     bool recording_ = false;
     bool edit_mode_ = false;

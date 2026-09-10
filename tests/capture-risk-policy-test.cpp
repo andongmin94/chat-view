@@ -26,6 +26,17 @@ int main()
         return fail("Display Capture source classification was incorrect");
     }
 
+    if (!chatview::should_treat_display_capture_as_risk(
+            true, false, true) ||
+        !chatview::should_treat_display_capture_as_risk(
+            true, true, false) ||
+        chatview::should_treat_display_capture_as_risk(
+            false, true, true) ||
+        chatview::should_treat_display_capture_as_risk(
+            true, false, false)) {
+        return fail("Conservative Display Capture classification was incorrect");
+    }
+
     if (!chatview::should_suppress_private_hud(
             true, true, false, false, false) ||
         !chatview::should_suppress_private_hud(

@@ -56,6 +56,7 @@ constexpr wchar_t kOverlayBootstrapScript[] = LR"JS(
 (() => {
   if (window.top !== window || !window.chrome || !window.chrome.webview) return;
 
+  const nativeBridge = window.chrome.webview;
   const defaultTone = '#aeb0b2';
   const host = document.createElement('chatview-private-hud-root');
   const root = host.attachShadow({ mode: 'closed' });
@@ -235,7 +236,8 @@ constexpr wchar_t kOverlayBootstrapScript[] = LR"JS(
     attributeFilter: ['style', 'hidden']
   });
 
-  window.chrome.webview.addEventListener('message', (event) => {
+  nativeBridge.addEventListener('message', (event) => {
+    if (!event.isTrusted || event.source !== nativeBridge) return;
     applyState(event.data);
   });
 })();

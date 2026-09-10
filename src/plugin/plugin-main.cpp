@@ -17,43 +17,78 @@ OBS_MODULE_USE_DEFAULT_LOCALE("chat-view-obs", "en-US")
 namespace {
 
 constexpr UINT kCaptureRiskPollIntervalMs = 100U;
+constexpr ULONGLONG kOutputStartPendingTimeoutMs = 15000U;
+constexpr ULONGLONG kPostStartConservativeScanMs = 1000U;
 
 struct CaptureScan {
-    bool display_capture_active = false;
+    bool display_capture_present = false;
+    bool display_capture_active_or_showing = false;
 };
 
 std::unique_ptr<chatview::RuntimeController> runtime_controller;
 UINT_PTR capture_risk_timer_id = 0U;
 bool frontend_callback_registered = false;
 bool scene_graph_stable = false;
-bool streaming_starting = false;
-bool recording_starting = false;
-bool replay_buffer_starting = false;
+ULONGLONG streaming_start_deadline = 0U;
+ULONGLONG recording_start_deadline = 0U;
+ULONGLONG replay_buffer_start_deadline = 0U;
+ULONGLONG conservative_scan_deadline = 0U;
 bool published_capture_state = false;
 bool last_capture_suppressed = false;
+
+bool deadline_active(
+    ULONGLONG deadline, ULONGLONG now) noexcept
+{
+    return deadline != 0U && now < deadline;
+}
+
+void begin_output_start(ULONGLONG &deadline) noexcept
+{
+    deadline = GetTickCount64() + kOutputStartPendingTimeoutMs;
+}
+
+void complete_output_start(ULONGLONG &deadline) noexcept
+{
+    deadline = 0U;
+    const ULONGLONG candidate =
+        GetTickCount64() + kPostStartConservativeScanMs;
+    if (candidate > conservative_scan_deadline) {
+        conservative_scan_deadline = candidate;
+    }
+}
+
+void initialize_scene_graph_state() noexcept
+{
+    obs_source_t *current_scene = obs_frontend_get_current_scene();
+    scene_graph_stable = current_scene != nullptr;
+    if (current_scene != nullptr) {
+        obs_source_release(current_scene);
+    }
+}
 
 bool inspect_source_for_capture_risk(
     void *data, obs_source_t *source) noexcept
 {
     auto *scan = static_cast<CaptureScan *>(data);
-    if (scan == nullptr || source == nullptr) {
+    if (scan == nullptr || source == nullptr ||
+        !chatview::is_capture_risk_source_id(
+            obs_source_get_unversioned_id(source))) {
         return true;
     }
 
-    if (obs_source_active(source) &&
-        chatview::is_capture_risk_source_id(
-            obs_source_get_unversioned_id(source))) {
-        scan->display_capture_active = true;
+    scan->display_capture_present = true;
+    if (obs_source_active(source) || obs_source_showing(source)) {
+        scan->display_capture_active_or_showing = true;
         return false;
     }
     return true;
 }
 
-bool active_display_capture_present() noexcept
+CaptureScan scan_display_capture_sources() noexcept
 {
     CaptureScan scan;
     obs_enum_sources(&inspect_source_for_capture_risk, &scan);
-    return scan.display_capture_active;
+    return scan;
 }
 
 void publish_frontend_state() noexcept
@@ -62,24 +97,47 @@ void publish_frontend_state() noexcept
         return;
     }
 
-    const bool streaming =
-        streaming_starting || obs_frontend_streaming_active();
-    const bool recording =
-        recording_starting || obs_frontend_recording_active();
-    const bool replay_buffer =
-        replay_buffer_starting || obs_frontend_replay_buffer_active();
+    const ULONGLONG now = GetTickCount64();
+    const bool streaming_pending =
+        deadline_active(streaming_start_deadline, now);
+    const bool recording_pending =
+        deadline_active(recording_start_deadline, now);
+    const bool replay_buffer_pending =
+        deadline_active(replay_buffer_start_deadline, now);
+
+    const bool streaming = obs_frontend_streaming_active();
+    const bool recording = obs_frontend_recording_active();
+    const bool replay_buffer = obs_frontend_replay_buffer_active();
     const bool virtual_camera = obs_frontend_virtualcam_active();
 
+    const bool effective_streaming = streaming || streaming_pending;
+    const bool effective_recording = recording || recording_pending;
+    const bool effective_replay_buffer =
+        replay_buffer || replay_buffer_pending;
     const bool output_active =
-        streaming || recording || replay_buffer || virtual_camera;
-    const bool display_capture_active =
+        effective_streaming || effective_recording ||
+        effective_replay_buffer || virtual_camera;
+
+    CaptureScan scan;
+    if (output_active && scene_graph_stable) {
+        scan = scan_display_capture_sources();
+    }
+
+    const bool conservative_scan =
+        streaming_pending || recording_pending || replay_buffer_pending ||
+        deadline_active(conservative_scan_deadline, now);
+    const bool display_capture_risk =
         output_active &&
-        (!scene_graph_stable || active_display_capture_present());
+        (!scene_graph_stable ||
+         chatview::should_treat_display_capture_as_risk(
+             scan.display_capture_present,
+             scan.display_capture_active_or_showing,
+             conservative_scan));
     const bool suppress = chatview::should_suppress_private_hud(
-        display_capture_active,
-        streaming,
-        recording,
-        replay_buffer,
+        display_capture_risk,
+        effective_streaming,
+        effective_recording,
+        effective_replay_buffer,
         virtual_camera);
 
     if (!published_capture_state || suppress != last_capture_suppressed) {
@@ -87,7 +145,7 @@ void publish_frontend_state() noexcept
             blog(
                 LOG_WARNING,
                 "[ChatView OBS] Private HUD hidden by the Display Capture "
-                "safety interlock while an OBS output is running");
+                "safety interlock while an OBS output is starting or running");
         } else if (published_capture_state) {
             blog(
                 LOG_INFO,
@@ -115,7 +173,7 @@ void on_frontend_event(obs_frontend_event event, void *) noexcept
     case OBS_FRONTEND_EVENT_FINISHED_LOADING:
     case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
     case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
-        scene_graph_stable = true;
+        initialize_scene_graph_state();
         break;
 
     case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGING:
@@ -125,33 +183,42 @@ void on_frontend_event(obs_frontend_event event, void *) noexcept
         break;
 
     case OBS_FRONTEND_EVENT_STREAMING_STARTING:
-        streaming_starting = true;
+        begin_output_start(streaming_start_deadline);
         break;
     case OBS_FRONTEND_EVENT_STREAMING_STARTED:
+        complete_output_start(streaming_start_deadline);
+        break;
     case OBS_FRONTEND_EVENT_STREAMING_STOPPED:
-        streaming_starting = false;
+        streaming_start_deadline = 0U;
         break;
 
     case OBS_FRONTEND_EVENT_RECORDING_STARTING:
-        recording_starting = true;
+        begin_output_start(recording_start_deadline);
         break;
     case OBS_FRONTEND_EVENT_RECORDING_STARTED:
+        complete_output_start(recording_start_deadline);
+        break;
     case OBS_FRONTEND_EVENT_RECORDING_STOPPED:
-        recording_starting = false;
+        recording_start_deadline = 0U;
         break;
 
     case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTING:
-        replay_buffer_starting = true;
+        begin_output_start(replay_buffer_start_deadline);
         break;
     case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STARTED:
+        complete_output_start(replay_buffer_start_deadline);
+        break;
     case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STOPPED:
-        replay_buffer_starting = false;
+        replay_buffer_start_deadline = 0U;
+        break;
+
+    case OBS_FRONTEND_EVENT_VIRTUALCAM_STARTED:
+        complete_output_start(conservative_scan_deadline);
         break;
 
     case OBS_FRONTEND_EVENT_STREAMING_STOPPING:
     case OBS_FRONTEND_EVENT_RECORDING_STOPPING:
     case OBS_FRONTEND_EVENT_REPLAY_BUFFER_STOPPING:
-    case OBS_FRONTEND_EVENT_VIRTUALCAM_STARTED:
     case OBS_FRONTEND_EVENT_VIRTUALCAM_STOPPED:
     case OBS_FRONTEND_EVENT_SCENE_CHANGED:
     case OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED:
@@ -196,9 +263,10 @@ void toggle_edit_mode(void *)
 void reset_frontend_tracking() noexcept
 {
     scene_graph_stable = false;
-    streaming_starting = false;
-    recording_starting = false;
-    replay_buffer_starting = false;
+    streaming_start_deadline = 0U;
+    recording_start_deadline = 0U;
+    replay_buffer_start_deadline = 0U;
+    conservative_scan_deadline = 0U;
     published_capture_state = false;
     last_capture_suppressed = false;
 }
@@ -241,6 +309,7 @@ bool obs_module_load(void)
 
         obs_frontend_add_event_callback(on_frontend_event, nullptr);
         frontend_callback_registered = true;
+        initialize_scene_graph_state();
 
         capture_risk_timer_id = SetTimer(
             nullptr,

@@ -91,7 +91,7 @@ The runtime:
 - injects a closed Shadow DOM control layer for edit bounds and OBS status;
 - forces document and body backgrounds transparent without rewriting the provider UI.
 
-OBS state reaches that closed control layer only through native-to-page JSON messages. The provider page receives no callable ChatView control function, and the native host registers no page-to-native message handler.
+OBS state reaches that closed control layer only through native-to-page JSON messages. The provider page receives no callable ChatView control function, and the native host registers no page-to-native message handler. The receiver also requires a trusted WebView2 message event whose source is the captured native bridge object, so script-dispatched lookalike events are ignored.
 
 The WebView2 Evergreen Runtime is checked by the package installer and installed from Microsoft's signed bootstrapper when absent. The SDK used at build time is pinned separately in CI.
 
@@ -111,7 +111,7 @@ Locked mode is the broadcasting default. The top-level window is:
 
 `WDA_EXCLUDEFROMCAPTURE` is a best-effort Windows capture hint, not DRM and not an HDMI-path guarantee. A future broadcast-visible overlay must be a separate OBS source rather than weakening the private-HUD default.
 
-The plugin also runs a 100 ms output-safety monitor. It enumerates active OBS input sources and recognizes the pinned Windows Display Capture source ID `monitor_capture`. If Display Capture is active while streaming, recording, replay buffering, or virtual-camera output is running, protocol version 4 orders the HUD to hide. Output-starting events perform an immediate scan, an unstable scene/profile graph is treated as risky, edit mode is disabled during suppression, and the HUD reappears only after the risk clears. This interlock is defense in depth above the Windows affinity check; it is not presented as protection for physical capture-card paths.
+The plugin also runs a 100 ms output-safety monitor. It enumerates OBS input sources and recognizes the pinned Windows Display Capture source ID `monitor_capture`. If Display Capture is active or showing while streaming, recording, replay buffering, or virtual-camera output is running, protocol version 4 orders the HUD to hide. Output-starting events use a bounded pending state and temporarily treat any configured Display Capture source as risky, closing the gap before OBS activates the program source. A post-start conservative interval covers OBS events emitted before source activation, failed starts expire instead of leaving the HUD permanently suppressed, an unstable scene/profile graph is treated as risky, edit mode is disabled during suppression, and the HUD reappears only after the risk clears. This interlock is defense in depth above the Windows affinity check; it is not presented as protection for physical capture-card paths.
 
 The repair observer for the injected control shell uses normalized, compare-before-write inline state and watches the document root, host attributes, and transparency style. Its own repairs therefore settle instead of continuously triggering itself.
 

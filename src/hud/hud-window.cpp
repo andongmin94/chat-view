@@ -16,11 +16,13 @@
 namespace chatview {
 namespace {
 
-constexpr wchar_t kWindowClassName[] = L"ChatViewObsHudWindow";
 constexpr UINT_PTR kStatusTimerId = 1U;
+constexpr UINT_PTR kNavigationRetryTimerId = 2U;
 constexpr int kEditHotkeyId = 1;
 constexpr UINT kReadyDurationMs = 2200U;
 constexpr UINT kOfflineDurationMs = 1200U;
+constexpr UINT kNavigationRetryBaseMs = 5000U;
+constexpr UINT kNavigationRetryMaximumMs = 30000U;
 constexpr UINT kEditHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT;
 constexpr UINT kEditHotkeyVirtualKey = 'H';
 constexpr int kDefaultMarginDip = 24;
@@ -59,7 +61,7 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
     window_class.cbSize = sizeof(window_class);
     window_class.lpfnWndProc = &HudWindow::window_proc;
     window_class.hInstance = instance_;
-    window_class.lpszClassName = kWindowClassName;
+    window_class.lpszClassName = kHudWindowClassName;
     window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
 
     if (RegisterClassExW(&window_class) == 0U &&
@@ -79,7 +81,7 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
         WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP;
     window_ = CreateWindowExW(
         extended_style,
-        kWindowClassName,
+        kHudWindowClassName,
         L"ChatView HUD",
         WS_POPUP,
         bounds.left,
@@ -140,6 +142,7 @@ void HudWindow::destroy() noexcept
 {
     if (window_ != nullptr) {
         KillTimer(window_, kStatusTimerId);
+        KillTimer(window_, kNavigationRetryTimerId);
     }
 
     if (window_ != nullptr && edit_hotkey_registered_) {
@@ -155,7 +158,7 @@ void HudWindow::destroy() noexcept
     }
 
     if (instance_ != nullptr) {
-        UnregisterClassW(kWindowClassName, instance_);
+        UnregisterClassW(kHudWindowClassName, instance_);
         instance_ = nullptr;
     }
 }
@@ -240,13 +243,22 @@ LRESULT HudWindow::handle_message(
         }
         return 0L;
     case kWebViewDocumentReadyMessage:
+        cancel_navigation_retry();
         update_host_state();
+        return 0L;
+    case kWebViewProcessFailedMessage:
+        handle_webview_process_failure(
+            static_cast<COREWEBVIEW2_PROCESS_FAILED_KIND>(wparam));
+        return 0L;
+    case kWebViewNavigationFailedMessage:
+        schedule_navigation_retry(
+            static_cast<COREWEBVIEW2_WEB_ERROR_STATUS>(wparam));
         return 0L;
     case kWebViewFailedMessage: {
         wchar_t detail[192]{};
         swprintf_s(
             detail,
-            L"[ChatView HUD] WebView2 initialization failed (0x%08lX)\n",
+            L"[ChatView HUD] WebView2 host failed (0x%08lX)\n",
             static_cast<unsigned long>(static_cast<std::uint32_t>(wparam)));
         OutputDebugStringW(detail);
         PostQuitMessage(2);
@@ -255,6 +267,13 @@ LRESULT HudWindow::handle_message(
     case WM_TIMER:
         if (wparam == kStatusTimerId) {
             clear_transient_status();
+            return 0L;
+        }
+        if (wparam == kNavigationRetryTimerId) {
+            KillTimer(window_, kNavigationRetryTimerId);
+            if (!webview_.reload()) {
+                PostQuitMessage(10);
+            }
             return 0L;
         }
         break;
@@ -359,8 +378,10 @@ LRESULT HudWindow::hit_test(LPARAM lparam) const noexcept
         return HTCLIENT;
     }
 
-    const int border = std::max(6, MulDiv(kResizeBorderDip, static_cast<int>(dpi()), 96));
-    const int header = std::max(28, MulDiv(kDragHeaderDip, static_cast<int>(dpi()), 96));
+    const int border =
+        std::max(6, MulDiv(kResizeBorderDip, static_cast<int>(dpi()), 96));
+    const int header =
+        std::max(28, MulDiv(kDragHeaderDip, static_cast<int>(dpi()), 96));
     const POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
     const bool left = point.x < bounds.left + border;
     const bool right = point.x >= bounds.right - border;
@@ -427,7 +448,8 @@ void HudWindow::apply_window_mode() noexcept
     LONG_PTR extended_style = GetWindowLongPtrW(window_, GWL_EXSTYLE);
     if (edit_mode_) {
         style |= WS_THICKFRAME;
-        extended_style &= ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
+        extended_style &=
+            ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
     } else {
         style &= ~static_cast<LONG_PTR>(WS_THICKFRAME);
         extended_style |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
@@ -452,14 +474,85 @@ void HudWindow::reload_chat_config() noexcept
         return;
     }
 
+    cancel_navigation_retry();
+
     ChatConfig config;
     if (load_chat_config(config)) {
         if (!webview_.navigate(config.url)) {
-            webview_.show_setup_page();
+            schedule_navigation_retry(COREWEBVIEW2_WEB_ERROR_STATUS_UNEXPECTED_ERROR);
         }
     } else {
         webview_.show_setup_page();
     }
+}
+
+void HudWindow::handle_webview_process_failure(
+    COREWEBVIEW2_PROCESS_FAILED_KIND kind) noexcept
+{
+    wchar_t detail[160]{};
+    swprintf_s(
+        detail,
+        L"[ChatView HUD] WebView2 process failure kind %u\n",
+        static_cast<unsigned int>(kind));
+    OutputDebugStringW(detail);
+
+    switch (kind) {
+    case COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED:
+    case COREWEBVIEW2_PROCESS_FAILED_KIND_FRAME_RENDER_PROCESS_EXITED:
+        navigation_status_ = L"CHAT RECOVERING";
+        navigation_tone_ = L"#5ac8fa";
+        update_host_state();
+        if (!webview_.reload()) {
+            PostQuitMessage(9);
+        }
+        return;
+    case COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED:
+    case COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE:
+        PostQuitMessage(9);
+        return;
+    default:
+        return;
+    }
+}
+
+void HudWindow::schedule_navigation_retry(
+    COREWEBVIEW2_WEB_ERROR_STATUS status) noexcept
+{
+    wchar_t detail[160]{};
+    swprintf_s(
+        detail,
+        L"[ChatView HUD] Chat navigation failed with status %u\n",
+        static_cast<unsigned int>(status));
+    OutputDebugStringW(detail);
+
+    navigation_status_ = L"CHAT RETRYING";
+    navigation_tone_ = L"#ffcc00";
+    navigation_retry_attempt_ =
+        std::min(navigation_retry_attempt_ + 1U, 4U);
+
+    const unsigned int shift =
+        std::min(navigation_retry_attempt_ - 1U, 3U);
+    const UINT delay = std::min(
+        kNavigationRetryBaseMs << shift,
+        kNavigationRetryMaximumMs);
+
+    KillTimer(window_, kNavigationRetryTimerId);
+    if (SetTimer(window_, kNavigationRetryTimerId, delay, nullptr) == 0U) {
+        debug_windows_error(L"SetTimer(navigation retry)");
+        PostQuitMessage(10);
+        return;
+    }
+    update_host_state();
+}
+
+void HudWindow::cancel_navigation_retry() noexcept
+{
+    if (window_ != nullptr) {
+        KillTimer(window_, kNavigationRetryTimerId);
+    }
+    navigation_retry_attempt_ = 0U;
+    navigation_status_.clear();
+    navigation_tone_ = L"#ffcc00";
 }
 
 void HudWindow::update_host_state() noexcept
@@ -470,6 +563,10 @@ void HudWindow::update_host_state() noexcept
 
     std::wstring status = transient_status_;
     std::wstring tone = transient_tone_;
+    if (status.empty() && !navigation_status_.empty()) {
+        status = navigation_status_;
+        tone = navigation_tone_;
+    }
     if (status.empty()) {
         if (streaming_ && recording_) {
             status = L"LIVE  •  REC";
@@ -547,8 +644,9 @@ UINT HudWindow::dpi() const noexcept
 
     using GetDpiForWindowFunction = UINT(WINAPI *)(HWND);
     const HMODULE user32 = GetModuleHandleW(L"user32.dll");
-    const auto get_dpi_for_window = reinterpret_cast<GetDpiForWindowFunction>(
-        GetProcAddress(user32, "GetDpiForWindow"));
+    const auto get_dpi_for_window =
+        reinterpret_cast<GetDpiForWindowFunction>(
+            GetProcAddress(user32, "GetDpiForWindow"));
     if (get_dpi_for_window == nullptr) {
         return 96U;
     }

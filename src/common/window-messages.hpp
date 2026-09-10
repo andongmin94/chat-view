@@ -4,6 +4,7 @@
 
 namespace chatview {
 
+inline constexpr wchar_t kHudWindowClassName[] = L"ChatViewObsHudWindow";
 inline constexpr wchar_t kConfigChangedMessageName[] =
     L"ChatViewOBS.ConfigChanged.v1";
 inline constexpr wchar_t kToggleEditMessageName[] =

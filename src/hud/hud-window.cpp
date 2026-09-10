@@ -197,15 +197,18 @@ void HudWindow::apply_state(const SharedSnapshot &snapshot)
     const bool was_active = streaming_ || recording_;
     streaming_ = has_flag(snapshot, SharedStateStreaming);
     recording_ = has_flag(snapshot, SharedStateRecording);
+    capture_risk_ = has_flag(snapshot, SharedStateCaptureRisk);
     const bool active = streaming_ || recording_;
 
     if (active) {
         clear_transient_status();
     } else if (was_active) {
         set_transient_status(L"OFFLINE", L"#aeb0b2", kOfflineDurationMs);
-        return;
+    } else {
+        update_host_state();
     }
-    update_host_state();
+
+    apply_capture_policy();
 }
 
 LRESULT CALLBACK HudWindow::window_proc(
@@ -247,22 +250,7 @@ LRESULT HudWindow::handle_message(
             fail_closed_capture_exclusion();
             return 0L;
         }
-        ShowWindow(window_, SW_SHOWNOACTIVATE);
-        if (!SetWindowPos(
-                window_,
-                HWND_TOPMOST,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)) {
-            debug_windows_error(L"SetWindowPos(show HUD)");
-            ShowWindow(window_, SW_HIDE);
-            PostQuitMessage(12);
-            return 0L;
-        }
-        if (!capture_exclusion_intact()) {
-            fail_closed_capture_exclusion();
+        if (!apply_capture_policy()) {
             return 0L;
         }
         if (ready_event_ != nullptr && !SetEvent(ready_event_)) {
@@ -403,7 +391,8 @@ LRESULT HudWindow::handle_message(
         }
         break;
     case WM_CLOSE:
-        DestroyWindow(window_);
+        ShowWindow(window_, SW_HIDE);
+        PostQuitMessage(0);
         return 0L;
     case WM_DESTROY:
         PostQuitMessage(0);
@@ -468,7 +457,8 @@ LRESULT HudWindow::hit_test(LPARAM lparam) const noexcept
 
 void HudWindow::toggle_edit_mode()
 {
-    if (window_ == nullptr || !webview_ready_ || capture_exclusion_failed_) {
+    if (window_ == nullptr || !webview_ready_ ||
+        capture_exclusion_failed_ || capture_risk_) {
         return;
     }
 
@@ -663,6 +653,51 @@ void HudWindow::fail_closed_capture_exclusion() noexcept
         KillTimer(window_, kCaptureSafetyTimerId);
     }
     PostQuitMessage(kCaptureExclusionLostExitCode);
+}
+
+bool HudWindow::apply_capture_policy() noexcept
+{
+    if (window_ == nullptr || !webview_ready_ ||
+        capture_exclusion_failed_) {
+        return !capture_exclusion_failed_;
+    }
+
+    if (capture_risk_) {
+        if (edit_mode_) {
+            capture_and_persist_bounds();
+            edit_mode_ = false;
+            apply_window_mode();
+            update_host_state();
+        }
+        ShowWindow(window_, SW_HIDE);
+        return true;
+    }
+
+    if (!capture_exclusion_intact()) {
+        fail_closed_capture_exclusion();
+        return false;
+    }
+
+    if (!SetWindowPos(
+            window_,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                SWP_SHOWWINDOW)) {
+        debug_windows_error(L"SetWindowPos(show HUD)");
+        ShowWindow(window_, SW_HIDE);
+        PostQuitMessage(12);
+        return false;
+    }
+
+    if (!capture_exclusion_intact()) {
+        fail_closed_capture_exclusion();
+        return false;
+    }
+    return true;
 }
 
 void HudWindow::update_host_state() noexcept

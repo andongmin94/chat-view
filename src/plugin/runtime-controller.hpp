@@ -26,7 +26,8 @@ public:
 
     [[nodiscard]] bool start() noexcept;
     void stop() noexcept;
-    void update(bool streaming, bool recording) noexcept;
+    void update(
+        bool streaming, bool recording, bool capture_risk) noexcept;
     [[nodiscard]] bool restart_hud() noexcept;
     [[nodiscard]] bool open_settings() const noexcept;
     [[nodiscard]] bool toggle_edit_mode() noexcept;

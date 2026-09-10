@@ -9,17 +9,19 @@
 namespace chatview {
 
 inline constexpr std::uint32_t kSharedStateMagic = 0x43485657U; // "CHVW"
-inline constexpr std::uint32_t kSharedStateVersion = 3U;
+inline constexpr std::uint32_t kSharedStateVersion = 4U;
 
 enum SharedStateFlag : std::uint32_t {
     SharedStateNone = 0U,
     SharedStateStreaming = 1U << 0U,
     SharedStateRecording = 1U << 1U,
+    SharedStateCaptureRisk = 1U << 2U,
     SharedStateShutdown = 1U << 31U,
 };
 
 inline constexpr std::uint32_t kKnownSharedStateFlags =
-    SharedStateStreaming | SharedStateRecording | SharedStateShutdown;
+    SharedStateStreaming | SharedStateRecording |
+    SharedStateCaptureRisk | SharedStateShutdown;
 
 [[nodiscard]] constexpr bool are_valid_shared_state_flags(
     std::uint32_t flags) noexcept
@@ -51,6 +53,6 @@ static_assert(sizeof(LONG) == sizeof(std::int32_t));
 static_assert(sizeof(SharedState) == 64U);
 static_assert(are_valid_shared_state_flags(SharedStateNone));
 static_assert(are_valid_shared_state_flags(kKnownSharedStateFlags));
-static_assert(!are_valid_shared_state_flags(1U << 2U));
+static_assert(!are_valid_shared_state_flags(1U << 3U));
 
 } // namespace chatview

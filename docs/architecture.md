@@ -41,10 +41,11 @@ The callback wake handle is protected with non-throwing Win32 SRW locks. No C++ 
 
 ## Local status transport
 
-The single-PC transport uses a named Windows file mapping and an auto-reset event. Protocol version 3 carries only:
+The single-PC transport uses a named Windows file mapping and an auto-reset event. Protocol version 4 carries only:
 
 - streaming active;
 - recording active;
+- private-HUD capture suppression active;
 - shutdown requested;
 - a monotonically increasing generation.
 
@@ -110,6 +111,10 @@ Locked mode is the broadcasting default. The top-level window is:
 
 `WDA_EXCLUDEFROMCAPTURE` is a best-effort Windows capture hint, not DRM and not an HDMI-path guarantee. A future broadcast-visible overlay must be a separate OBS source rather than weakening the private-HUD default.
 
+The plugin also runs a 100 ms output-safety monitor. It enumerates active OBS input sources and recognizes the pinned Windows Display Capture source ID `monitor_capture`. If Display Capture is active while streaming, recording, replay buffering, or virtual-camera output is running, protocol version 4 orders the HUD to hide. Output-starting events perform an immediate scan, an unstable scene/profile graph is treated as risky, edit mode is disabled during suppression, and the HUD reappears only after the risk clears. This interlock is defense in depth above the Windows affinity check; it is not presented as protection for physical capture-card paths.
+
+The repair observer for the injected control shell uses normalized, compare-before-write inline state and watches the document root, host attributes, and transparency style. Its own repairs therefore settle instead of continuously triggering itself.
+
 ## Placement storage
 
 Placement is local presentation state and belongs to the HUD runtime. It is stored in `%LOCALAPPDATA%\ChatView\hud.ini` as:
@@ -139,6 +144,7 @@ The Windows workflow builds against pinned OBS Studio 32.2.2 development librari
 - placement validation, monitor fallback, and malformed-input tests;
 - a calibrated pixel-level Windows capture-exclusion capability probe followed by a real WebView2 HUD process smoke test covering initialization readiness, locked/edit modes, native resize, persistence, capture-exclusion request, shared-state shutdown, and delayed WebView profile cleanup;
 - deterministic restart-policy tests covering backoff, circuit opening, saturation, and explicit reset;
+- capture-risk policy tests plus startup and runtime HUD hide/resume checks through the versioned shared-state transport;
 - package layout validation;
 - installer and uninstaller tests against an isolated OBS directory tree.
 

@@ -453,6 +453,20 @@ bool wait_for_style(HWND window, LONG_PTR required, LONG_PTR forbidden) noexcept
     return false;
 }
 
+bool wait_for_visibility(
+    HWND window, bool visible) noexcept
+{
+    const ULONGLONG deadline =
+        GetTickCount64() + kWindowStateTimeoutMs;
+    while (GetTickCount64() < deadline) {
+        if ((IsWindowVisible(window) != FALSE) == visible) {
+            return true;
+        }
+        Sleep(25U);
+    }
+    return false;
+}
+
 bool wait_for_width_greater(HWND window, LONG previous_width) noexcept
 {
     const ULONGLONG deadline = GetTickCount64() + kWindowStateTimeoutMs;
@@ -586,7 +600,9 @@ int wmain(int argument_count, wchar_t **arguments)
     ZeroMemory(mapped_state.get(), sizeof(chatview::SharedState));
     mapped_state.get()->magic = chatview::kSharedStateMagic;
     mapped_state.get()->version = chatview::kSharedStateVersion;
-    mapped_state.get()->flags = chatview::SharedStateStreaming;
+    mapped_state.get()->flags =
+        chatview::SharedStateStreaming |
+        chatview::SharedStateCaptureRisk;
     mapped_state.get()->generation = 1U;
 
     const std::filesystem::path local_app_data =
@@ -654,9 +670,9 @@ int wmain(int argument_count, wchar_t **arguments)
             L"The ready HUD window could not be enumerated",
             child_process.get());
     }
-    if (!IsWindowVisible(window)) {
+    if (IsWindowVisible(window)) {
         return fail(
-            L"The ready HUD window was not visible",
+            L"The HUD ignored capture suppression during startup",
             child_process.get());
     }
 
@@ -674,6 +690,16 @@ int wmain(int argument_count, wchar_t **arguments)
         affinity != WDA_EXCLUDEFROMCAPTURE) {
         return fail(
             L"The HUD did not request capture exclusion",
+            child_process.get());
+    }
+
+    publish(
+        mapped_state.get(),
+        state_event.get(),
+        chatview::SharedStateStreaming);
+    if (!wait_for_visibility(window, true)) {
+        return fail(
+            L"The HUD did not return after capture risk cleared",
             child_process.get());
     }
 
@@ -730,6 +756,43 @@ int wmain(int argument_count, wchar_t **arguments)
     if (!wait_for_style(window, locked_style, 0)) {
         return fail(
             L"The HUD did not return to locked mode",
+            child_process.get());
+    }
+
+    publish(
+        mapped_state.get(),
+        state_event.get(),
+        chatview::SharedStateStreaming |
+            chatview::SharedStateCaptureRisk);
+    if (!wait_for_visibility(window, false)) {
+        return fail(
+            L"The HUD remained visible after capture risk appeared",
+            child_process.get());
+    }
+    if (WaitForSingleObject(child_process.get(), 0U) != WAIT_TIMEOUT) {
+        return fail(
+            L"Capture suppression terminated the HUD instead of hiding it");
+    }
+    if (!PostMessageW(window, toggle_edit_message, 0U, 0L)) {
+        return fail(
+            L"Failed to test editing during capture suppression",
+            child_process.get());
+    }
+    Sleep(150U);
+    if (IsWindowVisible(window) ||
+        !wait_for_style(window, locked_style, 0)) {
+        return fail(
+            L"Capture suppression allowed the HUD to enter edit mode",
+            child_process.get());
+    }
+
+    publish(
+        mapped_state.get(),
+        state_event.get(),
+        chatview::SharedStateStreaming);
+    if (!wait_for_visibility(window, true)) {
+        return fail(
+            L"The HUD did not resume after runtime capture suppression",
             child_process.get());
     }
 

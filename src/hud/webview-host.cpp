@@ -143,19 +143,26 @@ constexpr wchar_t kOverlayBootstrapScript[] = LR"JS(
   const pageStyle = document.createElement('style');
   pageStyle.textContent = transparencyCss;
 
+  const expectedHostStyle = (() => {
+    const probe = document.createElement('div');
+    probe.style.cssText =
+      'all:initial!important;position:fixed!important;inset:0!important;' +
+      'display:block!important;visibility:visible!important;' +
+      'opacity:1!important;z-index:2147483647!important;' +
+      'pointer-events:none!important;';
+    return probe.style.cssText;
+  })();
+
   const restoreHostShell = () => {
-    host.removeAttribute('hidden');
-    host.style.setProperty('all', 'initial', 'important');
-    host.style.setProperty('position', 'fixed', 'important');
-    host.style.setProperty('inset', '0', 'important');
-    host.style.setProperty('display', 'block', 'important');
-    host.style.setProperty('visibility', 'visible', 'important');
-    host.style.setProperty('opacity', '1', 'important');
-    host.style.setProperty('z-index', '2147483647', 'important');
-    host.style.setProperty('pointer-events', 'none', 'important');
+    if (host.hasAttribute('hidden')) host.removeAttribute('hidden');
+    if (host.style.cssText !== expectedHostStyle) {
+      host.style.cssText = expectedHostStyle;
+    }
   };
 
   let observer = null;
+  let observedStyleParent = null;
+  let pageStyleObserved = false;
   const ensureInstalled = () => {
     try {
       const documentRoot = document.documentElement;
@@ -178,8 +185,17 @@ constexpr wchar_t kOverlayBootstrapScript[] = LR"JS(
         styleParent.appendChild(pageStyle);
       }
 
-      if (observer) {
+      if (observer && observedStyleParent !== styleParent) {
         observer.observe(styleParent, { childList: true });
+        observedStyleParent = styleParent;
+      }
+      if (observer && !pageStyleObserved) {
+        observer.observe(pageStyle, {
+          childList: true,
+          characterData: true,
+          subtree: true
+        });
+        pageStyleObserved = true;
       }
     } catch (_) {
       setTimeout(ensureInstalled, 50);
@@ -210,6 +226,7 @@ constexpr wchar_t kOverlayBootstrapScript[] = LR"JS(
 
   observer = new MutationObserver(ensureInstalled);
   ensureInstalled();
+  observer.observe(document, { childList: true });
   if (document.documentElement) {
     observer.observe(document.documentElement, { childList: true });
   }

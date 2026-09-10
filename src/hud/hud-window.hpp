@@ -44,6 +44,7 @@ private:
     void cancel_navigation_retry() noexcept;
     [[nodiscard]] bool capture_exclusion_intact() const noexcept;
     void fail_closed_capture_exclusion() noexcept;
+    bool apply_capture_policy() noexcept;
     void update_host_state() noexcept;
     void set_transient_status(
         std::wstring text, std::wstring tone, UINT duration_ms);
@@ -67,6 +68,7 @@ private:
     unsigned int navigation_retry_attempt_ = 0U;
     bool streaming_ = false;
     bool recording_ = false;
+    bool capture_risk_ = false;
     bool edit_mode_ = false;
     bool edit_hotkey_registered_ = false;
     bool webview_ready_ = false;

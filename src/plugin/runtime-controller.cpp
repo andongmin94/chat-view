@@ -203,7 +203,8 @@ void RuntimeController::stop() noexcept
     }
 }
 
-void RuntimeController::update(bool streaming, bool recording) noexcept
+void RuntimeController::update(
+    bool streaming, bool recording, bool capture_risk) noexcept
 {
     std::uint32_t flags = SharedStateNone;
     if (streaming) {
@@ -212,9 +213,14 @@ void RuntimeController::update(bool streaming, bool recording) noexcept
     if (recording) {
         flags |= SharedStateRecording;
     }
-    current_flags_.store(flags, std::memory_order_release);
+    if (capture_risk) {
+        flags |= SharedStateCaptureRisk;
+    }
 
-    if (stopping_.load(std::memory_order_acquire)) {
+    const std::uint32_t previous =
+        current_flags_.exchange(flags, std::memory_order_acq_rel);
+    if (previous == flags ||
+        stopping_.load(std::memory_order_acquire)) {
         return;
     }
 
@@ -289,6 +295,15 @@ bool RuntimeController::open_settings() const noexcept
 
 bool RuntimeController::toggle_edit_mode() noexcept
 {
+    if ((current_flags_.load(std::memory_order_acquire) &
+         SharedStateCaptureRisk) != 0U) {
+        blog(
+            LOG_WARNING,
+            "[ChatView OBS] HUD editing is disabled while the "
+            "Display Capture interlock is active");
+        return false;
+    }
+
     try {
         std::unique_lock lock(mutex_, std::try_to_lock);
         if (!lock.owns_lock()) {

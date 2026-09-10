@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.2.8 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.2.9 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -76,6 +76,7 @@ chatview_enable_warnings(chat-view-common)
 
 add_library(chat-view-obs MODULE
     src/plugin/plugin-main.cpp
+    src/plugin/capture-risk-policy.hpp
     src/plugin/runtime-controller.cpp
     src/plugin/runtime-controller.hpp
     src/plugin/restart-policy.hpp
@@ -243,6 +244,18 @@ if(BUILD_TESTING)
     add_test(
         NAME chat-view-restart-policy
         COMMAND chat-view-restart-policy-test
+    )
+
+    add_executable(chat-view-capture-risk-policy-test
+        tests/capture-risk-policy-test.cpp
+        src/plugin/capture-risk-policy.hpp
+    )
+    target_include_directories(
+        chat-view-capture-risk-policy-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_warnings(chat-view-capture-risk-policy-test)
+    add_test(
+        NAME chat-view-capture-risk-policy
+        COMMAND chat-view-capture-risk-policy-test
     )
 
     add_executable(chat-view-host-state-message-test

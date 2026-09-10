@@ -19,6 +19,7 @@ This branch currently provides an installable single-PC alpha:
 - persisted monitor and DPI-independent bounds;
 - LIVE and REC status indicators;
 - Windows capture-exclusion request through `WDA_EXCLUDEFROMCAPTURE`;
+- fail-closed Display Capture interlock while streaming, recording, replay buffering, or virtual-camera output is active;
 - bounded shutdown and an automatic restart circuit that stops crash loops;
 - explicit **Tools → Restart ChatView HUD** recovery without restarting OBS;
 - pinned Windows CI, native tests, installer test, and packaged artifact.
@@ -118,7 +119,7 @@ OBS Studio
       └── exits when OBS exits
 ```
 
-`WDA_EXCLUDEFROMCAPTURE` is a best-effort Windows capture hint. It does not remove the HUD from a physical HDMI signal sent to a capture card.
+`WDA_EXCLUDEFROMCAPTURE` is a best-effort Windows capture hint. It does not remove the HUD from a physical HDMI signal sent to a capture card. As a second software-side barrier, ChatView hides the private HUD whenever OBS reports an active Display Capture source while streaming, recording, replay buffering, or virtual-camera output is running. The HUD returns only after that condition clears.
 
 ## Build
 

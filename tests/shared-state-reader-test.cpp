@@ -116,14 +116,16 @@ int main()
     publish(
         mapped.get(),
         chatview::SharedStateStreaming |
-            chatview::SharedStateRecording,
+            chatview::SharedStateRecording |
+            chatview::SharedStateCaptureRisk,
         42U);
 
     chatview::SharedSnapshot snapshot;
     if (!reader.read(snapshot) ||
         snapshot.flags !=
             (chatview::SharedStateStreaming |
-             chatview::SharedStateRecording) ||
+             chatview::SharedStateRecording |
+             chatview::SharedStateCaptureRisk) ||
         snapshot.generation != 42U) {
         return fail(L"SharedStateReader changed a valid snapshot");
     }
@@ -135,7 +137,7 @@ int main()
     }
 
     const chatview::SharedSnapshot unchanged = snapshot;
-    publish(mapped.get(), 1U << 2U, 43U);
+    publish(mapped.get(), 1U << 3U, 43U);
     if (reader.read(snapshot) ||
         snapshot.flags != unchanged.flags ||
         snapshot.generation != unchanged.generation) {

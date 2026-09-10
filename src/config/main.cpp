@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/chat-config.hpp"
+#include "common/win32-handle.hpp"
 #include "common/window-messages.hpp"
 
 #include <Windows.h>
@@ -13,6 +14,7 @@
 namespace {
 
 constexpr wchar_t kWindowClassName[] = L"ChatViewObsConfigWindow";
+constexpr wchar_t kInstanceMutexName[] = L"Local\\ChatViewOBS.Settings.v1";
 constexpr int kUrlEditId = 1001;
 constexpr int kSaveButtonId = 1002;
 constexpr int kCancelButtonId = 1003;
@@ -46,6 +48,19 @@ void broadcast_config_changed()
     const UINT message = RegisterWindowMessageW(chatview::kConfigChangedMessageName);
     if (message != 0U) {
         SendNotifyMessageW(HWND_BROADCAST, message, 0U, 0L);
+    }
+}
+
+void activate_existing_window() noexcept
+{
+    for (unsigned int attempt = 0U; attempt < 40U; ++attempt) {
+        const HWND existing = FindWindowW(kWindowClassName, nullptr);
+        if (existing != nullptr) {
+            ShowWindow(existing, SW_RESTORE);
+            SetForegroundWindow(existing);
+            return;
+        }
+        Sleep(50U);
     }
 }
 
@@ -302,6 +317,22 @@ private:
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
 {
+    chatview::UniqueHandle instance_mutex(
+        CreateMutexW(nullptr, TRUE, kInstanceMutexName));
+    if (!instance_mutex) {
+        MessageBoxW(
+            nullptr,
+            L"ChatView could not create its settings lock.",
+            L"ChatView Settings",
+            MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        activate_existing_window();
+        return 0;
+    }
+
     ConfigWindow window;
     if (!window.create(instance)) {
         MessageBoxW(
@@ -313,9 +344,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     }
 
     MSG message{};
-    while (GetMessageW(&message, nullptr, 0U, 0U) > 0) {
+    int message_result = 0;
+    while ((message_result = GetMessageW(&message, nullptr, 0U, 0U)) > 0) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
-    return static_cast<int>(message.wParam);
+    return message_result < 0 ? 2 : static_cast<int>(message.wParam);
 }

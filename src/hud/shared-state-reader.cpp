@@ -19,14 +19,14 @@ bool SharedStateReader::open(
     close();
 
     mapping_.reset(OpenFileMappingW(
-        FILE_MAP_ALL_ACCESS, FALSE, mapping_name.c_str()));
+        FILE_MAP_READ, FALSE, mapping_name.c_str()));
     if (!mapping_) {
         return false;
     }
 
-    shared_state_ = static_cast<SharedState *>(MapViewOfFile(
+    shared_state_ = static_cast<const SharedState *>(MapViewOfFile(
         mapping_.get(),
-        FILE_MAP_ALL_ACCESS,
+        FILE_MAP_READ,
         0U,
         0U,
         sizeof(SharedState)));
@@ -73,8 +73,7 @@ bool SharedStateReader::read(SharedSnapshot &snapshot) const noexcept
     }
 
     for (unsigned int attempt = 0U; attempt < 32U; ++attempt) {
-        const LONG before = InterlockedCompareExchange(
-            &shared_state_->sequence, 0, 0);
+        const LONG before = shared_state_->sequence;
         if ((before & 1L) != 0L) {
             SwitchToThread();
             continue;
@@ -86,8 +85,7 @@ bool SharedStateReader::read(SharedSnapshot &snapshot) const noexcept
         candidate.generation = shared_state_->generation;
         MemoryBarrier();
 
-        const LONG after = InterlockedCompareExchange(
-            &shared_state_->sequence, 0, 0);
+        const LONG after = shared_state_->sequence;
         if (before == after && (after & 1L) == 0L) {
             if (!are_valid_shared_state_flags(candidate.flags)) {
                 return false;

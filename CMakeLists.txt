@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.2.2 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.2.3 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -78,12 +78,15 @@ add_library(chat-view-obs MODULE
     src/plugin/plugin-main.cpp
     src/plugin/runtime-controller.cpp
     src/plugin/runtime-controller.hpp
+    src/plugin/transport-token.cpp
+    src/plugin/transport-token.hpp
     src/common/shared-state.hpp
     src/common/win32-handle.hpp
     src/common/window-messages.hpp
 )
 target_include_directories(chat-view-obs PRIVATE "${CHATVIEW_SOURCE_DIR}")
-target_link_libraries(chat-view-obs PRIVATE OBS::libobs OBS::obs-frontend-api)
+target_link_libraries(
+    chat-view-obs PRIVATE OBS::libobs OBS::obs-frontend-api bcrypt)
 target_compile_definitions(chat-view-obs PRIVATE CHATVIEW_VERSION="${PROJECT_VERSION}")
 chatview_enable_win32(chat-view-obs)
 set_target_properties(chat-view-obs PROPERTIES PREFIX "" OUTPUT_NAME "chat-view-obs")
@@ -209,6 +212,21 @@ if(BUILD_TESTING)
     add_test(
         NAME chat-view-shared-state-reader
         COMMAND chat-view-shared-state-reader-test
+    )
+
+    add_executable(chat-view-transport-token-test
+        tests/transport-token-test.cpp
+        src/plugin/transport-token.cpp
+        src/plugin/transport-token.hpp
+    )
+    target_include_directories(
+        chat-view-transport-token-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    target_link_libraries(chat-view-transport-token-test PRIVATE bcrypt)
+    chatview_enable_win32(chat-view-transport-token-test)
+    chatview_enable_warnings(chat-view-transport-token-test)
+    add_test(
+        NAME chat-view-transport-token
+        COMMAND chat-view-transport-token-test
     )
 
     add_test(

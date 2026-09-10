@@ -3,6 +3,7 @@
 #include "plugin/runtime-controller.hpp"
 
 #include "common/window-messages.hpp"
+#include "plugin/transport-token.hpp"
 
 #include <obs-module.h>
 
@@ -321,8 +322,15 @@ bool RuntimeController::toggle_edit_mode() noexcept
 
 bool RuntimeController::create_transport_locked()
 {
+    const std::wstring token = create_transport_token();
+    if (!is_valid_transport_token(token)) {
+        blog(LOG_ERROR, "[ChatView OBS] CNG could not create a transport token");
+        return false;
+    }
+
     const DWORD process_id = GetCurrentProcessId();
-    const std::wstring suffix = std::to_wstring(process_id);
+    const std::wstring suffix =
+        std::to_wstring(process_id) + L"." + token;
     mapping_name_ = L"Local\\ChatViewOBS.State." + suffix;
     event_name_ = L"Local\\ChatViewOBS.Event." + suffix;
     ready_event_name_ = L"Local\\ChatViewOBS.Ready." + suffix;
@@ -338,39 +346,62 @@ bool RuntimeController::create_transport_locked()
         log_windows_error("CreateEventW(state publish)", GetLastError());
         return false;
     }
-    {
-        std::unique_lock publish_lock(state_publish_mutex_);
-        state_publish_handle_ = state_publish_event_.get();
-    }
 
-    mapping_.reset(CreateFileMappingW(
+    HANDLE mapping = CreateFileMappingW(
         INVALID_HANDLE_VALUE,
         nullptr,
         PAGE_READWRITE,
         0U,
         static_cast<DWORD>(sizeof(SharedState)),
-        mapping_name_.c_str()));
+        mapping_name_.c_str());
+    const DWORD mapping_error = GetLastError();
+    mapping_.reset(mapping);
     if (!mapping_) {
-        log_windows_error("CreateFileMappingW", GetLastError());
+        log_windows_error("CreateFileMappingW", mapping_error);
+        return false;
+    }
+    if (mapping_error == ERROR_ALREADY_EXISTS) {
+        blog(LOG_ERROR, "[ChatView OBS] Transport mapping name collided");
+        mapping_.reset();
         return false;
     }
 
-    shared_state_ = static_cast<SharedState *>(
-        MapViewOfFile(mapping_.get(), FILE_MAP_ALL_ACCESS, 0U, 0U, sizeof(SharedState)));
+    shared_state_ = static_cast<SharedState *>(MapViewOfFile(
+        mapping_.get(),
+        FILE_MAP_ALL_ACCESS,
+        0U,
+        0U,
+        sizeof(SharedState)));
     if (shared_state_ == nullptr) {
         log_windows_error("MapViewOfFile", GetLastError());
         return false;
     }
 
-    state_changed_event_.reset(CreateEventW(nullptr, FALSE, FALSE, event_name_.c_str()));
+    HANDLE state_changed_event =
+        CreateEventW(nullptr, FALSE, FALSE, event_name_.c_str());
+    const DWORD state_event_error = GetLastError();
+    state_changed_event_.reset(state_changed_event);
     if (!state_changed_event_) {
-        log_windows_error("CreateEventW(state changed)", GetLastError());
+        log_windows_error("CreateEventW(state changed)", state_event_error);
+        return false;
+    }
+    if (state_event_error == ERROR_ALREADY_EXISTS) {
+        blog(LOG_ERROR, "[ChatView OBS] State event name collided");
+        state_changed_event_.reset();
         return false;
     }
 
-    runtime_ready_event_.reset(CreateEventW(nullptr, TRUE, FALSE, ready_event_name_.c_str()));
+    HANDLE runtime_ready_event =
+        CreateEventW(nullptr, TRUE, FALSE, ready_event_name_.c_str());
+    const DWORD ready_event_error = GetLastError();
+    runtime_ready_event_.reset(runtime_ready_event);
     if (!runtime_ready_event_) {
-        log_windows_error("CreateEventW(runtime ready)", GetLastError());
+        log_windows_error("CreateEventW(runtime ready)", ready_event_error);
+        return false;
+    }
+    if (ready_event_error == ERROR_ALREADY_EXISTS) {
+        blog(LOG_ERROR, "[ChatView OBS] Ready event name collided");
+        runtime_ready_event_.reset();
         return false;
     }
 
@@ -380,6 +411,11 @@ bool RuntimeController::create_transport_locked()
     shared_state_->sequence = 0;
     shared_state_->flags = SharedStateNone;
     shared_state_->generation = 0U;
+
+    {
+        std::unique_lock publish_lock(state_publish_mutex_);
+        state_publish_handle_ = state_publish_event_.get();
+    }
     return true;
 }
 
@@ -393,7 +429,8 @@ bool RuntimeController::create_runtime_job_locked()
     }
 
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    limits.BasicLimitInformation.LimitFlags =
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if (!SetInformationJobObject(
             runtime_job_.get(),
             JobObjectExtendedLimitInformation,
@@ -408,7 +445,8 @@ bool RuntimeController::create_runtime_job_locked()
 
 bool RuntimeController::launch_runtime_locked()
 {
-    const std::wstring runtime_path = find_sibling_path(kRuntimeExecutableName);
+    const std::wstring runtime_path =
+        find_sibling_path(kRuntimeExecutableName);
     if (runtime_path.empty() || !is_regular_file(runtime_path)) {
         blog(
             LOG_ERROR,
@@ -430,7 +468,8 @@ bool RuntimeController::launch_runtime_locked()
     std::wstring command_line =
         L"\"" + runtime_path + L"\" --mapping \"" + mapping_name_ +
         L"\" --event \"" + event_name_ + L"\" --ready-event \"" +
-        ready_event_name_ + L"\" --parent " + std::to_wstring(process_id);
+        ready_event_name_ + L"\" --parent " +
+        std::to_wstring(process_id);
 
     STARTUPINFOW startup_info{};
     startup_info.cb = sizeof(startup_info);
@@ -490,7 +529,8 @@ bool RuntimeController::launch_runtime_locked()
     }
     if (wait_result != WAIT_OBJECT_0) {
         if (wait_result == WAIT_FAILED) {
-            log_windows_error("WaitForMultipleObjects(HUD ready)", GetLastError());
+            log_windows_error(
+                "WaitForMultipleObjects(HUD ready)", GetLastError());
         } else {
             blog(
                 LOG_ERROR,
@@ -522,7 +562,8 @@ HWND RuntimeController::find_runtime_window_locked() const noexcept
     return search.window;
 }
 
-std::wstring RuntimeController::find_sibling_path(const wchar_t *file_name) const
+std::wstring RuntimeController::find_sibling_path(
+    const wchar_t *file_name) const
 {
     static int module_anchor = 0;
 
@@ -538,13 +579,16 @@ std::wstring RuntimeController::find_sibling_path(const wchar_t *file_name) cons
 
     std::array<wchar_t, 32768U> module_path{};
     const DWORD length = GetModuleFileNameW(
-        module_handle, module_path.data(), static_cast<DWORD>(module_path.size()));
+        module_handle,
+        module_path.data(),
+        static_cast<DWORD>(module_path.size()));
     if (length == 0U || length >= module_path.size()) {
         log_windows_error("GetModuleFileNameW", GetLastError());
         return {};
     }
 
-    return (std::filesystem::path(module_path.data()).parent_path() / file_name)
+    return (std::filesystem::path(module_path.data()).parent_path() /
+            file_name)
         .wstring();
 }
 
@@ -608,7 +652,10 @@ void RuntimeController::supervisor_loop() noexcept
 
             HANDLE wait_handles[3] = {stop_event, process, publish_event};
             const DWORD wait_result = WaitForMultipleObjects(
-                3U, wait_handles, FALSE, kRuntimeStablePeriodMs);
+                3U,
+                wait_handles,
+                FALSE,
+                kRuntimeStablePeriodMs);
             if (wait_result == WAIT_OBJECT_0) {
                 return;
             }
@@ -644,7 +691,8 @@ void RuntimeController::supervisor_loop() noexcept
                 std::scoped_lock lock(mutex_);
                 if (runtime_process_id_ == process_id &&
                     runtime_process_.get() == process) {
-                    log_process_exit(runtime_process_.get(), "exited unexpectedly");
+                    log_process_exit(
+                        runtime_process_.get(), "exited unexpectedly");
                     runtime_process_.reset();
                     runtime_process_id_ = 0U;
                     runtime_job_.reset();
@@ -689,14 +737,18 @@ void RuntimeController::publish_locked(std::uint32_t flags) noexcept
     }
 }
 
-void RuntimeController::terminate_runtime_locked(const char *reason) noexcept
+void RuntimeController::terminate_runtime_locked(
+    const char *reason) noexcept
 {
     if (!runtime_process_) {
         runtime_job_.reset();
         return;
     }
 
-    blog(LOG_WARNING, "[ChatView OBS] HUD runtime %s; terminating it", reason);
+    blog(
+        LOG_WARNING,
+        "[ChatView OBS] HUD runtime %s; terminating it",
+        reason);
     if (!TerminateProcess(runtime_process_.get(), 1U)) {
         log_windows_error("TerminateProcess(HUD)", GetLastError());
         if (runtime_job_ && !TerminateJobObject(runtime_job_.get(), 1U)) {
@@ -708,11 +760,14 @@ void RuntimeController::terminate_runtime_locked(const char *reason) noexcept
         WaitForSingleObject(runtime_process_.get(), kRuntimeTerminateWaitMs);
     if (wait_result == WAIT_TIMEOUT && runtime_job_) {
         if (!TerminateJobObject(runtime_job_.get(), 1U)) {
-            log_windows_error("TerminateJobObject(HUD timeout)", GetLastError());
+            log_windows_error(
+                "TerminateJobObject(HUD timeout)", GetLastError());
         }
-        WaitForSingleObject(runtime_process_.get(), kRuntimeTerminateWaitMs);
+        WaitForSingleObject(
+            runtime_process_.get(), kRuntimeTerminateWaitMs);
     } else if (wait_result == WAIT_FAILED) {
-        log_windows_error("WaitForSingleObject(HUD terminate)", GetLastError());
+        log_windows_error(
+            "WaitForSingleObject(HUD terminate)", GetLastError());
     }
 
     runtime_process_.reset();

@@ -32,7 +32,7 @@ private:
     UniqueHandle mapping_;
     UniqueHandle state_changed_event_;
     UniqueHandle parent_process_;
-    SharedState *shared_state_ = nullptr;
+    const SharedState *shared_state_ = nullptr;
 };
 
 } // namespace chatview

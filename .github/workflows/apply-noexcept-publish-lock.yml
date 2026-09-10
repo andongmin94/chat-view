@@ -1,0 +1,43 @@
+name: Apply no-throw publish lock hardening
+
+on:
+  push:
+    branches:
+      - OBS
+    paths:
+      - .github/workflows/apply-noexcept-publish-lock.yml
+      - scripts/apply-noexcept-publish-lock.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    name: Apply no-throw publish lock patch
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out OBS branch
+        uses: actions/checkout@v4
+        with:
+          ref: OBS
+          fetch-depth: 0
+
+      - name: Apply deterministic patch
+        run: python scripts/apply-noexcept-publish-lock.py
+
+      - name: Validate patch formatting
+        run: git diff --check
+
+      - name: Commit lock hardening
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            CMakeLists.txt \
+            docs/architecture.md \
+            src/common/srw-lock.hpp \
+            src/plugin/runtime-controller.cpp \
+            src/plugin/runtime-controller.hpp
+          git commit -m "reliability: use no-throw callback locking"
+          git push origin HEAD:OBS

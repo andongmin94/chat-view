@@ -18,6 +18,15 @@ enum SharedStateFlag : std::uint32_t {
     SharedStateShutdown = 1U << 31U,
 };
 
+inline constexpr std::uint32_t kKnownSharedStateFlags =
+    SharedStateStreaming | SharedStateRecording | SharedStateShutdown;
+
+[[nodiscard]] constexpr bool are_valid_shared_state_flags(
+    std::uint32_t flags) noexcept
+{
+    return (flags & ~kKnownSharedStateFlags) == 0U;
+}
+
 struct SharedState {
     std::uint32_t magic;
     std::uint32_t version;
@@ -40,5 +49,8 @@ struct SharedSnapshot {
 
 static_assert(sizeof(LONG) == sizeof(std::int32_t));
 static_assert(sizeof(SharedState) == 64U);
+static_assert(are_valid_shared_state_flags(SharedStateNone));
+static_assert(are_valid_shared_state_flags(kKnownSharedStateFlags));
+static_assert(!are_valid_shared_state_flags(1U << 2U));
 
 } // namespace chatview

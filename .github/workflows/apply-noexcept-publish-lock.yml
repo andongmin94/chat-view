@@ -1,4 +1,4 @@
-name: Apply no-throw publish lock hardening
+name: Apply runtime boundary hardening
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   apply:
-    name: Apply no-throw publish lock patch
+    name: Apply runtime boundary patch
     runs-on: ubuntu-latest
 
     steps:
@@ -29,15 +29,10 @@ jobs:
       - name: Validate patch formatting
         run: git diff --check
 
-      - name: Commit lock hardening
+      - name: Commit runtime boundary hardening
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            CMakeLists.txt \
-            docs/architecture.md \
-            src/common/srw-lock.hpp \
-            src/plugin/runtime-controller.cpp \
-            src/plugin/runtime-controller.hpp
-          git commit -m "reliability: use no-throw callback locking"
+          git add -A
+          git commit -m "security: isolate the HUD control plane"
           git push origin HEAD:OBS

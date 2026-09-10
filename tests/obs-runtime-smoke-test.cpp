@@ -6,6 +6,7 @@
 #include <Windows.h>
 #include <TlHelp32.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cwchar>
@@ -18,9 +19,12 @@
 namespace {
 
 constexpr wchar_t kHudExecutableName[] = L"chat-view-hud.exe";
+constexpr wchar_t kWebViewExecutableName[] = L"msedgewebview2.exe";
 constexpr DWORD kHudStartupTimeoutMs = 45000U;
 constexpr DWORD kHudRestartTimeoutMs = 45000U;
 constexpr DWORD kHudExitTimeoutMs = 10000U;
+constexpr DWORD kHudDescendantStartupTimeoutMs = 15000U;
+constexpr DWORD kHudDescendantExitTimeoutMs = 15000U;
 constexpr DWORD kObsExitTimeoutMs = 30000U;
 constexpr unsigned int kCrashRecoveryCycles = 3U;
 
@@ -36,6 +40,18 @@ struct WindowSearch {
 struct ProcessWindowCollection {
     DWORD process_id = 0U;
     std::vector<HWND> windows;
+};
+
+struct ProcessRecord {
+    DWORD process_id = 0U;
+    DWORD parent_process_id = 0U;
+    std::wstring executable;
+};
+
+struct TrackedProcess {
+    DWORD process_id = 0U;
+    std::wstring executable;
+    chatview::UniqueHandle process;
 };
 
 struct HudInstance {
@@ -94,53 +110,149 @@ BOOL CALLBACK collect_process_windows(HWND window, LPARAM data)
     return TRUE;
 }
 
-DWORD find_child_process(DWORD parent_process_id, DWORD excluded_process_id) noexcept
+std::vector<ProcessRecord> snapshot_processes() noexcept
 {
     chatview::UniqueHandle snapshot(
         CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0U));
     if (!snapshot || snapshot.get() == INVALID_HANDLE_VALUE) {
-        return 0U;
+        return {};
     }
 
     PROCESSENTRY32W entry{};
     entry.dwSize = sizeof(entry);
     if (!Process32FirstW(snapshot.get(), &entry)) {
-        return 0U;
+        return {};
     }
 
+    std::vector<ProcessRecord> records;
     do {
-        if (entry.th32ParentProcessID == parent_process_id &&
-            entry.th32ProcessID != excluded_process_id &&
-            _wcsicmp(entry.szExeFile, kHudExecutableName) == 0) {
-            return entry.th32ProcessID;
-        }
+        records.push_back(ProcessRecord{
+            entry.th32ProcessID,
+            entry.th32ParentProcessID,
+            entry.szExeFile,
+        });
     } while (Process32NextW(snapshot.get(), &entry));
+    return records;
+}
 
+std::vector<TrackedProcess> open_descendant_processes(DWORD root_process_id) noexcept
+{
+    const std::vector<ProcessRecord> records = snapshot_processes();
+    if (records.empty()) {
+        return {};
+    }
+
+    std::vector<DWORD> lineage{root_process_id};
+    std::vector<bool> included(records.size(), false);
+    std::vector<TrackedProcess> descendants;
+
+    bool added = false;
+    do {
+        added = false;
+        for (std::size_t index = 0U; index < records.size(); ++index) {
+            if (included[index]) {
+                continue;
+            }
+
+            const ProcessRecord &record = records[index];
+            if (std::find(
+                    lineage.begin(), lineage.end(), record.parent_process_id) ==
+                lineage.end()) {
+                continue;
+            }
+
+            included[index] = true;
+            lineage.push_back(record.process_id);
+            added = true;
+
+            chatview::UniqueHandle process(OpenProcess(
+                SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                FALSE,
+                record.process_id));
+            if (process) {
+                descendants.push_back(TrackedProcess{
+                    record.process_id,
+                    record.executable,
+                    std::move(process),
+                });
+            }
+        }
+    } while (added);
+
+    return descendants;
+}
+
+bool contains_webview_process(const std::vector<TrackedProcess> &processes) noexcept
+{
+    return std::any_of(
+        processes.begin(), processes.end(), [](const TrackedProcess &process) {
+            return _wcsicmp(
+                       process.executable.c_str(), kWebViewExecutableName) == 0;
+        });
+}
+
+bool wait_for_webview_descendants(
+    HANDLE obs_process,
+    DWORD hud_process_id,
+    std::vector<TrackedProcess> &descendants) noexcept
+{
+    const ULONGLONG deadline =
+        GetTickCount64() + kHudDescendantStartupTimeoutMs;
+    while (GetTickCount64() < deadline) {
+        if (WaitForSingleObject(obs_process, 0U) != WAIT_TIMEOUT) {
+            return false;
+        }
+
+        std::vector<TrackedProcess> candidate =
+            open_descendant_processes(hud_process_id);
+        if (contains_webview_process(candidate)) {
+            descendants = std::move(candidate);
+            return true;
+        }
+        Sleep(50U);
+    }
+    return false;
+}
+
+bool wait_for_processes_exit(
+    const std::vector<TrackedProcess> &processes, DWORD timeout_ms) noexcept
+{
+    const ULONGLONG deadline = GetTickCount64() + timeout_ms;
+    for (const TrackedProcess &process : processes) {
+        const ULONGLONG now = GetTickCount64();
+        const DWORD remaining =
+            now >= deadline ? 0U : static_cast<DWORD>(deadline - now);
+        if (WaitForSingleObject(process.process.get(), remaining) != WAIT_OBJECT_0) {
+            std::wcerr << L"Descendant process remained alive: "
+                       << process.executable << L" (PID "
+                       << process.process_id << L")\n";
+            return false;
+        }
+    }
+    return true;
+}
+
+DWORD find_child_process(DWORD parent_process_id, DWORD excluded_process_id) noexcept
+{
+    const std::vector<ProcessRecord> records = snapshot_processes();
+    for (const ProcessRecord &record : records) {
+        if (record.parent_process_id == parent_process_id &&
+            record.process_id != excluded_process_id &&
+            _wcsicmp(record.executable.c_str(), kHudExecutableName) == 0) {
+            return record.process_id;
+        }
+    }
     return 0U;
 }
 
 unsigned int count_child_hud_processes(DWORD parent_process_id) noexcept
 {
-    chatview::UniqueHandle snapshot(
-        CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0U));
-    if (!snapshot || snapshot.get() == INVALID_HANDLE_VALUE) {
-        return 0U;
-    }
-
-    PROCESSENTRY32W entry{};
-    entry.dwSize = sizeof(entry);
-    if (!Process32FirstW(snapshot.get(), &entry)) {
-        return 0U;
-    }
-
-    unsigned int count = 0U;
-    do {
-        if (entry.th32ParentProcessID == parent_process_id &&
-            _wcsicmp(entry.szExeFile, kHudExecutableName) == 0) {
-            ++count;
-        }
-    } while (Process32NextW(snapshot.get(), &entry));
-    return count;
+    const std::vector<ProcessRecord> records = snapshot_processes();
+    return static_cast<unsigned int>(std::count_if(
+        records.begin(), records.end(), [parent_process_id](const ProcessRecord &record) {
+            return record.parent_process_id == parent_process_id &&
+                   _wcsicmp(record.executable.c_str(), kHudExecutableName) == 0;
+        }));
 }
 
 HWND find_window(DWORD process_id) noexcept
@@ -168,7 +280,8 @@ bool wait_for_hud(
                 find_child_process(obs_process_id, excluded_process_id);
             if (process_id != 0U) {
                 chatview::UniqueHandle process(OpenProcess(
-                    SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
+                    SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION |
+                        PROCESS_TERMINATE,
                     FALSE,
                     process_id));
                 if (process) {
@@ -223,7 +336,8 @@ bool terminate_hud(HudInstance &instance, unsigned int cycle) noexcept
         !TerminateProcess(instance.process.get(), 77U + cycle)) {
         return false;
     }
-    if (WaitForSingleObject(instance.process.get(), kHudExitTimeoutMs) != WAIT_OBJECT_0) {
+    if (WaitForSingleObject(instance.process.get(), kHudExitTimeoutMs) !=
+        WAIT_OBJECT_0) {
         return false;
     }
     instance = {};
@@ -321,10 +435,27 @@ int wmain(int argument_count, wchar_t **arguments)
     }
 
     for (unsigned int cycle = 0U; cycle < kCrashRecoveryCycles; ++cycle) {
+        std::vector<TrackedProcess> old_descendants;
+        if (!wait_for_webview_descendants(
+                obs_process.get(), hud.process_id, old_descendants)) {
+            return fail(
+                L"The HUD did not own a WebView2 descendant before recovery cycle " +
+                    std::to_wstring(cycle + 1U),
+                obs_process.get());
+        }
+
         const DWORD previous_process_id = hud.process_id;
         if (!terminate_hud(hud, cycle)) {
             return fail(
                 L"The OBS integration test could not terminate HUD recovery cycle " +
+                    std::to_wstring(cycle + 1U),
+                obs_process.get());
+        }
+
+        if (!wait_for_processes_exit(
+                old_descendants, kHudDescendantExitTimeoutMs)) {
+            return fail(
+                L"The previous HUD generation leaked descendant processes in cycle " +
                     std::to_wstring(cycle + 1U),
                 obs_process.get());
         }
@@ -353,6 +484,14 @@ int wmain(int argument_count, wchar_t **arguments)
         }
     }
 
+    std::vector<TrackedProcess> final_descendants;
+    if (!wait_for_webview_descendants(
+            obs_process.get(), hud.process_id, final_descendants)) {
+        return fail(
+            L"The final HUD did not own a WebView2 descendant before OBS shutdown",
+            obs_process.get());
+    }
+
     if (!request_graceful_obs_shutdown(
             obs_process.get(), process_info.dwProcessId)) {
         return fail(
@@ -361,21 +500,29 @@ int wmain(int argument_count, wchar_t **arguments)
     }
 
     DWORD obs_exit_code = 1U;
-    if (!GetExitCodeProcess(obs_process.get(), &obs_exit_code) || obs_exit_code != 0U) {
+    if (!GetExitCodeProcess(obs_process.get(), &obs_exit_code) ||
+        obs_exit_code != 0U) {
         return fail(
             L"OBS Studio did not exit cleanly (exit code " +
             std::to_wstring(obs_exit_code) + L")");
     }
 
-    if (WaitForSingleObject(hud.process.get(), kHudExitTimeoutMs) != WAIT_OBJECT_0) {
+    if (WaitForSingleObject(hud.process.get(), kHudExitTimeoutMs) !=
+        WAIT_OBJECT_0) {
         return fail(L"The HUD remained after graceful OBS shutdown");
     }
 
     DWORD hud_exit_code = STILL_ACTIVE;
-    if (!GetExitCodeProcess(hud.process.get(), &hud_exit_code) || hud_exit_code != 0U) {
+    if (!GetExitCodeProcess(hud.process.get(), &hud_exit_code) ||
+        hud_exit_code != 0U) {
         return fail(
             L"The HUD did not exit cleanly with OBS (exit code " +
             std::to_wstring(hud_exit_code) + L")");
+    }
+
+    if (!wait_for_processes_exit(
+            final_descendants, kHudDescendantExitTimeoutMs)) {
+        return fail(L"The final HUD leaked WebView2 descendant processes after OBS shutdown");
     }
 
     return 0;

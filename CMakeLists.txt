@@ -195,6 +195,22 @@ if(BUILD_TESTING)
     chatview_enable_warnings(chat-view-hud-placement-test)
     add_test(NAME chat-view-hud-placement COMMAND chat-view-hud-placement-test)
 
+    add_executable(chat-view-shared-state-reader-test
+        tests/shared-state-reader-test.cpp
+        src/hud/shared-state-reader.cpp
+        src/hud/shared-state-reader.hpp
+        src/common/shared-state.hpp
+        src/common/win32-handle.hpp
+    )
+    target_include_directories(
+        chat-view-shared-state-reader-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_win32(chat-view-shared-state-reader-test)
+    chatview_enable_warnings(chat-view-shared-state-reader-test)
+    add_test(
+        NAME chat-view-shared-state-reader
+        COMMAND chat-view-shared-state-reader-test
+    )
+
     add_test(
         NAME chat-view-hud-smoke
         COMMAND chat-view-self-test "$<TARGET_FILE:chat-view-hud>"

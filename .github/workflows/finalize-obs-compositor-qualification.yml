@@ -1,0 +1,60 @@
+name: Finalize OBS compositor qualification
+
+on:
+  push:
+    branches:
+      - OBS
+    paths:
+      - .github/workflows/finalize-obs-compositor-qualification.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-obs-compositor-qualification
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    name: Finalize compositor qualification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out OBS branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Complete or verify qualification patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -Fq 'project(chat-view-obs VERSION 0.2.10 LANGUAGES CXX)' CMakeLists.txt; then
+            python scripts/apply-obs-compositor-qualification.py
+          elif ! grep -Fq 'project(chat-view-obs VERSION 0.2.11 LANGUAGES CXX)' CMakeLists.txt; then
+            echo 'Unexpected ChatView project version.' >&2
+            exit 1
+          fi
+
+          grep -F 'chat-view-obs-capture-qualification' CMakeLists.txt
+          grep -F 'pipeline=monitor_capture>scene>main_texture' tests/obs-capture-qualification-plugin.cpp
+          grep -F 'hidden_window_excluded=1' tests/obs-capture-qualification-test.cpp
+          grep -F '$qualificationTest $obsRoot' .github/workflows/windows-build.yml
+          git diff --check
+
+      - name: Commit clean final tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f scripts/apply-obs-compositor-qualification.py
+          rm -f .github/workflows/apply-obs-compositor-qualification.yml
+          rm -f .github/workflows/finalize-obs-compositor-qualification.yml
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'Finalizer had no changes to commit.' >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'build: finalize OBS compositor qualification'
+          git push origin HEAD:OBS

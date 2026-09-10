@@ -5,10 +5,12 @@
 #include "common/window-messages.hpp"
 
 #include <Windows.h>
+#include <dwmapi.h>
 
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cwchar>
 #include <filesystem>
 #include <iostream>
@@ -19,9 +21,16 @@
 namespace {
 
 constexpr wchar_t kHudWindowClass[] = L"ChatViewObsHudWindow";
+constexpr wchar_t kCaptureProbeWindowClass[] =
+    L"ChatViewObsCaptureProbeWindow";
 constexpr DWORD kStartupTimeoutMs = 25000U;
 constexpr DWORD kShutdownTimeoutMs = 8000U;
 constexpr DWORD kWindowStateTimeoutMs = 3000U;
+constexpr DWORD kCaptureSettleTimeMs = 180U;
+constexpr int kCaptureProbeWidth = 240;
+constexpr int kCaptureProbeHeight = 180;
+constexpr int kMinimumProbeColorDistance = 120;
+constexpr int kMaximumProtectedColorDistance = 36;
 constexpr auto kProfileCleanupTimeout = std::chrono::seconds(10);
 
 #ifndef WDA_EXCLUDEFROMCAPTURE
@@ -55,6 +64,337 @@ public:
 private:
     chatview::SharedState *state_ = nullptr;
 };
+
+LRESULT CALLBACK capture_probe_window_proc(
+    HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    if (message == WM_NCCREATE) {
+        const auto *create = reinterpret_cast<const CREATESTRUCTW *>(lparam);
+        SetWindowLongPtrW(
+            window,
+            GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+    }
+
+    if (message == WM_PAINT) {
+        PAINTSTRUCT paint{};
+        HDC device = BeginPaint(window, &paint);
+        if (device != nullptr) {
+            RECT bounds{};
+            GetClientRect(window, &bounds);
+            const auto *color = reinterpret_cast<const COLORREF *>(
+                GetWindowLongPtrW(window, GWLP_USERDATA));
+            if (color != nullptr) {
+                SetDCBrushColor(device, *color);
+                FillRect(
+                    device,
+                    &bounds,
+                    static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+            }
+            EndPaint(window, &paint);
+        }
+        return 0L;
+    }
+
+    if (message == WM_ERASEBKGND) {
+        return 1L;
+    }
+
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+
+class CaptureProbe final {
+public:
+    CaptureProbe() = default;
+
+    ~CaptureProbe()
+    {
+        if (foreground_ != nullptr) {
+            DestroyWindow(foreground_);
+        }
+        if (background_ != nullptr) {
+            DestroyWindow(background_);
+        }
+        if (class_registered_ && instance_ != nullptr) {
+            UnregisterClassW(kCaptureProbeWindowClass, instance_);
+        }
+    }
+
+    CaptureProbe(const CaptureProbe &) = delete;
+    CaptureProbe &operator=(const CaptureProbe &) = delete;
+
+    [[nodiscard]] bool create() noexcept
+    {
+        instance_ = GetModuleHandleW(nullptr);
+        if (instance_ == nullptr) {
+            return false;
+        }
+
+        WNDCLASSEXW window_class{};
+        window_class.cbSize = sizeof(window_class);
+        window_class.lpfnWndProc = &capture_probe_window_proc;
+        window_class.hInstance = instance_;
+        window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        window_class.lpszClassName = kCaptureProbeWindowClass;
+        if (RegisterClassExW(&window_class) == 0U) {
+            return false;
+        }
+        class_registered_ = true;
+
+        RECT work_area{};
+        if (!SystemParametersInfoW(
+                SPI_GETWORKAREA, 0U, &work_area, 0U)) {
+            return false;
+        }
+
+        const int width =
+            std::min(kCaptureProbeWidth, work_area.right - work_area.left);
+        const int height =
+            std::min(kCaptureProbeHeight, work_area.bottom - work_area.top);
+        if (width < 32 || height < 32) {
+            return false;
+        }
+
+        left_ = work_area.left +
+                (work_area.right - work_area.left - width) / 2;
+        top_ = work_area.top +
+               (work_area.bottom - work_area.top - height) / 2;
+        sample_point_ = POINT{left_ + width / 2, top_ + height / 2};
+
+        constexpr DWORD extended_style =
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+        background_ = CreateWindowExW(
+            extended_style,
+            kCaptureProbeWindowClass,
+            L"",
+            WS_POPUP,
+            left_,
+            top_,
+            width,
+            height,
+            nullptr,
+            nullptr,
+            instance_,
+            &background_color_);
+        if (background_ == nullptr) {
+            return false;
+        }
+
+        foreground_ = CreateWindowExW(
+            extended_style,
+            kCaptureProbeWindowClass,
+            L"",
+            WS_POPUP,
+            left_,
+            top_,
+            width,
+            height,
+            nullptr,
+            nullptr,
+            instance_,
+            &foreground_color_);
+        return foreground_ != nullptr;
+    }
+
+    [[nodiscard]] bool show_background() const noexcept
+    {
+        ShowWindow(foreground_, SW_HIDE);
+        if (!SetWindowPos(
+                background_,
+                HWND_TOPMOST,
+                left_,
+                top_,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)) {
+            return false;
+        }
+        return settle(background_);
+    }
+
+    [[nodiscard]] bool show_foreground() const noexcept
+    {
+        if (!SetWindowPos(
+                foreground_,
+                HWND_TOPMOST,
+                left_,
+                top_,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)) {
+            return false;
+        }
+        return settle(foreground_);
+    }
+
+    [[nodiscard]] bool protect_foreground() const noexcept
+    {
+        if (!SetWindowDisplayAffinity(
+                foreground_, WDA_EXCLUDEFROMCAPTURE)) {
+            return false;
+        }
+
+        DWORD affinity = WDA_NONE;
+        if (!GetWindowDisplayAffinity(foreground_, &affinity) ||
+            affinity != WDA_EXCLUDEFROMCAPTURE) {
+            return false;
+        }
+        return settle(foreground_);
+    }
+
+    [[nodiscard]] POINT sample_point() const noexcept
+    {
+        return sample_point_;
+    }
+
+private:
+    [[nodiscard]] static bool settle(HWND window) noexcept
+    {
+        if (!RedrawWindow(
+                window,
+                nullptr,
+                nullptr,
+                RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN)) {
+            return false;
+        }
+        const HRESULT flush_result = DwmFlush();
+        if (FAILED(flush_result)) {
+            return false;
+        }
+        Sleep(kCaptureSettleTimeMs);
+        return true;
+    }
+
+    HINSTANCE instance_ = nullptr;
+    HWND background_ = nullptr;
+    HWND foreground_ = nullptr;
+    bool class_registered_ = false;
+    int left_ = 0;
+    int top_ = 0;
+    POINT sample_point_{};
+    COLORREF background_color_ = RGB(24, 191, 83);
+    COLORREF foreground_color_ = RGB(226, 39, 139);
+};
+
+[[nodiscard]] bool capture_screen_pixel(
+    POINT point, COLORREF &color) noexcept
+{
+    HDC screen = GetDC(nullptr);
+    if (screen == nullptr) {
+        return false;
+    }
+
+    HDC memory = CreateCompatibleDC(screen);
+    if (memory == nullptr) {
+        ReleaseDC(nullptr, screen);
+        return false;
+    }
+
+    HBITMAP bitmap = CreateCompatibleBitmap(screen, 1, 1);
+    if (bitmap == nullptr) {
+        DeleteDC(memory);
+        ReleaseDC(nullptr, screen);
+        return false;
+    }
+
+    HGDIOBJ previous = SelectObject(memory, bitmap);
+    const bool selected = previous != nullptr && previous != HGDI_ERROR;
+    const bool copied = selected &&
+                        BitBlt(
+                            memory,
+                            0,
+                            0,
+                            1,
+                            1,
+                            screen,
+                            point.x,
+                            point.y,
+                            SRCCOPY | CAPTUREBLT) != FALSE;
+    const COLORREF sampled = copied ? GetPixel(memory, 0, 0) : CLR_INVALID;
+
+    if (selected) {
+        SelectObject(memory, previous);
+    }
+    DeleteObject(bitmap);
+    DeleteDC(memory);
+    ReleaseDC(nullptr, screen);
+
+    if (sampled == CLR_INVALID) {
+        return false;
+    }
+    color = sampled;
+    return true;
+}
+
+[[nodiscard]] int color_distance(
+    COLORREF left, COLORREF right) noexcept
+{
+    return std::abs(
+               static_cast<int>(GetRValue(left)) -
+               static_cast<int>(GetRValue(right))) +
+           std::abs(
+               static_cast<int>(GetGValue(left)) -
+               static_cast<int>(GetGValue(right))) +
+           std::abs(
+               static_cast<int>(GetBValue(left)) -
+               static_cast<int>(GetBValue(right)));
+}
+
+[[nodiscard]] bool verify_capture_exclusion() noexcept
+{
+    CaptureProbe probe;
+    if (!probe.create() || !probe.show_background()) {
+        std::wcerr << L"The local capture probe could not create its calibration windows\n";
+        return false;
+    }
+
+    COLORREF background_sample = CLR_INVALID;
+    if (!capture_screen_pixel(probe.sample_point(), background_sample)) {
+        std::wcerr << L"The local capture probe could not sample its background\n";
+        return false;
+    }
+
+    if (!probe.show_foreground()) {
+        std::wcerr << L"The local capture probe could not show its foreground\n";
+        return false;
+    }
+
+    COLORREF foreground_sample = CLR_INVALID;
+    if (!capture_screen_pixel(probe.sample_point(), foreground_sample)) {
+        std::wcerr << L"The local capture probe could not sample its foreground\n";
+        return false;
+    }
+
+    if (color_distance(background_sample, foreground_sample) <
+        kMinimumProbeColorDistance) {
+        std::wcerr << L"Desktop capture did not distinguish the probe windows\n";
+        return false;
+    }
+
+    if (!probe.protect_foreground()) {
+        std::wcerr << L"Windows did not enable capture exclusion for the probe\n";
+        return false;
+    }
+
+    COLORREF protected_sample = CLR_INVALID;
+    if (!capture_screen_pixel(probe.sample_point(), protected_sample)) {
+        std::wcerr << L"The local capture probe could not sample the protected window\n";
+        return false;
+    }
+
+    const int background_distance =
+        color_distance(protected_sample, background_sample);
+    const int foreground_distance =
+        color_distance(protected_sample, foreground_sample);
+    if (background_distance > kMaximumProtectedColorDistance ||
+        background_distance >= foreground_distance) {
+        std::wcerr
+            << L"Capture exclusion did not reveal the calibrated background "
+               L"behind the protected window\n";
+        return false;
+    }
+    return true;
+}
 
 BOOL CALLBACK find_hud_window(HWND window, LPARAM data)
 {
@@ -115,7 +455,8 @@ bool wait_for_width_greater(HWND window, LONG previous_width) noexcept
     const ULONGLONG deadline = GetTickCount64() + kWindowStateTimeoutMs;
     while (GetTickCount64() < deadline) {
         RECT bounds{};
-        if (GetWindowRect(window, &bounds) && bounds.right - bounds.left > previous_width) {
+        if (GetWindowRect(window, &bounds) &&
+            bounds.right - bounds.left > previous_width) {
             return true;
         }
         Sleep(25U);
@@ -125,7 +466,8 @@ bool wait_for_width_greater(HWND window, LONG previous_width) noexcept
 
 bool remove_tree_with_retry(const std::filesystem::path &path) noexcept
 {
-    const auto deadline = std::chrono::steady_clock::now() + kProfileCleanupTimeout;
+    const auto deadline =
+        std::chrono::steady_clock::now() + kProfileCleanupTimeout;
     std::error_code error;
 
     do {
@@ -140,7 +482,10 @@ bool remove_tree_with_retry(const std::filesystem::path &path) noexcept
     return false;
 }
 
-void publish(chatview::SharedState *state, HANDLE event, std::uint32_t flags) noexcept
+void publish(
+    chatview::SharedState *state,
+    HANDLE event,
+    std::uint32_t flags) noexcept
 {
     InterlockedIncrement(&state->sequence);
     MemoryBarrier();
@@ -154,7 +499,8 @@ void publish(chatview::SharedState *state, HANDLE event, std::uint32_t flags) no
 int fail(const wchar_t *message, HANDLE process = nullptr)
 {
     std::wcerr << message << L'\n';
-    if (process != nullptr && WaitForSingleObject(process, 0U) == WAIT_TIMEOUT) {
+    if (process != nullptr &&
+        WaitForSingleObject(process, 0U) == WAIT_TIMEOUT) {
         TerminateProcess(process, 1U);
         WaitForSingleObject(process, 2000U);
     }
@@ -186,11 +532,19 @@ int wmain(int argument_count, wchar_t **arguments)
         return fail(L"The HUD executable does not exist");
     }
 
+    if (!verify_capture_exclusion()) {
+        return fail(
+            L"This Windows capture path did not pass the privacy preflight");
+    }
+
     const DWORD process_id = GetCurrentProcessId();
     const std::wstring suffix = std::to_wstring(process_id);
-    const std::wstring mapping_name = L"Local\\ChatViewOBS.Test.State." + suffix;
-    const std::wstring event_name = L"Local\\ChatViewOBS.Test.Event." + suffix;
-    const std::wstring ready_event_name = L"Local\\ChatViewOBS.Test.Ready." + suffix;
+    const std::wstring mapping_name =
+        L"Local\\ChatViewOBS.Test.State." + suffix;
+    const std::wstring event_name =
+        L"Local\\ChatViewOBS.Test.Event." + suffix;
+    const std::wstring ready_event_name =
+        L"Local\\ChatViewOBS.Test.Ready." + suffix;
 
     chatview::UniqueHandle mapping(CreateFileMappingW(
         INVALID_HANDLE_VALUE,
@@ -233,7 +587,8 @@ int wmain(int argument_count, wchar_t **arguments)
     mapped_state.get()->generation = 1U;
 
     const std::filesystem::path local_app_data =
-        std::filesystem::temp_directory_path() / (L"chatview-hud-smoke-" + suffix);
+        std::filesystem::temp_directory_path() /
+        (L"chatview-hud-smoke-" + suffix);
     if (!remove_tree_with_retry(local_app_data)) {
         return fail(L"Failed to reset the smoke-test profile directory");
     }
@@ -245,7 +600,8 @@ int wmain(int argument_count, wchar_t **arguments)
     }
 
     const std::wstring local_app_data_string = local_app_data.wstring();
-    if (!SetEnvironmentVariableW(L"LOCALAPPDATA", local_app_data_string.c_str())) {
+    if (!SetEnvironmentVariableW(
+            L"LOCALAPPDATA", local_app_data_string.c_str())) {
         return fail(L"Failed to redirect the smoke-test profile");
     }
 
@@ -277,53 +633,74 @@ int wmain(int argument_count, wchar_t **arguments)
 
     HANDLE startup_handles[2] = {ready_event.get(), child_process.get()};
     const DWORD startup_result =
-        WaitForMultipleObjects(2U, startup_handles, FALSE, kStartupTimeoutMs);
+        WaitForMultipleObjects(
+            2U, startup_handles, FALSE, kStartupTimeoutMs);
     if (startup_result == WAIT_OBJECT_0 + 1U) {
         return fail_process_exit(child_process.get());
     }
     if (startup_result != WAIT_OBJECT_0) {
-        return fail(L"The WebView2 HUD did not report readiness", child_process.get());
+        return fail(
+            L"The WebView2 HUD did not report readiness",
+            child_process.get());
     }
 
-    HWND window = wait_for_hud_window(child_process.get(), child_info.dwProcessId);
+    HWND window =
+        wait_for_hud_window(child_process.get(), child_info.dwProcessId);
     if (window == nullptr) {
-        return fail(L"The ready HUD window could not be enumerated", child_process.get());
+        return fail(
+            L"The ready HUD window could not be enumerated",
+            child_process.get());
     }
     if (!IsWindowVisible(window)) {
-        return fail(L"The ready HUD window was not visible", child_process.get());
+        return fail(
+            L"The ready HUD window was not visible",
+            child_process.get());
     }
 
     constexpr LONG_PTR locked_style =
-        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP;
+        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE |
+        WS_EX_NOREDIRECTIONBITMAP;
     if (!wait_for_style(window, locked_style, 0)) {
-        return fail(L"The HUD did not enter locked overlay mode", child_process.get());
+        return fail(
+            L"The HUD did not enter locked overlay mode",
+            child_process.get());
     }
 
     DWORD affinity = 0U;
     if (!GetWindowDisplayAffinity(window, &affinity) ||
         affinity != WDA_EXCLUDEFROMCAPTURE) {
-        return fail(L"The HUD did not request capture exclusion", child_process.get());
+        return fail(
+            L"The HUD did not request capture exclusion",
+            child_process.get());
     }
 
     const UINT toggle_edit_message =
         RegisterWindowMessageW(chatview::kToggleEditMessageName);
     if (toggle_edit_message == 0U) {
-        return fail(L"Failed to register the overlay edit control message", child_process.get());
+        return fail(
+            L"Failed to register the overlay edit control message",
+            child_process.get());
     }
 
     if (!PostMessageW(window, toggle_edit_message, 0U, 0L)) {
-        return fail(L"Failed to request HUD edit mode", child_process.get());
+        return fail(
+            L"Failed to request HUD edit mode",
+            child_process.get());
     }
     if (!wait_for_style(
             window,
             WS_EX_TOPMOST | WS_EX_NOREDIRECTIONBITMAP,
             WS_EX_TRANSPARENT | WS_EX_NOACTIVATE)) {
-        return fail(L"The HUD did not enter interactive edit mode", child_process.get());
+        return fail(
+            L"The HUD did not enter interactive edit mode",
+            child_process.get());
     }
 
     RECT edit_bounds{};
     if (!GetWindowRect(window, &edit_bounds)) {
-        return fail(L"Failed to read the edit-mode HUD bounds", child_process.get());
+        return fail(
+            L"Failed to read the edit-mode HUD bounds",
+            child_process.get());
     }
     const LONG edit_width = edit_bounds.right - edit_bounds.left;
     const LONG edit_height = edit_bounds.bottom - edit_bounds.top;
@@ -337,39 +714,53 @@ int wmain(int argument_count, wchar_t **arguments)
         SWP_NOZORDER | SWP_NOACTIVATE);
     PostMessageW(window, WM_EXITSIZEMOVE, 0U, 0L);
     if (!wait_for_width_greater(window, edit_width)) {
-        return fail(L"The HUD did not accept a resized bound", child_process.get());
+        return fail(
+            L"The HUD did not accept a resized bound",
+            child_process.get());
     }
 
     if (!PostMessageW(window, toggle_edit_message, 0U, 0L)) {
-        return fail(L"Failed to request HUD lock mode", child_process.get());
+        return fail(
+            L"Failed to request HUD lock mode",
+            child_process.get());
     }
     if (!wait_for_style(window, locked_style, 0)) {
-        return fail(L"The HUD did not return to locked mode", child_process.get());
+        return fail(
+            L"The HUD did not return to locked mode",
+            child_process.get());
     }
 
     const std::filesystem::path placement_file =
         local_app_data / L"ChatView" / L"hud.ini";
     if (!std::filesystem::is_regular_file(placement_file)) {
-        return fail(L"Locking the HUD did not persist its bounds", child_process.get());
+        return fail(
+            L"Locking the HUD did not persist its bounds",
+            child_process.get());
     }
     const UINT saved_width = GetPrivateProfileIntW(
         L"placement", L"width_dip", 0, placement_file.c_str());
     const UINT saved_height = GetPrivateProfileIntW(
         L"placement", L"height_dip", 0, placement_file.c_str());
     if (saved_width <= 420U || saved_height <= 640U) {
-        return fail(L"The resized HUD dimensions were not persisted", child_process.get());
+        return fail(
+            L"The resized HUD dimensions were not persisted",
+            child_process.get());
     }
 
     publish(
         mapped_state.get(),
         state_event.get(),
         chatview::SharedStateStreaming | chatview::SharedStateShutdown);
-    if (WaitForSingleObject(child_process.get(), kShutdownTimeoutMs) != WAIT_OBJECT_0) {
-        return fail(L"The HUD did not exit after the shutdown state", child_process.get());
+    if (WaitForSingleObject(
+            child_process.get(), kShutdownTimeoutMs) != WAIT_OBJECT_0) {
+        return fail(
+            L"The HUD did not exit after the shutdown state",
+            child_process.get());
     }
 
     DWORD exit_code = 0U;
-    if (!GetExitCodeProcess(child_process.get(), &exit_code) || exit_code != 0U) {
+    if (!GetExitCodeProcess(child_process.get(), &exit_code) ||
+        exit_code != 0U) {
         return fail(L"The HUD exited with an error");
     }
 

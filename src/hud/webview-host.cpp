@@ -53,123 +53,149 @@ code { color:#7dd3fc; }
 
 constexpr wchar_t kOverlayBootstrapScript[] = LR"JS(
 (() => {
-  try {
-    const styleId = '__chatview_transparency_style';
-    let pageStyle = document.getElementById(styleId);
-    if (!pageStyle) {
-      pageStyle = document.createElement('style');
-      pageStyle.id = styleId;
-      pageStyle.textContent = `
-        html, body, body > #root, body > #__next {
-          background: transparent !important;
-          background-color: transparent !important;
-        }
-        html {
-          --yt-live-chat-background-color: transparent !important;
-          --yt-live-chat-secondary-background-color: rgba(18, 18, 22, .70) !important;
-          --yt-live-chat-tertiary-background-color: rgba(18, 18, 22, .82) !important;
-        }
-        yt-live-chat-app,
-        yt-live-chat-renderer,
-        yt-live-chat-renderer #contents,
-        yt-live-chat-renderer #item-list,
-        yt-live-chat-renderer #chat {
-          background: transparent !important;
-          background-color: transparent !important;
-        }
-        ::-webkit-scrollbar { display: none !important; }
-      `;
-      (document.head || document.documentElement).appendChild(pageStyle);
+  if (window.top !== window) return;
+
+  const applyState = (state) => {
+    window.__chatviewPendingHostState = state;
+    const view = window.__chatviewNative;
+    if (!view || !view.host || !view.statusText) return;
+    view.host.dataset.editing = state && state.editing ? '1' : '0';
+    view.host.dataset.hasStatus = state && state.status ? '1' : '0';
+    view.host.style.setProperty('--tone', state && state.tone ? state.tone : '#aeb0b2');
+    view.statusText.textContent = state && state.status ? state.status : '';
+  };
+
+  window.__chatviewApplyHostState = applyState;
+
+  const install = () => {
+    try {
+      const documentElement = document.documentElement;
+      if (!documentElement) {
+        setTimeout(install, 0);
+        return;
+      }
+
+      const styleId = '__chatview_transparency_style';
+      let pageStyle = document.getElementById(styleId);
+      if (!pageStyle) {
+        pageStyle = document.createElement('style');
+        pageStyle.id = styleId;
+        pageStyle.textContent = `
+          html, body, body > #root, body > #__next {
+            background: transparent !important;
+            background-color: transparent !important;
+          }
+          html {
+            --yt-live-chat-background-color: transparent !important;
+            --yt-live-chat-secondary-background-color: rgba(18, 18, 22, .70) !important;
+            --yt-live-chat-tertiary-background-color: rgba(18, 18, 22, .82) !important;
+          }
+          yt-live-chat-app,
+          yt-live-chat-renderer,
+          yt-live-chat-renderer #contents,
+          yt-live-chat-renderer #item-list,
+          yt-live-chat-renderer #chat {
+            background: transparent !important;
+            background-color: transparent !important;
+          }
+          ::-webkit-scrollbar { display: none !important; }
+        `;
+        (document.head || documentElement).appendChild(pageStyle);
+      }
+
+      let host = document.getElementById('__chatview_native_host');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = '__chatview_native_host';
+        host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
+        documentElement.appendChild(host);
+
+        const root = host.attachShadow({ mode: 'open' });
+        const shadowStyle = document.createElement('style');
+        shadowStyle.textContent = `
+          :host { all: initial; }
+          .frame {
+            position: fixed;
+            inset: 0;
+            box-sizing: border-box;
+            border: 3px solid #5ac8fa;
+            opacity: 0;
+            transition: opacity .12s ease;
+          }
+          .edit {
+            position: absolute;
+            left: 12px;
+            top: 10px;
+            padding: 8px 11px;
+            border-radius: 10px;
+            background: rgba(20,20,24,.92);
+            color: #fff;
+            font: 600 13px/1.2 "Segoe UI",sans-serif;
+            box-shadow: 0 6px 24px rgba(0,0,0,.35);
+          }
+          .status {
+            position: absolute;
+            right: 12px;
+            top: 10px;
+            display: none;
+            align-items: center;
+            gap: 7px;
+            padding: 7px 10px;
+            border-radius: 999px;
+            background: rgba(20,20,24,.82);
+            color: #fff;
+            font: 700 12px/1 "Segoe UI",sans-serif;
+            box-shadow: 0 5px 20px rgba(0,0,0,.30);
+          }
+          .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: var(--tone,#aeb0b2);
+            box-shadow: 0 0 10px var(--tone,#aeb0b2);
+          }
+          :host([data-editing="1"]) .frame { opacity: 1; }
+          :host([data-has-status="1"]) .status { display: flex; }
+        `;
+
+        const frame = document.createElement('div');
+        frame.className = 'frame';
+        const edit = document.createElement('div');
+        edit.className = 'edit';
+        edit.textContent = 'DRAG HEADER · RESIZE EDGES · CTRL+ALT+SHIFT+H TO LOCK';
+        frame.appendChild(edit);
+
+        const status = document.createElement('div');
+        status.className = 'status';
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        const statusText = document.createElement('span');
+        statusText.className = 'statusText';
+        status.append(dot, statusText);
+
+        root.append(shadowStyle, frame, status);
+        window.__chatviewNative = { host, statusText };
+
+        const observer = new MutationObserver(() => {
+          if (!host.isConnected && document.documentElement) {
+            document.documentElement.appendChild(host);
+          }
+        });
+        observer.observe(documentElement, { childList: true });
+        window.__chatviewNativeObserver = observer;
+      } else if (!host.isConnected) {
+        documentElement.appendChild(host);
+      }
+
+      if (window.__chatviewPendingHostState) {
+        applyState(window.__chatviewPendingHostState);
+      }
+    } catch (_) {
+      setTimeout(install, 50);
     }
+  };
 
-    let host = document.getElementById('__chatview_native_host');
-    if (!host) {
-      host = document.createElement('div');
-      host.id = '__chatview_native_host';
-      host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
-      document.documentElement.appendChild(host);
-
-      const root = host.attachShadow({ mode: 'open' });
-      const shadowStyle = document.createElement('style');
-      shadowStyle.textContent = `
-        :host { all: initial; }
-        .frame {
-          position: fixed;
-          inset: 0;
-          box-sizing: border-box;
-          border: 3px solid #5ac8fa;
-          opacity: 0;
-          transition: opacity .12s ease;
-        }
-        .edit {
-          position: absolute;
-          left: 12px;
-          top: 10px;
-          padding: 8px 11px;
-          border-radius: 10px;
-          background: rgba(20,20,24,.92);
-          color: #fff;
-          font: 600 13px/1.2 "Segoe UI",sans-serif;
-          box-shadow: 0 6px 24px rgba(0,0,0,.35);
-        }
-        .status {
-          position: absolute;
-          right: 12px;
-          top: 10px;
-          display: none;
-          align-items: center;
-          gap: 7px;
-          padding: 7px 10px;
-          border-radius: 999px;
-          background: rgba(20,20,24,.82);
-          color: #fff;
-          font: 700 12px/1 "Segoe UI",sans-serif;
-          box-shadow: 0 5px 20px rgba(0,0,0,.30);
-        }
-        .dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 999px;
-          background: var(--tone,#aeb0b2);
-          box-shadow: 0 0 10px var(--tone,#aeb0b2);
-        }
-        :host([data-editing="1"]) .frame { opacity: 1; }
-        :host([data-has-status="1"]) .status { display: flex; }
-      `;
-
-      const frame = document.createElement('div');
-      frame.className = 'frame';
-      const edit = document.createElement('div');
-      edit.className = 'edit';
-      edit.textContent = 'DRAG HEADER · RESIZE EDGES · CTRL+ALT+SHIFT+H TO LOCK';
-      frame.appendChild(edit);
-
-      const status = document.createElement('div');
-      status.className = 'status';
-      const dot = document.createElement('span');
-      dot.className = 'dot';
-      const statusText = document.createElement('span');
-      statusText.className = 'statusText';
-      status.append(dot, statusText);
-
-      root.append(shadowStyle, frame, status);
-      window.__chatviewNative = { host, statusText };
-    } else if (!host.isConnected) {
-      document.documentElement.appendChild(host);
-    }
-
-    window.__chatviewApplyHostState = (state) => {
-      const view = window.__chatviewNative;
-      if (!view) return;
-      view.host.dataset.editing = state.editing ? '1' : '0';
-      view.host.dataset.hasStatus = state.status ? '1' : '0';
-      view.host.style.setProperty('--tone', state.tone || '#aeb0b2');
-      view.statusText.textContent = state.status || '';
-    };
-    return true;
-  } catch (_) {
-    return false;
-  }
+  install();
 })();
 )JS";
 
@@ -339,12 +365,15 @@ void WebViewHost::close() noexcept
     if (webview_) {
         if (navigation_starting_token_.value != 0) {
             webview_->remove_NavigationStarting(navigation_starting_token_);
+            navigation_starting_token_ = {};
         }
         if (navigation_completed_token_.value != 0) {
             webview_->remove_NavigationCompleted(navigation_completed_token_);
+            navigation_completed_token_ = {};
         }
         if (new_window_requested_token_.value != 0) {
             webview_->remove_NewWindowRequested(new_window_requested_token_);
+            new_window_requested_token_ = {};
         }
     }
 
@@ -570,35 +599,57 @@ HRESULT WebViewHost::on_controller_created(
     }
 
     ComPtr<ICoreWebView2Controller2> controller2;
-    if (SUCCEEDED(controller_.As(&controller2))) {
-        COREWEBVIEW2_COLOR transparent{};
-        controller2->put_DefaultBackgroundColor(transparent);
+    result = controller_.As(&controller2);
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
+
+    COREWEBVIEW2_COLOR transparent{};
+    result = controller2->put_DefaultBackgroundColor(transparent);
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
     }
 
     ComPtr<ICoreWebView2Settings> settings;
-    if (SUCCEEDED(webview_->get_Settings(&settings))) {
-        settings->put_AreDefaultContextMenusEnabled(FALSE);
-        settings->put_IsStatusBarEnabled(FALSE);
-        settings->put_AreDevToolsEnabled(FALSE);
+    result = webview_->get_Settings(&settings);
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
+    if (FAILED(result = settings->put_AreDefaultContextMenusEnabled(FALSE)) ||
+        FAILED(result = settings->put_IsStatusBarEnabled(FALSE)) ||
+        FAILED(result = settings->put_AreDevToolsEnabled(FALSE))) {
+        post_failure(result);
+        return S_OK;
     }
 
     const std::shared_ptr<CallbackState> state = callback_state_;
-    webview_->add_NavigationStarting(
+    result = webview_->add_NavigationStarting(
         Callback<ICoreWebView2NavigationStartingEventHandler>(
             [](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
                 LPWSTR uri = nullptr;
-                if (SUCCEEDED(args->get_Uri(&uri))) {
-                    const bool allowed = is_allowed_document_url(uri);
-                    CoTaskMemFree(uri);
-                    if (!allowed) {
-                        args->put_Cancel(TRUE);
-                    }
+                if (FAILED(args->get_Uri(&uri))) {
+                    args->put_Cancel(TRUE);
+                    return S_OK;
+                }
+
+                const bool allowed = is_allowed_document_url(uri);
+                CoTaskMemFree(uri);
+                if (!allowed) {
+                    args->put_Cancel(TRUE);
                 }
                 return S_OK;
             })
             .Get(),
         &navigation_starting_token_);
-    webview_->add_NavigationCompleted(
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
+
+    result = webview_->add_NavigationCompleted(
         Callback<ICoreWebView2NavigationCompletedEventHandler>(
             [state](ICoreWebView2 *, ICoreWebView2NavigationCompletedEventArgs *) -> HRESULT {
                 if (state->owner != nullptr && state->owner->window_ != nullptr) {
@@ -608,7 +659,12 @@ HRESULT WebViewHost::on_controller_created(
             })
             .Get(),
         &navigation_completed_token_);
-    webview_->add_NewWindowRequested(
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
+
+    result = webview_->add_NewWindowRequested(
         Callback<ICoreWebView2NewWindowRequestedEventHandler>(
             [](ICoreWebView2 *, ICoreWebView2NewWindowRequestedEventArgs *args) -> HRESULT {
                 args->put_Handled(TRUE);
@@ -616,10 +672,63 @@ HRESULT WebViewHost::on_controller_created(
             })
             .Get(),
         &new_window_requested_token_);
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
 
-    resize();
-    controller_->put_IsVisible(TRUE);
-    composition_device_->Commit();
+    result = webview_->AddScriptToExecuteOnDocumentCreated(
+        kOverlayBootstrapScript,
+        Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
+            [state](HRESULT callback_result, LPCWSTR) -> HRESULT {
+                return state->owner != nullptr
+                           ? state->owner->on_bootstrap_registered(callback_result)
+                           : S_OK;
+            })
+            .Get());
+    if (FAILED(result)) {
+        post_failure(result);
+    }
+    return S_OK;
+}
+
+HRESULT WebViewHost::on_bootstrap_registered(HRESULT result) noexcept
+{
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
+
+    result = finish_controller_initialization();
+    if (FAILED(result)) {
+        post_failure(result);
+    }
+    return S_OK;
+}
+
+HRESULT WebViewHost::finish_controller_initialization() noexcept
+{
+    RECT bounds{};
+    if (!GetClientRect(window_, &bounds)) {
+        const DWORD error = GetLastError();
+        return error == ERROR_SUCCESS ? E_FAIL : HRESULT_FROM_WIN32(error);
+    }
+
+    HRESULT result = controller_->put_Bounds(bounds);
+    if (FAILED(result)) {
+        return result;
+    }
+
+    result = controller_->put_IsVisible(TRUE);
+    if (FAILED(result)) {
+        return result;
+    }
+
+    result = composition_device_->Commit();
+    if (FAILED(result)) {
+        return result;
+    }
+
     ready_ = true;
     PostMessageW(window_, kWebViewReadyMessage, 0U, 0L);
     return S_OK;
@@ -642,14 +751,14 @@ void WebViewHost::apply_host_state() noexcept
         return;
     }
 
-    std::wstring script = kOverlayBootstrapScript;
-    script.append(L"\n;window.__chatviewApplyHostState && window.__chatviewApplyHostState({editing:");
+    std::wstring script = L"window.__chatviewPendingHostState={editing:";
     script.append(editing_ ? L"true" : L"false");
     script.append(L",status:");
     script.append(javascript_string(status_text_));
     script.append(L",tone:");
     script.append(javascript_string(status_tone_));
-    script.append(L"});");
+    script.append(
+        L"};window.__chatviewApplyHostState&&window.__chatviewApplyHostState(window.__chatviewPendingHostState);");
     webview_->ExecuteScript(script.c_str(), nullptr);
 }
 

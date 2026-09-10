@@ -51,6 +51,8 @@ private:
         HRESULT result, ICoreWebView2Environment *environment) noexcept;
     HRESULT on_controller_created(
         HRESULT result, ICoreWebView2CompositionController *controller) noexcept;
+    HRESULT on_bootstrap_registered(HRESULT result) noexcept;
+    [[nodiscard]] HRESULT finish_controller_initialization() noexcept;
     void post_failure(HRESULT result) const noexcept;
     void apply_host_state() noexcept;
 

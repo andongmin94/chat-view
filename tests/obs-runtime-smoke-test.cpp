@@ -16,6 +16,7 @@ namespace {
 constexpr wchar_t kHudExecutableName[] = L"chat-view-hud.exe";
 constexpr wchar_t kHudWindowClass[] = L"ChatViewObsHudWindow";
 constexpr DWORD kHudStartupTimeoutMs = 45000U;
+constexpr DWORD kHudRestartTimeoutMs = 45000U;
 constexpr DWORD kHudExitTimeoutMs = 10000U;
 
 #ifndef WDA_EXCLUDEFROMCAPTURE
@@ -24,6 +25,12 @@ constexpr DWORD WDA_EXCLUDEFROMCAPTURE = 0x00000011;
 
 struct WindowSearch {
     DWORD process_id = 0U;
+    HWND window = nullptr;
+};
+
+struct HudInstance {
+    DWORD process_id = 0U;
+    chatview::UniqueHandle process;
     HWND window = nullptr;
 };
 
@@ -61,7 +68,7 @@ BOOL CALLBACK find_hud_window(HWND window, LPARAM data)
     return TRUE;
 }
 
-DWORD find_child_process(DWORD parent_process_id) noexcept
+DWORD find_child_process(DWORD parent_process_id, DWORD excluded_process_id) noexcept
 {
     chatview::UniqueHandle snapshot(
         CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0U));
@@ -77,6 +84,7 @@ DWORD find_child_process(DWORD parent_process_id) noexcept
 
     do {
         if (entry.th32ParentProcessID == parent_process_id &&
+            entry.th32ProcessID != excluded_process_id &&
             _wcsicmp(entry.szExeFile, kHudExecutableName) == 0) {
             return entry.th32ProcessID;
         }
@@ -90,6 +98,73 @@ HWND find_window(DWORD process_id) noexcept
     WindowSearch search{process_id, nullptr};
     EnumWindows(&find_hud_window, reinterpret_cast<LPARAM>(&search));
     return search.window;
+}
+
+bool wait_for_hud(
+    HANDLE obs_process,
+    DWORD obs_process_id,
+    DWORD excluded_process_id,
+    DWORD timeout_ms,
+    HudInstance &instance) noexcept
+{
+    const ULONGLONG deadline = GetTickCount64() + timeout_ms;
+    while (GetTickCount64() < deadline) {
+        if (WaitForSingleObject(obs_process, 0U) != WAIT_TIMEOUT) {
+            return false;
+        }
+
+        if (!instance.process) {
+            const DWORD process_id =
+                find_child_process(obs_process_id, excluded_process_id);
+            if (process_id != 0U) {
+                chatview::UniqueHandle process(OpenProcess(
+                    SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
+                    FALSE,
+                    process_id));
+                if (process) {
+                    instance.process_id = process_id;
+                    instance.process = std::move(process);
+                }
+            }
+        }
+
+        if (instance.process) {
+            if (WaitForSingleObject(instance.process.get(), 0U) != WAIT_TIMEOUT) {
+                instance = {};
+                Sleep(50U);
+                continue;
+            }
+
+            instance.window = find_window(instance.process_id);
+            if (instance.window != nullptr && IsWindowVisible(instance.window)) {
+                return true;
+            }
+        }
+
+        Sleep(50U);
+    }
+    return false;
+}
+
+bool validate_hud(const HudInstance &instance, const wchar_t *context)
+{
+    const LONG_PTR extended_style =
+        GetWindowLongPtrW(instance.window, GWL_EXSTYLE);
+    constexpr LONG_PTR required_style =
+        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE |
+        WS_EX_NOREDIRECTIONBITMAP;
+    if ((extended_style & required_style) != required_style) {
+        std::wcerr << context << L" HUD was not in locked overlay mode\n";
+        return false;
+    }
+
+    DWORD affinity = 0U;
+    if (!GetWindowDisplayAffinity(instance.window, &affinity) ||
+        affinity != WDA_EXCLUDEFROMCAPTURE) {
+        std::wcerr << context << L" HUD did not retain capture exclusion\n";
+        return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -136,75 +211,52 @@ int wmain(int argument_count, wchar_t **arguments)
     chatview::UniqueHandle obs_process(process_info.hProcess);
     obs_thread.reset();
 
-    DWORD hud_process_id = 0U;
-    chatview::UniqueHandle hud_process;
-    HWND hud_window = nullptr;
-    const ULONGLONG deadline = GetTickCount64() + kHudStartupTimeoutMs;
-    while (GetTickCount64() < deadline) {
-        if (WaitForSingleObject(obs_process.get(), 0U) != WAIT_TIMEOUT) {
-            DWORD exit_code = 0U;
-            GetExitCodeProcess(obs_process.get(), &exit_code);
-            return fail(
-                L"OBS Studio exited before the ChatView HUD started (exit code " +
-                std::to_wstring(exit_code) + L")");
-        }
-
-        if (hud_process_id == 0U) {
-            hud_process_id = find_child_process(process_info.dwProcessId);
-            if (hud_process_id != 0U) {
-                hud_process.reset(OpenProcess(
-                    SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
-                    FALSE,
-                    hud_process_id));
-                if (!hud_process) {
-                    return fail(
-                        L"The ChatView HUD process could not be opened",
-                        obs_process.get());
-                }
-            }
-        }
-
-        if (hud_process) {
-            if (WaitForSingleObject(hud_process.get(), 0U) != WAIT_TIMEOUT) {
-                DWORD exit_code = 0U;
-                GetExitCodeProcess(hud_process.get(), &exit_code);
-                return fail(
-                    L"The ChatView HUD exited during real OBS startup (exit code " +
-                        std::to_wstring(exit_code) + L")",
-                    obs_process.get());
-            }
-
-            hud_window = find_window(hud_process_id);
-            if (hud_window != nullptr && IsWindowVisible(hud_window)) {
-                break;
-            }
-        }
-
-        Sleep(50U);
-    }
-
-    if (!hud_process || hud_window == nullptr || !IsWindowVisible(hud_window)) {
+    HudInstance initial_hud;
+    if (!wait_for_hud(
+            obs_process.get(),
+            process_info.dwProcessId,
+            0U,
+            kHudStartupTimeoutMs,
+            initial_hud)) {
+        DWORD exit_code = STILL_ACTIVE;
+        GetExitCodeProcess(obs_process.get(), &exit_code);
         return fail(
-            L"Official OBS Studio did not load a visible ChatView HUD within the timeout",
+            L"Official OBS Studio did not load a visible ChatView HUD (OBS exit code " +
+                std::to_wstring(exit_code) + L")",
             obs_process.get());
     }
-
-    const LONG_PTR extended_style =
-        GetWindowLongPtrW(hud_window, GWL_EXSTYLE);
-    constexpr LONG_PTR required_style =
-        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE |
-        WS_EX_NOREDIRECTIONBITMAP;
-    if ((extended_style & required_style) != required_style) {
-        return fail(
-            L"The HUD loaded by official OBS Studio was not in locked overlay mode",
-            obs_process.get());
+    if (!validate_hud(initial_hud, L"Initial")) {
+        return fail(L"The initial ChatView HUD failed validation", obs_process.get());
     }
 
-    DWORD affinity = 0U;
-    if (!GetWindowDisplayAffinity(hud_window, &affinity) ||
-        affinity != WDA_EXCLUDEFROMCAPTURE) {
+    const DWORD initial_process_id = initial_hud.process_id;
+    if (!TerminateProcess(initial_hud.process.get(), 77U)) {
         return fail(
-            L"The HUD loaded by official OBS Studio did not retain capture exclusion",
+            L"The OBS integration test could not terminate the initial HUD",
+            obs_process.get());
+    }
+    if (WaitForSingleObject(initial_hud.process.get(), kHudExitTimeoutMs) != WAIT_OBJECT_0) {
+        return fail(
+            L"The initial HUD did not terminate during the restart test",
+            obs_process.get());
+    }
+    initial_hud = {};
+
+    HudInstance restarted_hud;
+    if (!wait_for_hud(
+            obs_process.get(),
+            process_info.dwProcessId,
+            initial_process_id,
+            kHudRestartTimeoutMs,
+            restarted_hud)) {
+        return fail(
+            L"The ChatView plugin did not replace a crashed HUD runtime",
+            obs_process.get());
+    }
+    if (restarted_hud.process_id == initial_process_id ||
+        !validate_hud(restarted_hud, L"Restarted")) {
+        return fail(
+            L"The replacement ChatView HUD failed validation",
             obs_process.get());
     }
 
@@ -215,15 +267,8 @@ int wmain(int argument_count, wchar_t **arguments)
     }
     WaitForSingleObject(obs_process.get(), 5000U);
 
-    if (WaitForSingleObject(hud_process.get(), kHudExitTimeoutMs) != WAIT_OBJECT_0) {
-        return fail(L"The ChatView HUD did not exit after its real OBS parent terminated");
-    }
-
-    DWORD hud_exit_code = 0U;
-    if (!GetExitCodeProcess(hud_process.get(), &hud_exit_code) ||
-        hud_exit_code != 0U) {
-        return fail(
-            L"The ChatView HUD returned an error after its real OBS parent terminated");
+    if (WaitForSingleObject(restarted_hud.process.get(), kHudExitTimeoutMs) != WAIT_OBJECT_0) {
+        return fail(L"The replacement HUD remained after its OBS parent terminated");
     }
 
     return 0;

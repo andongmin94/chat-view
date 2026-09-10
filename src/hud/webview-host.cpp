@@ -9,6 +9,7 @@
 #include <dcomp.h>
 #include <dxgi.h>
 #include <windowsx.h>
+#include <winhttp.h>
 #include <wrl.h>
 #include <wrl/event.h>
 
@@ -53,24 +54,23 @@ code { color:#7dd3fc; }
 
 constexpr wchar_t kOverlayBootstrapScript[] = LR"JS(
 (() => {
-  if (window.top !== window) return;
+  if (window.top !== window || window.__chatviewBootstrapInstalled) return;
+  window.__chatviewBootstrapInstalled = true;
+  window.__chatviewPendingState = { editing: false, status: '', tone: '#aeb0b2' };
 
-  const applyState = (state) => {
-    window.__chatviewPendingHostState = state;
+  const apply = () => {
     const view = window.__chatviewNative;
-    if (!view || !view.host || !view.statusText) return;
-    view.host.dataset.editing = state && state.editing ? '1' : '0';
-    view.host.dataset.hasStatus = state && state.status ? '1' : '0';
-    view.host.style.setProperty('--tone', state && state.tone ? state.tone : '#aeb0b2');
-    view.statusText.textContent = state && state.status ? state.status : '';
+    const state = window.__chatviewPendingState;
+    if (!view || !state) return;
+    view.host.dataset.editing = state.editing ? '1' : '0';
+    view.host.dataset.hasStatus = state.status ? '1' : '0';
+    view.host.style.setProperty('--tone', state.tone || '#aeb0b2');
+    view.statusText.textContent = state.status || '';
   };
-
-  window.__chatviewApplyHostState = applyState;
 
   const install = () => {
     try {
-      const documentElement = document.documentElement;
-      if (!documentElement) {
+      if (!document.documentElement) {
         setTimeout(install, 0);
         return;
       }
@@ -100,15 +100,15 @@ constexpr wchar_t kOverlayBootstrapScript[] = LR"JS(
           }
           ::-webkit-scrollbar { display: none !important; }
         `;
-        (document.head || documentElement).appendChild(pageStyle);
+        (document.head || document.documentElement).appendChild(pageStyle);
       }
 
       let host = document.getElementById('__chatview_native_host');
-      if (!host) {
+      if (!host || !window.__chatviewNative) {
         host = document.createElement('div');
         host.id = '__chatview_native_host';
         host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
-        documentElement.appendChild(host);
+        document.documentElement.appendChild(host);
 
         const root = host.attachShadow({ mode: 'open' });
         const shadowStyle = document.createElement('style');
@@ -175,26 +175,31 @@ constexpr wchar_t kOverlayBootstrapScript[] = LR"JS(
 
         root.append(shadowStyle, frame, status);
         window.__chatviewNative = { host, statusText };
+      } else if (!host.isConnected) {
+        document.documentElement.appendChild(host);
+      }
 
-        const observer = new MutationObserver(() => {
-          if (!host.isConnected && document.documentElement) {
-            document.documentElement.appendChild(host);
+      if (!window.__chatviewHostObserver) {
+        window.__chatviewHostObserver = new MutationObserver(() => {
+          const view = window.__chatviewNative;
+          if (view && !view.host.isConnected && document.documentElement) {
+            document.documentElement.appendChild(view.host);
           }
         });
-        observer.observe(documentElement, { childList: true });
-        window.__chatviewNativeObserver = observer;
-      } else if (!host.isConnected) {
-        documentElement.appendChild(host);
+        window.__chatviewHostObserver.observe(document.documentElement, { childList: true });
       }
-
-      if (window.__chatviewPendingHostState) {
-        applyState(window.__chatviewPendingHostState);
-      }
+      apply();
     } catch (_) {
       setTimeout(install, 50);
     }
   };
 
+  window.__chatviewEnsureHost = install;
+  window.__chatviewApplyHostState = (state) => {
+    window.__chatviewPendingState = state || window.__chatviewPendingState;
+    install();
+    apply();
+  };
   install();
 })();
 )JS";
@@ -230,15 +235,34 @@ std::wstring javascript_string(const std::wstring &value)
     return output;
 }
 
-bool is_allowed_host(const std::wstring &host) noexcept
+bool is_youtube_live_chat_document(const wchar_t *url) noexcept
 {
-    return _wcsicmp(host.c_str(), L"weflab.com") == 0 ||
-           _wcsicmp(host.c_str(), L"www.weflab.com") == 0 ||
-           _wcsicmp(host.c_str(), L"chzzk.naver.com") == 0 ||
-           _wcsicmp(host.c_str(), L"m.chzzk.naver.com") == 0 ||
-           _wcsicmp(host.c_str(), L"www.youtube.com") == 0 ||
-           _wcsicmp(host.c_str(), L"youtube.com") == 0 ||
-           _wcsicmp(host.c_str(), L"m.youtube.com") == 0;
+    URL_COMPONENTSW components{};
+    components.dwStructSize = sizeof(components);
+    components.dwSchemeLength = static_cast<DWORD>(-1);
+    components.dwHostNameLength = static_cast<DWORD>(-1);
+    components.dwUrlPathLength = static_cast<DWORD>(-1);
+    components.dwUserNameLength = static_cast<DWORD>(-1);
+    components.dwPasswordLength = static_cast<DWORD>(-1);
+
+    if (!WinHttpCrackUrl(url, 0U, 0U, &components) ||
+        components.nScheme != INTERNET_SCHEME_HTTPS ||
+        components.nPort != INTERNET_DEFAULT_HTTPS_PORT ||
+        components.dwUserNameLength != 0U || components.dwPasswordLength != 0U ||
+        components.lpszHostName == nullptr || components.lpszUrlPath == nullptr) {
+        return false;
+    }
+
+    const std::wstring host(
+        components.lpszHostName,
+        components.lpszHostName + components.dwHostNameLength);
+    const std::wstring_view path(
+        components.lpszUrlPath, components.dwUrlPathLength);
+    const bool youtube_host =
+        _wcsicmp(host.c_str(), L"www.youtube.com") == 0 ||
+        _wcsicmp(host.c_str(), L"youtube.com") == 0 ||
+        _wcsicmp(host.c_str(), L"m.youtube.com") == 0;
+    return youtube_host && path == L"/live_chat";
 }
 
 bool is_allowed_document_url(const wchar_t *url) noexcept
@@ -252,24 +276,8 @@ bool is_allowed_document_url(const wchar_t *url) noexcept
         return true;
     }
 
-    URL_COMPONENTSW components{};
-    components.dwStructSize = sizeof(components);
-    components.dwSchemeLength = static_cast<DWORD>(-1);
-    components.dwHostNameLength = static_cast<DWORD>(-1);
-    components.dwUserNameLength = static_cast<DWORD>(-1);
-    components.dwPasswordLength = static_cast<DWORD>(-1);
-    if (!WinHttpCrackUrl(url, 0U, 0U, &components) ||
-        components.nScheme != INTERNET_SCHEME_HTTPS ||
-        components.nPort != INTERNET_DEFAULT_HTTPS_PORT ||
-        components.dwUserNameLength != 0U || components.dwPasswordLength != 0U ||
-        components.lpszHostName == nullptr) {
-        return false;
-    }
-
-    const std::wstring host(
-        components.lpszHostName,
-        components.lpszHostName + components.dwHostNameLength);
-    return is_allowed_host(host);
+    return !normalize_chat_url(std::wstring(value)).empty() ||
+           is_youtube_live_chat_document(url);
 }
 
 HRESULT create_d3d_device(ComPtr<ID3D11Device> &device) noexcept
@@ -362,20 +370,26 @@ void WebViewHost::close() noexcept
     }
 
     ready_ = false;
+    current_url_.clear();
     if (webview_) {
         if (navigation_starting_token_.value != 0) {
             webview_->remove_NavigationStarting(navigation_starting_token_);
-            navigation_starting_token_ = {};
         }
         if (navigation_completed_token_.value != 0) {
             webview_->remove_NavigationCompleted(navigation_completed_token_);
-            navigation_completed_token_ = {};
         }
         if (new_window_requested_token_.value != 0) {
             webview_->remove_NewWindowRequested(new_window_requested_token_);
-            new_window_requested_token_ = {};
+        }
+        if (process_failed_token_.value != 0) {
+            webview_->remove_ProcessFailed(process_failed_token_);
         }
     }
+
+    navigation_starting_token_ = {};
+    navigation_completed_token_ = {};
+    new_window_requested_token_ = {};
+    process_failed_token_ = {};
 
     if (controller_) {
         controller_->Close();
@@ -424,21 +438,42 @@ void WebViewHost::notify_parent_position_changed() noexcept
 
 bool WebViewHost::navigate(const std::wstring &url) noexcept
 {
-    if (!ready_ || !webview_ || !is_supported_chat_url(url)) {
+    if (!ready_ || !webview_) {
         return false;
     }
-    return SUCCEEDED(webview_->Navigate(url.c_str()));
+
+    const std::wstring normalized = normalize_chat_url(url);
+    if (normalized.empty()) {
+        return false;
+    }
+
+    current_url_ = normalized;
+    return SUCCEEDED(webview_->Navigate(current_url_.c_str()));
+}
+
+bool WebViewHost::reload() noexcept
+{
+    if (!ready_ || !webview_ || current_url_.empty()) {
+        return false;
+    }
+    return SUCCEEDED(webview_->Navigate(current_url_.c_str()));
 }
 
 void WebViewHost::show_setup_page() noexcept
 {
+    current_url_.clear();
     if (ready_ && webview_) {
-        webview_->NavigateToString(kSetupPage);
+        const HRESULT result = webview_->NavigateToString(kSetupPage);
+        if (FAILED(result)) {
+            post_failure(result);
+        }
     }
 }
 
 void WebViewHost::set_host_state(
-    bool editing, const std::wstring &status_text, const std::wstring &status_tone) noexcept
+    bool editing,
+    const std::wstring &status_text,
+    const std::wstring &status_tone) noexcept
 {
     editing_ = editing;
     status_text_ = status_text;
@@ -446,7 +481,8 @@ void WebViewHost::set_host_state(
     apply_host_state();
 }
 
-bool WebViewHost::forward_mouse_message(UINT message, WPARAM wparam, LPARAM lparam) noexcept
+bool WebViewHost::forward_mouse_message(
+    UINT message, WPARAM wparam, LPARAM lparam) noexcept
 {
     if (!ready_ || !composition_controller_ || window_ == nullptr) {
         return false;
@@ -618,10 +654,10 @@ HRESULT WebViewHost::on_controller_created(
         post_failure(result);
         return S_OK;
     }
-    if (FAILED(result = settings->put_AreDefaultContextMenusEnabled(FALSE)) ||
-        FAILED(result = settings->put_IsStatusBarEnabled(FALSE)) ||
-        FAILED(result = settings->put_AreDevToolsEnabled(FALSE))) {
-        post_failure(result);
+    if (FAILED(settings->put_AreDefaultContextMenusEnabled(FALSE)) ||
+        FAILED(settings->put_IsStatusBarEnabled(FALSE)) ||
+        FAILED(settings->put_AreDevToolsEnabled(FALSE))) {
+        post_failure(E_FAIL);
         return S_OK;
     }
 
@@ -630,8 +666,10 @@ HRESULT WebViewHost::on_controller_created(
         Callback<ICoreWebView2NavigationStartingEventHandler>(
             [](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
                 LPWSTR uri = nullptr;
-                if (FAILED(args->get_Uri(&uri))) {
+                const HRESULT uri_result = args->get_Uri(&uri);
+                if (FAILED(uri_result) || uri == nullptr) {
                     args->put_Cancel(TRUE);
+                    CoTaskMemFree(uri);
                     return S_OK;
                 }
 
@@ -651,9 +689,35 @@ HRESULT WebViewHost::on_controller_created(
 
     result = webview_->add_NavigationCompleted(
         Callback<ICoreWebView2NavigationCompletedEventHandler>(
-            [state](ICoreWebView2 *, ICoreWebView2NavigationCompletedEventArgs *) -> HRESULT {
-                if (state->owner != nullptr && state->owner->window_ != nullptr) {
-                    PostMessageW(state->owner->window_, kWebViewDocumentReadyMessage, 0U, 0L);
+            [state](ICoreWebView2 *,
+                    ICoreWebView2NavigationCompletedEventArgs *args) -> HRESULT {
+                if (state->owner == nullptr || state->owner->window_ == nullptr) {
+                    return S_OK;
+                }
+
+                BOOL succeeded = FALSE;
+                HRESULT callback_result = args->get_IsSuccess(&succeeded);
+                if (FAILED(callback_result)) {
+                    state->owner->post_failure(callback_result);
+                    return S_OK;
+                }
+
+                if (succeeded) {
+                    PostMessageW(
+                        state->owner->window_,
+                        kWebViewDocumentReadyMessage,
+                        0U,
+                        0L);
+                    return S_OK;
+                }
+
+                COREWEBVIEW2_WEB_ERROR_STATUS status =
+                    COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
+                callback_result = args->get_WebErrorStatus(&status);
+                if (FAILED(callback_result)) {
+                    state->owner->post_failure(callback_result);
+                } else {
+                    state->owner->post_navigation_failure(status);
                 }
                 return S_OK;
             })
@@ -672,6 +736,29 @@ HRESULT WebViewHost::on_controller_created(
             })
             .Get(),
         &new_window_requested_token_);
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
+
+    result = webview_->add_ProcessFailed(
+        Callback<ICoreWebView2ProcessFailedEventHandler>(
+            [state](ICoreWebView2 *, ICoreWebView2ProcessFailedEventArgs *args) -> HRESULT {
+                if (state->owner == nullptr) {
+                    return S_OK;
+                }
+
+                COREWEBVIEW2_PROCESS_FAILED_KIND kind{};
+                const HRESULT callback_result = args->get_ProcessFailedKind(&kind);
+                if (FAILED(callback_result)) {
+                    state->owner->post_failure(callback_result);
+                } else {
+                    state->owner->post_process_failure(kind);
+                }
+                return S_OK;
+            })
+            .Get(),
+        &process_failed_token_);
     if (FAILED(result)) {
         post_failure(result);
         return S_OK;
@@ -708,18 +795,9 @@ HRESULT WebViewHost::on_bootstrap_registered(HRESULT result) noexcept
 
 HRESULT WebViewHost::finish_controller_initialization() noexcept
 {
-    RECT bounds{};
-    if (!GetClientRect(window_, &bounds)) {
-        const DWORD error = GetLastError();
-        return error == ERROR_SUCCESS ? E_FAIL : HRESULT_FROM_WIN32(error);
-    }
+    resize();
 
-    HRESULT result = controller_->put_Bounds(bounds);
-    if (FAILED(result)) {
-        return result;
-    }
-
-    result = controller_->put_IsVisible(TRUE);
+    HRESULT result = controller_->put_IsVisible(TRUE);
     if (FAILED(result)) {
         return result;
     }
@@ -730,7 +808,10 @@ HRESULT WebViewHost::finish_controller_initialization() noexcept
     }
 
     ready_ = true;
-    PostMessageW(window_, kWebViewReadyMessage, 0U, 0L);
+    if (!PostMessageW(window_, kWebViewReadyMessage, 0U, 0L)) {
+        ready_ = false;
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
     return S_OK;
 }
 
@@ -745,20 +826,45 @@ void WebViewHost::post_failure(HRESULT result) const noexcept
     }
 }
 
+void WebViewHost::post_process_failure(
+    COREWEBVIEW2_PROCESS_FAILED_KIND kind) const noexcept
+{
+    if (window_ != nullptr) {
+        PostMessageW(
+            window_,
+            kWebViewProcessFailedMessage,
+            static_cast<WPARAM>(kind),
+            0L);
+    }
+}
+
+void WebViewHost::post_navigation_failure(
+    COREWEBVIEW2_WEB_ERROR_STATUS status) const noexcept
+{
+    if (window_ != nullptr) {
+        PostMessageW(
+            window_,
+            kWebViewNavigationFailedMessage,
+            static_cast<WPARAM>(status),
+            0L);
+    }
+}
+
 void WebViewHost::apply_host_state() noexcept
 {
     if (!ready_ || !webview_) {
         return;
     }
 
-    std::wstring script = L"window.__chatviewPendingHostState={editing:";
+    std::wstring script =
+        L"window.__chatviewEnsureHost && window.__chatviewEnsureHost();"
+        L"window.__chatviewApplyHostState && window.__chatviewApplyHostState({editing:";
     script.append(editing_ ? L"true" : L"false");
     script.append(L",status:");
     script.append(javascript_string(status_text_));
     script.append(L",tone:");
     script.append(javascript_string(status_tone_));
-    script.append(
-        L"};window.__chatviewApplyHostState&&window.__chatviewApplyHostState(window.__chatviewPendingHostState);");
+    script.append(L"});");
     webview_->ExecuteScript(script.c_str(), nullptr);
 }
 

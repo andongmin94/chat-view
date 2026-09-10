@@ -11,8 +11,8 @@ This branch currently provides an installable single-PC alpha:
 - native OBS frontend plugin;
 - out-of-process Win32 HUD runtime;
 - transparent WebView2 composition rendering;
-- Weflab, CHZZK, and YouTube chat pages;
-- automatic conversion of ordinary CHZZK and YouTube broadcast URLs;
+- Weflab, CHZZK, SOOP, and YouTube chat pages;
+- automatic conversion of ordinary CHZZK, SOOP, and YouTube broadcast URLs;
 - OBS **Tools → ChatView Settings...** configuration;
 - click-through locked mode;
 - draggable and resizable edit mode;
@@ -54,10 +54,12 @@ Start OBS Studio and open:
 Tools → ChatView Settings...
 ```
 
-For CHZZK and YouTube, paste the normal broadcast URL that is already in the browser address bar:
+For CHZZK, SOOP, and YouTube, paste the normal channel or broadcast URL that is already in the browser address bar:
 
 ```text
 https://chzzk.naver.com/live/<channel-id>
+https://www.sooplive.com/station/<channel-id>
+https://play.sooplive.com/<channel-id>/<broadcast-number>
 https://www.youtube.com/watch?v=<video-id>
 https://youtu.be/<video-id>
 ```
@@ -67,12 +69,13 @@ ChatView converts those links into their chat-page form automatically. Direct ch
 ```text
 https://weflab.com/page/...
 https://chzzk.naver.com/chat/<channel-id>
+https://play.sooplive.com/<channel-id>?vtype=chat
 https://www.youtube.com/live_chat?is_popout=1&v=<video-id>
 ```
 
 Saving broadcasts a local configuration-change message, so the running HUD reloads without restarting OBS.
 
-The URL normalizer requires HTTPS, the default HTTPS port, no embedded credentials, a supported host and path, a valid CHZZK channel ID, and a non-empty YouTube video ID. It stores only the normalized chat URL. New top-level WebView navigation outside the allowlist is cancelled.
+The URL normalizer requires HTTPS, the default HTTPS port, no embedded credentials, a supported host and path, a valid CHZZK channel ID, a valid SOOP channel path, and a non-empty YouTube video ID. SOOP broadcast-number routes are reduced to a channel-scoped `vtype=chat` URL so a live redirect remains bound to the configured streamer. It stores only the normalized chat URL. New top-level WebView navigation outside the allowlist is cancelled.
 
 ## Move, resize, and lock
 
@@ -173,6 +176,6 @@ docs/         Architecture constraints
 
 ## Remaining product work
 
-This is not the finished product. Before a public release it still needs interactive qualification on real streamer PCs across game capture, display capture, multi-monitor DPI layouts, and common anti-cheat environments. Direct SOOP support, dual-PC pairing, first-party multi-platform aggregation, account/backend services, and the creator advertising system remain later layers. Weflab pages can be used for broader platform aggregation during this alpha.
+This is not the finished product. Before a public release it still needs interactive qualification on real streamer PCs across game capture, display capture, multi-monitor DPI layouts, and common anti-cheat environments. Dual-PC pairing, first-party multi-platform aggregation, account/backend services, and the creator advertising system remain later layers. Weflab pages can be used for broader platform aggregation during this alpha.
 
 See [`docs/architecture.md`](docs/architecture.md) for the decisions that constrain implementation.

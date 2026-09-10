@@ -17,6 +17,9 @@ constexpr wchar_t kUpperChzzkChannelId[] =
     L"733C98BE047F710D3B1BC7A27B0C83E2";
 constexpr wchar_t kOtherChzzkChannelId[] =
     L"0123456789abcdef0123456789abcdef";
+constexpr wchar_t kSoopChannelId[] = L"index0959";
+constexpr wchar_t kOtherSoopChannelId[] = L"ksh7637";
+constexpr wchar_t kSoopBroadcastId[] = L"288167758";
 constexpr wchar_t kYouTubeVideoId[] = L"dQw4w9WgXcQ";
 constexpr wchar_t kOtherYouTubeVideoId[] = L"abcdefghijk";
 
@@ -127,6 +130,12 @@ int main()
     const std::wstring other_chzzk =
         std::wstring(L"https://chzzk.naver.com/chat/") +
         kOtherChzzkChannelId;
+    const std::wstring canonical_soop =
+        std::wstring(L"https://play.sooplive.com/") +
+        kSoopChannelId + L"?vtype=chat";
+    const std::wstring other_soop =
+        std::wstring(L"https://play.sooplive.com/") +
+        kOtherSoopChannelId + L"?vtype=chat";
     const std::wstring canonical_youtube =
         std::wstring(
             L"https://www.youtube.com/live_chat?is_popout=1&v=") +
@@ -169,6 +178,31 @@ int main()
             canonical_chzzk,
             L"CHZZK channel URL normalization failed") ||
         !expect_normalized(
+            std::wstring(L"https://www.sooplive.com/station/") +
+                kSoopChannelId,
+            canonical_soop,
+            L"SOOP station URL normalization failed") ||
+        !expect_normalized(
+            std::wstring(L"https://sooplive.com/station/") +
+                kSoopChannelId + L"/#ignored",
+            canonical_soop,
+            L"Bare SOOP station host normalization failed") ||
+        !expect_normalized(
+            std::wstring(L"https://PLAY.SOOPLIVE.COM/") +
+                kSoopChannelId + L"/" + kSoopBroadcastId +
+                L"?quality=original#ignored",
+            canonical_soop,
+            L"SOOP live player URL normalization failed") ||
+        !expect_normalized(
+            std::wstring(L"https://play.sooplive.com/") +
+                kSoopChannelId + L"/null?vtype=chat",
+            canonical_soop,
+            L"SOOP offline player URL normalization failed") ||
+        !expect_normalized(
+            canonical_soop,
+            canonical_soop,
+            L"SOOP chat URL normalization failed") ||
+        !expect_normalized(
             std::wstring(L"https://www.youtube.com/watch?v=") +
                 kYouTubeVideoId + L"&feature=share",
             canonical_youtube,
@@ -208,8 +242,23 @@ int main()
             L"https://chzzk.naver.com/live/not-a-channel-id",
             L"Malformed CHZZK channel ID was accepted") ||
         !expect_rejected(
+            L"https://play.sooplive.com/features",
+            L"Reserved SOOP player path was accepted as a channel") ||
+        !expect_rejected(
+            L"https://play.sooplive.com/index0959/not-a-broadcast",
+            L"Malformed SOOP broadcast ID was accepted") ||
+        !expect_rejected(
+            L"https://www.sooplive.com/station/index0959/vod",
+            L"Nested SOOP station path was accepted") ||
+        !expect_rejected(
+            L"https://play.sooplive.com/index.0959",
+            L"Malformed SOOP channel ID was accepted") ||
+        !expect_rejected(
             L"https://www.youtube.com/live_chat",
             L"YouTube live-chat URL without a video ID was accepted") ||
+        !expect_rejected(
+            L"https://www.youtube.com/watch?v=first&v=second",
+            L"Ambiguous duplicate YouTube video IDs were accepted") ||
         !expect_rejected(
             L"https://user:password@www.youtube.com/watch?v=dQw4w9WgXcQ",
             L"URL credentials were accepted") ||
@@ -251,6 +300,13 @@ int main()
             canonical_chzzk + L"?dark=true",
             L"Canonical CHZZK chat was not accepted as a document") ||
         !expect_document_allowed(
+            canonical_soop + L"&theme=dark",
+            L"Canonical SOOP chat player was not accepted as a document") ||
+        !expect_document_allowed(
+            std::wstring(L"https://play.sooplive.com/") +
+                kSoopChannelId + L"/" + kSoopBroadcastId,
+            L"SOOP same-channel redirect was not accepted as a document") ||
+        !expect_document_allowed(
             canonical_youtube + L"&embed_domain=localhost",
             L"Canonical YouTube live chat was not accepted as a document") ||
         !expect_document_rejected(
@@ -261,6 +317,10 @@ int main()
             std::wstring(L"https://chzzk.naver.com/") +
                 kChzzkChannelId,
             L"CHZZK channel page was accepted as a chat document") ||
+        !expect_document_rejected(
+            std::wstring(L"https://www.sooplive.com/station/") +
+                kSoopChannelId,
+            L"SOOP station page was accepted as a chat document") ||
         !expect_document_rejected(
             std::wstring(L"https://www.youtube.com/watch?v=") +
                 kYouTubeVideoId,
@@ -289,6 +349,12 @@ int main()
             canonical_chzzk,
             L"Equivalent CHZZK document was rejected") ||
         !expect_matching_document(
+            std::wstring(L"https://play.sooplive.com/") +
+                kSoopChannelId + L"/" + kSoopBroadcastId +
+                L"?vtype=chat&theme=dark",
+            canonical_soop,
+            L"Matching SOOP live redirect was rejected") ||
+        !expect_matching_document(
             canonical_youtube + L"&embed_domain=localhost",
             canonical_youtube,
             L"Matching YouTube document was rejected") ||
@@ -300,6 +366,10 @@ int main()
             other_chzzk,
             canonical_chzzk,
             L"Different CHZZK channel was accepted") ||
+        !expect_nonmatching_document(
+            other_soop,
+            canonical_soop,
+            L"Different SOOP channel was accepted") ||
         !expect_nonmatching_document(
             other_youtube,
             canonical_youtube,
@@ -326,17 +396,17 @@ int main()
     }
 
     const chatview::ChatConfig input{
-        std::wstring(L"https://www.youtube.com/watch?v=") +
-        kYouTubeVideoId};
+        std::wstring(L"https://play.sooplive.com/") +
+        kSoopChannelId + L"/" + kSoopBroadcastId};
     if (!chatview::save_chat_config(input)) {
-        return fail(L"Failed to save a normal broadcast URL");
+        return fail(L"Failed to save a normal SOOP broadcast URL");
     }
 
     chatview::ChatConfig loaded;
     if (!chatview::load_chat_config(loaded) ||
-        loaded.url != canonical_youtube) {
+        loaded.url != canonical_soop) {
         return fail(
-            L"Saved broadcast URL was not persisted in canonical chat form");
+            L"Saved SOOP URL was not persisted in canonical chat form");
     }
 
     const std::wstring user_data_folder =

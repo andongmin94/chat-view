@@ -183,7 +183,7 @@ private:
         HWND hint = CreateWindowExW(
             0,
             L"STATIC",
-            L"Paste a Weflab page, CHZZK channel/live/chat URL, or YouTube watch/live/chat URL.\nChatView converts normal CHZZK and YouTube broadcast links automatically. Leave empty to disable chat.",
+            L"Paste a Weflab page or a CHZZK, SOOP, or YouTube broadcast/chat URL.\nChatView converts normal broadcast links automatically. Leave empty to disable chat.",
             WS_CHILD | WS_VISIBLE,
             20,
             80,

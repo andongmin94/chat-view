@@ -54,17 +54,20 @@ The plugin and HUD ship as one package. Incompatible layouts increment the proto
 
 The current alpha renders an explicitly configured web chat page rather than implementing platform protocols inside OBS.
 
-The settings application accepts either direct chat pages or normal CHZZK and YouTube broadcast links. The configuration layer converts supported broadcast links into one canonical chat URL before persistence:
+The settings application accepts either direct chat pages or normal CHZZK, SOOP, and YouTube channel/broadcast links. The configuration layer converts supported links into one canonical chat URL before persistence:
 
 ```text
 CHZZK /live/<channel-id> or /<channel-id>
     → https://chzzk.naver.com/chat/<channel-id>
 
+SOOP /station/<channel-id> or play/<channel-id>[/<broadcast-number>]
+    → https://play.sooplive.com/<channel-id>?vtype=chat
+
 YouTube /watch?v=<video-id>, /live/<video-id>, youtu.be/<video-id>
     → https://www.youtube.com/live_chat?is_popout=1&v=<video-id>
 ```
 
-Weflab `/page/...` URLs remain direct. The normalizer requires HTTPS, the default HTTPS port, no URL credentials, supported paths, a 32-character hexadecimal CHZZK channel ID, and an ASCII YouTube video identifier. Unsupported or ambiguous links are rejected instead of being guessed.
+Weflab `/page/...` URLs remain direct. The normalizer requires HTTPS, the default HTTPS port, no URL credentials, supported paths, a 32-character hexadecimal CHZZK channel ID, an ASCII SOOP channel ID with an optional numeric broadcast route, and an ASCII YouTube video identifier. SOOP canonicalization intentionally binds to the streamer channel rather than one transient broadcast number. Unsupported or ambiguous links are rejected instead of being guessed.
 
 Configuration is stored by the separate native settings application in `%LOCALAPPDATA%\ChatView\config.ini`. Saving broadcasts a registered local Windows message so the HUD reloads immediately.
 

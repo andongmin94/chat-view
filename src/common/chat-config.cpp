@@ -21,6 +21,8 @@ constexpr wchar_t kConfigSection[] = L"chat";
 constexpr wchar_t kUrlKey[] = L"url";
 constexpr std::size_t kMaximumUrlLength = 2048U;
 constexpr std::size_t kChzzkChannelIdLength = 32U;
+constexpr std::size_t kMaximumSoopChannelIdLength = 64U;
+constexpr std::size_t kMaximumSoopBroadcastIdLength = 20U;
 constexpr std::size_t kMaximumYouTubeVideoIdLength = 64U;
 
 struct ParsedUrl {
@@ -127,15 +129,18 @@ std::optional<std::wstring_view> query_value(
         return std::nullopt;
     }
 
+    std::optional<std::wstring_view> result;
     extra.remove_prefix(1U);
     while (!extra.empty()) {
         const std::size_t separator = extra.find(L'&');
         const std::wstring_view pair = extra.substr(0U, separator);
         const std::size_t equals = pair.find(L'=');
         if (equals != std::wstring_view::npos &&
-            pair.substr(0U, equals) == key &&
-            equals + 1U < pair.size()) {
-            return pair.substr(equals + 1U);
+            pair.substr(0U, equals) == key) {
+            if (equals + 1U >= pair.size() || result.has_value()) {
+                return std::nullopt;
+            }
+            result = pair.substr(equals + 1U);
         }
 
         if (separator == std::wstring_view::npos) {
@@ -143,7 +148,7 @@ std::optional<std::wstring_view> query_value(
         }
         extra.remove_prefix(separator + 1U);
     }
-    return std::nullopt;
+    return result;
 }
 
 std::optional<std::wstring_view> path_segment_after(
@@ -185,6 +190,101 @@ bool is_ascii_identifier(
     return true;
 }
 
+bool is_ascii_digits(
+    std::wstring_view value,
+    std::size_t minimum,
+    std::size_t maximum) noexcept
+{
+    if (value.size() < minimum || value.size() > maximum) {
+        return false;
+    }
+
+    for (const wchar_t character : value) {
+        if (character < L'0' || character > L'9') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool equals_ascii_case_insensitive(
+    std::wstring_view left, std::wstring_view right) noexcept
+{
+    if (left.size() != right.size()) {
+        return false;
+    }
+
+    for (std::size_t index = 0U; index < left.size(); ++index) {
+        const auto lowercase = [](wchar_t character) noexcept {
+            return character >= L'A' && character <= L'Z'
+                       ? static_cast<wchar_t>(
+                             character - L'A' + L'a')
+                       : character;
+        };
+        if (lowercase(left[index]) != lowercase(right[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool is_reserved_soop_channel_id(std::wstring_view value) noexcept
+{
+    constexpr std::array<std::wstring_view, 5U> reserved{
+        L"features",
+        L"games",
+        L"guide",
+        L"guidelines",
+        L"manager",
+    };
+    return std::any_of(
+        reserved.begin(),
+        reserved.end(),
+        [value](std::wstring_view candidate) {
+            return equals_ascii_case_insensitive(value, candidate);
+        });
+}
+
+std::optional<std::wstring_view> soop_channel_from_player_path(
+    std::wstring_view path) noexcept
+{
+    if (path.size() <= 1U || path.front() != L'/') {
+        return std::nullopt;
+    }
+
+    path.remove_prefix(1U);
+    if (!path.empty() && path.back() == L'/') {
+        path.remove_suffix(1U);
+    }
+    if (path.empty() || path.back() == L'/') {
+        return std::nullopt;
+    }
+
+    const std::size_t separator = path.find(L'/');
+    const std::wstring_view channel_id = path.substr(0U, separator);
+    if (!is_ascii_identifier(
+            channel_id, 1U, kMaximumSoopChannelIdLength) ||
+        is_reserved_soop_channel_id(channel_id)) {
+        return std::nullopt;
+    }
+
+    if (separator != std::wstring_view::npos) {
+        const std::wstring_view broadcast_id =
+            path.substr(separator + 1U);
+        if (broadcast_id.empty() ||
+            broadcast_id.find(L'/') != std::wstring_view::npos ||
+            (broadcast_id != L"null" &&
+             !is_ascii_digits(
+                 broadcast_id,
+                 1U,
+                 kMaximumSoopBroadcastIdLength))) {
+            return std::nullopt;
+        }
+    }
+
+    return channel_id;
+}
+
 bool is_chzzk_channel_id(std::wstring_view value) noexcept
 {
     if (value.size() != kChzzkChannelIdLength) {
@@ -212,6 +312,18 @@ bool is_youtube_host(const std::wstring &host) noexcept
     return is_host(host, L"youtube.com") ||
            is_host(host, L"www.youtube.com") ||
            is_host(host, L"m.youtube.com");
+}
+
+
+bool is_soop_station_host(const std::wstring &host) noexcept
+{
+    return is_host(host, L"sooplive.com") ||
+           is_host(host, L"www.sooplive.com");
+}
+
+bool is_soop_player_host(const std::wstring &host) noexcept
+{
+    return is_host(host, L"play.sooplive.com");
 }
 
 std::wstring lowercase_ascii(std::wstring_view value)
@@ -247,6 +359,34 @@ std::wstring canonical_weflab_url(const ParsedUrl &parsed)
         result.append(query);
     }
     return result;
+}
+
+std::wstring canonical_soop_chat_url(std::wstring_view channel_id)
+{
+    std::wstring result = L"https://play.sooplive.com/";
+    result.append(channel_id);
+    result.append(L"?vtype=chat");
+    return result;
+}
+
+std::wstring normalize_soop_url(const ParsedUrl &parsed)
+{
+    std::optional<std::wstring_view> channel_id;
+    if (is_soop_player_host(parsed.host)) {
+        channel_id = soop_channel_from_player_path(parsed.path);
+    } else if (is_soop_station_host(parsed.host)) {
+        channel_id = path_segment_after(parsed.path, L"/station/");
+        if (channel_id.has_value() &&
+            (!is_ascii_identifier(
+                 *channel_id, 1U, kMaximumSoopChannelIdLength) ||
+             is_reserved_soop_channel_id(*channel_id))) {
+            channel_id.reset();
+        }
+    }
+
+    return channel_id.has_value()
+               ? canonical_soop_chat_url(*channel_id)
+               : std::wstring{};
 }
 
 std::wstring canonical_chzzk_chat_url(std::wstring_view channel_id)
@@ -329,6 +469,10 @@ std::wstring normalize_chat_url(const std::wstring &url) noexcept
             !normalized.empty()) {
             return normalized;
         }
+        if (std::wstring normalized = normalize_soop_url(*parsed);
+            !normalized.empty()) {
+            return normalized;
+        }
         return normalize_youtube_url(*parsed);
     } catch (...) {
         return {};
@@ -357,6 +501,10 @@ bool is_supported_chat_document_url(const std::wstring &url) noexcept
                 path_segment_after(parsed->path, L"/chat/");
             return channel_id.has_value() &&
                    is_chzzk_channel_id(*channel_id);
+        }
+
+        if (is_soop_player_host(parsed->host)) {
+            return soop_channel_from_player_path(parsed->path).has_value();
         }
 
         if (is_youtube_host(parsed->host) &&

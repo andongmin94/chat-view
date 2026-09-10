@@ -44,7 +44,7 @@ code { color:#7dd3fc; }
 <main>
 <h1>ChatView needs a chat URL</h1>
 <p>Open <strong>OBS Studio → Tools → ChatView Settings…</strong>.</p>
-<p>Paste a Weflab page, CHZZK broadcast, or YouTube live URL, then save.</p>
+<p>Paste a Weflab page or a CHZZK, SOOP, or YouTube broadcast/chat URL, then save.</p>
 <p><code>Ctrl + Alt + Shift + H</code> unlocks this overlay for moving and resizing.</p>
 </main>
 </body>

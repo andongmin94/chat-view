@@ -134,7 +134,7 @@ Using monitor-relative DIPs preserves useful placement across virtual-desktop re
 - Unexpected HUD exits use bounded exponential backoff and open an automatic-restart circuit after six consecutive failures.
 - **Tools → Restart ChatView HUD** explicitly resets the circuit and replaces a running HUD without restarting OBS.
 - Plugin unload uses a bounded wait and does not indefinitely block OBS shutdown.
-- WebView2 asynchronous callbacks are serviced by an alertable, input-available Win32 message loop.
+- WebView2 asynchronous callbacks are serviced by an alertable, input-available Win32 message loop. Each controller initialization receives a fresh callback-state generation, so a late callback from a closed controller cannot attach to a replacement controller.
 
 ## Testing boundary
 

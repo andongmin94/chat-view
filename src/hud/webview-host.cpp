@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cwchar>
 #include <string>
+#include <utility>
 
 namespace chatview {
 namespace {
@@ -275,11 +276,7 @@ HRESULT create_d3d_device(ComPtr<ID3D11Device> &device) noexcept
 
 } // namespace
 
-WebViewHost::WebViewHost()
-    : callback_state_(std::make_shared<CallbackState>())
-{
-    callback_state_->owner = this;
-}
+WebViewHost::WebViewHost() = default;
 
 WebViewHost::~WebViewHost()
 {
@@ -291,6 +288,18 @@ bool WebViewHost::initialize(HWND window) noexcept
     if (window == nullptr || window_ != nullptr) {
         return false;
     }
+
+    std::shared_ptr<CallbackState> callback_state;
+    try {
+        callback_state = std::make_shared<CallbackState>();
+    } catch (...) {
+        return false;
+    }
+    callback_state->owner = this;
+    if (callback_state_) {
+        callback_state_->owner = nullptr;
+    }
+    callback_state_ = std::move(callback_state);
 
     window_ = window;
     const HRESULT composition_result = initialize_composition();

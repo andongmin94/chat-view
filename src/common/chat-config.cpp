@@ -5,6 +5,7 @@
 #include <Windows.h>
 #include <winhttp.h>
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <optional>
@@ -31,7 +32,8 @@ struct ParsedUrl {
 std::filesystem::path local_app_data_path() noexcept
 {
     try {
-        const DWORD required = GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0U);
+        const DWORD required =
+            GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0U);
         if (required == 0U) {
             return {};
         }
@@ -55,9 +57,23 @@ std::filesystem::path config_file_path() noexcept
     return root.empty() ? std::filesystem::path{} : root / L"config.ini";
 }
 
+bool has_forbidden_url_character(std::wstring_view url) noexcept
+{
+    for (const wchar_t character : url) {
+        const unsigned int value = static_cast<unsigned int>(character);
+        if (value <= 0x20U ||
+            (value >= 0x7FU && value <= 0x9FU) ||
+            character == L'\\') {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::optional<ParsedUrl> parse_https_url(const std::wstring &url) noexcept
 {
-    if (url.empty() || url.size() > kMaximumUrlLength) {
+    if (url.empty() || url.size() > kMaximumUrlLength ||
+        has_forbidden_url_character(url)) {
         return std::nullopt;
     }
 
@@ -76,7 +92,9 @@ std::optional<ParsedUrl> parse_https_url(const std::wstring &url) noexcept
         components.dwUserNameLength != 0U ||
         components.dwPasswordLength != 0U ||
         components.lpszHostName == nullptr ||
-        components.lpszUrlPath == nullptr) {
+        components.dwHostNameLength == 0U ||
+        components.lpszUrlPath == nullptr ||
+        components.dwUrlPathLength == 0U) {
         return std::nullopt;
     }
 
@@ -196,10 +214,45 @@ bool is_youtube_host(const std::wstring &host) noexcept
            is_host(host, L"m.youtube.com");
 }
 
+std::wstring lowercase_ascii(std::wstring_view value)
+{
+    std::wstring result(value);
+    std::transform(
+        result.begin(),
+        result.end(),
+        result.begin(),
+        [](wchar_t character) {
+            return character >= L'A' && character <= L'Z'
+                       ? static_cast<wchar_t>(
+                             character - L'A' + L'a')
+                       : character;
+        });
+    return result;
+}
+
+std::wstring canonical_weflab_url(const ParsedUrl &parsed)
+{
+    const std::optional<std::wstring_view> page =
+        path_segment_after(parsed.path, L"/page/");
+    if (!is_host(parsed.host, L"weflab.com") || !page.has_value()) {
+        return {};
+    }
+
+    std::wstring result = L"https://weflab.com/page/";
+    result.append(*page);
+
+    const std::wstring_view query =
+        query_without_fragment(parsed.extra);
+    if (query.size() > 1U && query.front() == L'?') {
+        result.append(query);
+    }
+    return result;
+}
+
 std::wstring canonical_chzzk_chat_url(std::wstring_view channel_id)
 {
     std::wstring result = L"https://chzzk.naver.com/chat/";
-    result.append(channel_id);
+    result.append(lowercase_ascii(channel_id));
     return result;
 }
 
@@ -209,20 +262,6 @@ std::wstring canonical_youtube_chat_url(std::wstring_view video_id)
         L"https://www.youtube.com/live_chat?is_popout=1&v=";
     result.append(video_id);
     return result;
-}
-
-std::wstring normalize_weflab_url(
-    const ParsedUrl &parsed, const std::wstring &original)
-{
-    if (!is_host(parsed.host, L"weflab.com") ||
-        !path_segment_after(parsed.path, L"/page/").has_value()) {
-        return {};
-    }
-
-    const std::size_t fragment = original.find(L'#');
-    return fragment == std::wstring::npos
-               ? original
-               : original.substr(0U, fragment);
 }
 
 std::wstring normalize_chzzk_url(const ParsedUrl &parsed)
@@ -282,7 +321,7 @@ std::wstring normalize_chat_url(const std::wstring &url) noexcept
             return {};
         }
 
-        if (std::wstring normalized = normalize_weflab_url(*parsed, url);
+        if (std::wstring normalized = canonical_weflab_url(*parsed);
             !normalized.empty()) {
             return normalized;
         }

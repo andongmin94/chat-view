@@ -11,8 +11,12 @@
 
 namespace {
 
-constexpr wchar_t kChzzkChannelId[] = L"733c98be047f710d3b1bc7a27b0c83e2";
-constexpr wchar_t kOtherChzzkChannelId[] = L"0123456789abcdef0123456789abcdef";
+constexpr wchar_t kChzzkChannelId[] =
+    L"733c98be047f710d3b1bc7a27b0c83e2";
+constexpr wchar_t kUpperChzzkChannelId[] =
+    L"733C98BE047F710D3B1BC7A27B0C83E2";
+constexpr wchar_t kOtherChzzkChannelId[] =
+    L"0123456789abcdef0123456789abcdef";
 constexpr wchar_t kYouTubeVideoId[] = L"dQw4w9WgXcQ";
 constexpr wchar_t kOtherYouTubeVideoId[] = L"abcdefghijk";
 
@@ -115,6 +119,8 @@ int main()
         return fail(L"Failed to redirect LOCALAPPDATA");
     }
 
+    const std::wstring canonical_weflab =
+        L"https://weflab.com/page/test?theme=dark";
     const std::wstring canonical_chzzk =
         std::wstring(L"https://chzzk.naver.com/chat/") +
         kChzzkChannelId;
@@ -132,18 +138,26 @@ int main()
 
     if (!expect_normalized(
             L"https://weflab.com/page/test?theme=dark#ignored",
-            L"https://weflab.com/page/test?theme=dark",
+            canonical_weflab,
             L"Weflab URL normalization failed") ||
+        !expect_normalized(
+            L"HTTPS://WEFLAB.COM/page/test/?theme=dark#ignored",
+            canonical_weflab,
+            L"Weflab host and trailing slash were not canonicalized") ||
+        !expect_normalized(
+            L"https://weflab.com/page/test?#ignored",
+            L"https://weflab.com/page/test",
+            L"Empty Weflab query was not removed") ||
         !expect_normalized(
             std::wstring(L"https://chzzk.naver.com/chat/") +
                 kChzzkChannelId + L"?dark=true",
             canonical_chzzk,
             L"CHZZK chat URL normalization failed") ||
         !expect_normalized(
-            std::wstring(L"https://chzzk.naver.com/live/") +
-                kChzzkChannelId,
+            std::wstring(L"https://CHZZK.NAVER.COM/live/") +
+                kUpperChzzkChannelId + L"/#ignored",
             canonical_chzzk,
-            L"CHZZK live URL normalization failed") ||
+            L"CHZZK host and channel ID were not canonicalized") ||
         !expect_normalized(
             std::wstring(L"https://m.chzzk.naver.com/live/") +
                 kChzzkChannelId,
@@ -204,12 +218,34 @@ int main()
             L"Non-default HTTPS port was accepted") ||
         !expect_rejected(
             L"https://youtu.be/not/one/segment",
-            L"Malformed YouTube short URL was accepted")) {
+            L"Malformed YouTube short URL was accepted") ||
+        !expect_rejected(
+            L" https://weflab.com/page/test",
+            L"Leading whitespace was accepted") ||
+        !expect_rejected(
+            L"https://weflab.com/page/test ",
+            L"Trailing whitespace was accepted") ||
+        !expect_rejected(
+            L"https://weflab.com/page/\ttest",
+            L"Embedded tab was accepted") ||
+        !expect_rejected(
+            L"https://weflab.com/page/test\nnext",
+            L"Embedded newline was accepted") ||
+        !expect_rejected(
+            L"https:\\\\weflab.com\\page\\test",
+            L"Backslash URL was accepted") ||
+        !expect_rejected(
+            std::wstring(L"https://weflab.com/page/test") +
+                static_cast<wchar_t>(0x7F),
+            L"DEL control character was accepted") ||
+        !expect_rejected(
+            L"https://weflab.com/page/test//",
+            L"Multiple trailing path separators were accepted")) {
         return 1;
     }
 
     if (!expect_document_allowed(
-            L"https://weflab.com/page/test?theme=dark",
+            canonical_weflab,
             L"Canonical Weflab page was not accepted as a document") ||
         !expect_document_allowed(
             canonical_chzzk + L"?dark=true",
@@ -248,13 +284,18 @@ int main()
             canonical_chzzk,
             L"Matching CHZZK document was rejected") ||
         !expect_matching_document(
+            std::wstring(L"https://CHZZK.NAVER.COM/chat/") +
+                kUpperChzzkChannelId,
+            canonical_chzzk,
+            L"Equivalent CHZZK document was rejected") ||
+        !expect_matching_document(
             canonical_youtube + L"&embed_domain=localhost",
             canonical_youtube,
             L"Matching YouTube document was rejected") ||
         !expect_matching_document(
-            L"https://weflab.com/page/test?theme=dark#ignored",
-            L"https://weflab.com/page/test?theme=dark",
-            L"Matching Weflab document was rejected") ||
+            L"HTTPS://WEFLAB.COM/page/test/?theme=dark#ignored",
+            canonical_weflab,
+            L"Equivalent Weflab document was rejected") ||
         !expect_nonmatching_document(
             other_chzzk,
             canonical_chzzk,
@@ -275,11 +316,11 @@ int main()
             L"YouTube watch page matched a chat document") ||
         !expect_nonmatching_document(
             L"https://weflab.com/page/other?theme=dark",
-            L"https://weflab.com/page/test?theme=dark",
+            canonical_weflab,
             L"Different Weflab page was accepted") ||
         !expect_nonmatching_document(
             L"https://weflab.com/page/test?theme=light",
-            L"https://weflab.com/page/test?theme=dark",
+            canonical_weflab,
             L"Different Weflab configuration was accepted")) {
         return 1;
     }

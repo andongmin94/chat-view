@@ -1,0 +1,41 @@
+name: Apply SOOP route correction
+
+on:
+  push:
+    branches:
+      - OBS
+    paths:
+      - .github/workflows/apply-soop-route-correction.yml
+      - scripts/apply-soop-route-correction.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    name: Apply SOOP route correction
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out OBS branch
+        uses: actions/checkout@v4
+        with:
+          ref: OBS
+          fetch-depth: 0
+
+      - name: Apply deterministic patch
+        run: python scripts/apply-soop-route-correction.py
+
+      - name: Validate patch formatting
+        run: git diff --check
+
+      - name: Commit route correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            CMakeLists.txt \
+            src/common/chat-config.cpp \
+            tests/chat-config-test.cpp
+          git commit -m "fix: preserve valid SOOP channel routes"
+          git push origin HEAD:OBS

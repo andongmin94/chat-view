@@ -296,7 +296,7 @@ LRESULT HudWindow::handle_message(
             return 0L;
         }
         if (wparam == kCaptureSafetyTimerId) {
-            if (!capture_exclusion_intact()) {
+            if (!capture_risk_ && !capture_exclusion_intact()) {
                 fail_closed_capture_exclusion();
             }
             return 0L;

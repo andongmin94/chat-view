@@ -791,6 +791,14 @@ int wmain(int argument_count, wchar_t **arguments)
         state_event.get(),
         chatview::SharedStateStreaming);
     if (!wait_for_visibility(window, true)) {
+        if (WaitForSingleObject(child_process.get(), 0U) == WAIT_OBJECT_0) {
+            DWORD exit_code = STILL_ACTIVE;
+            GetExitCodeProcess(child_process.get(), &exit_code);
+            std::wcerr
+                << L"The HUD exited while capture suppression was active "
+                << L"(exit code " << exit_code << L")\n";
+            return 1;
+        }
         return fail(
             L"The HUD did not resume after runtime capture suppression",
             child_process.get());

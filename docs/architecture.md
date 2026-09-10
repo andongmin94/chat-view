@@ -46,7 +46,7 @@ The single-PC transport uses a named Windows file mapping and an auto-reset even
 - shutdown requested;
 - a monotonically increasing generation.
 
-The mapped structure has a fixed magic value, explicit protocol version, and sequence lock. The sequence lock prevents the HUD from accepting a partial write, while the event avoids polling. Names are scoped to the current Windows session and the OBS process ID.
+The mapped structure has a fixed magic value, explicit protocol version, and sequence lock. The sequence lock prevents the HUD from accepting a partial write, while the event avoids polling. Names are scoped to the current Windows session, the OBS process ID, and a per-launch CNG random token.
 
 The plugin and HUD ship as one package. Incompatible layouts increment the protocol version; obsolete layouts are not retained.
 
@@ -119,7 +119,8 @@ Using monitor-relative DIPs preserves useful placement across virtual-desktop re
 - The HUD receives its OBS parent process ID.
 - Normal unload publishes a shutdown state and wakes the HUD.
 - The HUD also waits on the OBS process handle and exits after abnormal OBS termination.
-- The plugin can restart an unexpectedly exited HUD on a later frontend-state update.
+- Unexpected HUD exits use bounded exponential backoff and open an automatic-restart circuit after six consecutive failures.
+- **Tools → Restart ChatView HUD** explicitly resets the circuit and replaces a running HUD without restarting OBS.
 - Plugin unload uses a bounded wait and does not indefinitely block OBS shutdown.
 - WebView2 asynchronous callbacks are serviced by an alertable, input-available Win32 message loop.
 
@@ -129,7 +130,8 @@ The Windows workflow builds against pinned OBS Studio 32.2.2 development librari
 
 - provider URL normalization, rejection, and configuration persistence tests;
 - placement validation, monitor fallback, and malformed-input tests;
-- a real WebView2 HUD process smoke test covering initialization readiness, locked/edit modes, native resize, persistence, capture-exclusion request, shared-state shutdown, and delayed WebView profile cleanup;
+- a calibrated pixel-level Windows capture-exclusion capability probe followed by a real WebView2 HUD process smoke test covering initialization readiness, locked/edit modes, native resize, persistence, capture-exclusion request, shared-state shutdown, and delayed WebView profile cleanup;
+- deterministic restart-policy tests covering backoff, circuit opening, saturation, and explicit reset;
 - package layout validation;
 - installer and uninstaller tests against an isolated OBS directory tree.
 

@@ -27,6 +27,7 @@ public:
     [[nodiscard]] bool start() noexcept;
     void stop() noexcept;
     void update(bool streaming, bool recording) noexcept;
+    [[nodiscard]] bool restart_hud() noexcept;
     [[nodiscard]] bool open_settings() const noexcept;
     [[nodiscard]] bool toggle_edit_mode() noexcept;
 
@@ -46,6 +47,7 @@ private:
     std::shared_mutex state_publish_mutex_;
     std::thread supervisor_thread_;
     std::atomic_bool stopping_{true};
+    std::atomic_bool restart_requested_{false};
     std::atomic<std::uint32_t> current_flags_{SharedStateNone};
     HANDLE state_publish_handle_ = nullptr;
     UniqueHandle supervisor_stop_event_;

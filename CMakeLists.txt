@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.2.4 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.2.5 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -78,6 +78,7 @@ add_library(chat-view-obs MODULE
     src/plugin/plugin-main.cpp
     src/plugin/runtime-controller.cpp
     src/plugin/runtime-controller.hpp
+    src/plugin/restart-policy.hpp
     src/plugin/transport-token.cpp
     src/plugin/transport-token.hpp
     src/common/shared-state.hpp
@@ -227,6 +228,18 @@ if(BUILD_TESTING)
     add_test(
         NAME chat-view-transport-token
         COMMAND chat-view-transport-token-test
+    )
+
+    add_executable(chat-view-restart-policy-test
+        tests/restart-policy-test.cpp
+        src/plugin/restart-policy.hpp
+    )
+    target_include_directories(
+        chat-view-restart-policy-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_warnings(chat-view-restart-policy-test)
+    add_test(
+        NAME chat-view-restart-policy
+        COMMAND chat-view-restart-policy-test
     )
 
     add_test(

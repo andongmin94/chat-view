@@ -45,6 +45,13 @@ void open_settings(void *)
     }
 }
 
+void restart_hud(void *)
+{
+    if (runtime_controller && !runtime_controller->restart_hud()) {
+        blog(LOG_ERROR, "[ChatView OBS] HUD restart could not be requested");
+    }
+}
+
 void toggle_edit_mode(void *)
 {
     if (runtime_controller && !runtime_controller->toggle_edit_mode()) {
@@ -75,6 +82,8 @@ bool obs_module_load(void)
         }
 
         obs_frontend_add_event_callback(on_frontend_event, nullptr);
+        obs_frontend_add_tools_menu_item(
+            obs_module_text("ChatView.RestartHud"), restart_hud, nullptr);
         obs_frontend_add_tools_menu_item(
             obs_module_text("ChatView.EditOverlay"), toggle_edit_mode, nullptr);
         obs_frontend_add_tools_menu_item(

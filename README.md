@@ -19,7 +19,8 @@ This branch currently provides an installable single-PC alpha:
 - persisted monitor and DPI-independent bounds;
 - LIVE and REC status indicators;
 - Windows capture-exclusion request through `WDA_EXCLUDEFROMCAPTURE`;
-- bounded shutdown and automatic HUD restart on a later OBS state update;
+- bounded shutdown and an automatic restart circuit that stops crash loops;
+- explicit **Tools → Restart ChatView HUD** recovery without restarting OBS;
 - pinned Windows CI, native tests, installer test, and packaged artifact.
 
 The renderer remains out of process deliberately. A browser or desktop-rendering failure must not take down OBS Studio.
@@ -31,7 +32,7 @@ The renderer remains out of process deliberately. A browser or desktop-rendering
 3. Double-click `install.cmd` and approve the Windows administrator prompt.
 4. Start OBS Studio and open **Tools → ChatView Settings...**.
 
-The installer verifies the Microsoft Edge WebView2 Runtime and installs it when missing. It then copies the plugin, HUD, settings application, and locale files into the default OBS directory:
+The installer verifies the package manifest and the Microsoft Edge WebView2 Runtime, then runs a calibrated local pixel probe before copying any files. The probe must observe an ordinary foreground window and then observe the measured background after Windows capture exclusion is enabled. It then copies the plugin, HUD, settings application, and locale files into the default OBS directory:
 
 ```text
 C:\Program Files\obs-studio

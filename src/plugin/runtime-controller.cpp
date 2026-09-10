@@ -3,6 +3,7 @@
 #include "plugin/runtime-controller.hpp"
 
 #include "common/window-messages.hpp"
+#include "plugin/restart-policy.hpp"
 #include "plugin/transport-token.hpp"
 
 #include <obs-module.h>
@@ -27,8 +28,6 @@ constexpr DWORD kRuntimeReadyWaitMs = 12000U;
 constexpr DWORD kRuntimeExitWaitMs = 2000U;
 constexpr DWORD kRuntimeTerminateWaitMs = 2000U;
 constexpr DWORD kRuntimeStablePeriodMs = 30000U;
-constexpr DWORD kRestartInitialDelayMs = 500U;
-constexpr DWORD kRestartMaximumDelayMs = 30000U;
 
 struct RuntimeWindowSearch {
     DWORD process_id = 0U;
@@ -112,17 +111,6 @@ BOOL CALLBACK find_runtime_window(HWND window, LPARAM data)
     return TRUE;
 }
 
-DWORD next_restart_delay(DWORD current) noexcept
-{
-    if (current == 0U) {
-        return kRestartInitialDelayMs;
-    }
-    if (current >= kRestartMaximumDelayMs / 2U) {
-        return kRestartMaximumDelayMs;
-    }
-    return std::min(kRestartMaximumDelayMs, current * 2U);
-}
-
 } // namespace
 
 RuntimeController::~RuntimeController()
@@ -138,6 +126,7 @@ bool RuntimeController::start() noexcept
         {
             std::scoped_lock lock(mutex_);
             stopping_.store(false, std::memory_order_release);
+            restart_requested_.store(false, std::memory_order_release);
 
             if (!create_transport_locked()) {
                 stopping_.store(true, std::memory_order_release);
@@ -234,6 +223,27 @@ void RuntimeController::update(bool streaming, bool recording) noexcept
     if (state_publish_handle_ != nullptr && !SetEvent(state_publish_handle_)) {
         log_windows_error("SetEvent(state publish)", GetLastError());
     }
+}
+
+
+bool RuntimeController::restart_hud() noexcept
+{
+    if (stopping_.load(std::memory_order_acquire)) {
+        return false;
+    }
+
+    restart_requested_.store(true, std::memory_order_release);
+    std::shared_lock publish_lock(state_publish_mutex_);
+    if (state_publish_handle_ == nullptr) {
+        restart_requested_.store(false, std::memory_order_release);
+        return false;
+    }
+    if (!SetEvent(state_publish_handle_)) {
+        log_windows_error("SetEvent(HUD restart)", GetLastError());
+        restart_requested_.store(false, std::memory_order_release);
+        return false;
+    }
+    return true;
 }
 
 bool RuntimeController::open_settings() const noexcept
@@ -594,7 +604,33 @@ std::wstring RuntimeController::find_sibling_path(
 
 void RuntimeController::supervisor_loop() noexcept
 {
-    DWORD restart_delay = 0U;
+    RestartPolicy restart_policy;
+    ULONGLONG retry_deadline = 0U;
+
+    const auto record_failure = [&restart_policy, &retry_deadline]() noexcept {
+        restart_policy.record_failure();
+        if (!restart_policy.automatic_restart_allowed()) {
+            retry_deadline = 0U;
+            blog(
+                LOG_ERROR,
+                "[ChatView OBS] HUD automatic restart disabled after %u "
+                "consecutive failures; use Tools > Restart ChatView HUD",
+                static_cast<unsigned int>(restart_policy.failure_count()));
+            return;
+        }
+
+        const DWORD delay =
+            static_cast<DWORD>(restart_policy.delay_ms());
+        retry_deadline = GetTickCount64() + delay;
+        blog(
+            LOG_WARNING,
+            "[ChatView OBS] HUD restart scheduled in %lu ms after failure "
+            "%u/%u",
+            static_cast<unsigned long>(delay),
+            static_cast<unsigned int>(restart_policy.failure_count()),
+            static_cast<unsigned int>(
+                kMaximumAutomaticRestartFailures));
+    };
 
     try {
         while (!stopping_.load(std::memory_order_acquire)) {
@@ -615,16 +651,52 @@ void RuntimeController::supervisor_loop() noexcept
             }
 
             if (process == nullptr) {
-                const DWORD delay_result =
-                    WaitForSingleObject(stop_event, restart_delay);
-                if (delay_result == WAIT_OBJECT_0) {
+                DWORD wait_timeout = INFINITE;
+                if (restart_policy.automatic_restart_allowed()) {
+                    const ULONGLONG now = GetTickCount64();
+                    const ULONGLONG remaining =
+                        retry_deadline > now ? retry_deadline - now : 0U;
+                    wait_timeout =
+                        remaining >= static_cast<ULONGLONG>(INFINITE)
+                            ? INFINITE - 1U
+                            : static_cast<DWORD>(remaining);
+                }
+
+                HANDLE wait_handles[2] = {stop_event, publish_event};
+                const DWORD wait_result = WaitForMultipleObjects(
+                    2U, wait_handles, FALSE, wait_timeout);
+                if (wait_result == WAIT_OBJECT_0) {
                     return;
                 }
-                if (delay_result == WAIT_FAILED) {
+                if (wait_result == WAIT_OBJECT_0 + 1U) {
+                    const bool explicit_restart =
+                        restart_requested_.exchange(
+                            false, std::memory_order_acq_rel);
+                    if (!explicit_restart) {
+                        continue;
+                    }
+
+                    restart_policy.reset();
+                    retry_deadline = 0U;
+                    blog(
+                        LOG_INFO,
+                        "[ChatView OBS] Manual HUD restart requested");
+                } else if (wait_result == WAIT_FAILED) {
                     log_windows_error(
-                        "WaitForSingleObject(HUD restart backoff)",
+                        "WaitForMultipleObjects(HUD restart backoff)",
                         GetLastError());
                     return;
+                } else if (wait_result != WAIT_TIMEOUT) {
+                    blog(
+                        LOG_ERROR,
+                        "[ChatView OBS] HUD restart wait returned unexpected "
+                        "result %lu",
+                        static_cast<unsigned long>(wait_result));
+                    return;
+                }
+
+                if (!restart_policy.automatic_restart_allowed()) {
+                    continue;
                 }
 
                 bool launched = false;
@@ -636,21 +708,31 @@ void RuntimeController::supervisor_loop() noexcept
                     launched = launch_runtime_locked();
                     if (launched) {
                         publish_locked(
-                            current_flags_.load(std::memory_order_acquire));
+                            current_flags_.load(
+                                std::memory_order_acquire));
                     }
                 }
 
+                if (stopping_.load(std::memory_order_acquire)) {
+                    return;
+                }
                 if (launched) {
+                    retry_deadline = 0U;
                     blog(
                         LOG_INFO,
-                        "[ChatView OBS] HUD runtime started and reported ready");
+                        "[ChatView OBS] HUD runtime started and reported "
+                        "ready");
                 } else {
-                    restart_delay = next_restart_delay(restart_delay);
+                    record_failure();
                 }
                 continue;
             }
 
-            HANDLE wait_handles[3] = {stop_event, process, publish_event};
+            HANDLE wait_handles[3] = {
+                stop_event,
+                process,
+                publish_event,
+            };
             const DWORD wait_result = WaitForMultipleObjects(
                 3U,
                 wait_handles,
@@ -660,17 +742,47 @@ void RuntimeController::supervisor_loop() noexcept
                 return;
             }
             if (wait_result == WAIT_OBJECT_0 + 2U) {
+                const bool explicit_restart =
+                    restart_requested_.exchange(
+                        false, std::memory_order_acq_rel);
+
                 std::scoped_lock lock(mutex_);
-                if (runtime_process_id_ == process_id &&
-                    runtime_process_.get() == process &&
+                if (runtime_process_id_ != process_id ||
+                    runtime_process_.get() != process) {
+                    continue;
+                }
+
+                if (explicit_restart) {
+                    if (WaitForSingleObject(process, 0U) == WAIT_TIMEOUT) {
+                        terminate_runtime_locked(
+                            "was restarted from the OBS Tools menu");
+                    } else {
+                        runtime_process_.reset();
+                        runtime_process_id_ = 0U;
+                        runtime_job_.reset();
+                    }
+                    restart_policy.reset();
+                    retry_deadline = 0U;
+                    blog(
+                        LOG_INFO,
+                        "[ChatView OBS] Manual HUD restart accepted");
+                } else if (
                     WaitForSingleObject(process, 0U) == WAIT_TIMEOUT) {
                     publish_locked(
-                        current_flags_.load(std::memory_order_acquire));
+                        current_flags_.load(
+                            std::memory_order_acquire));
                 }
                 continue;
             }
             if (wait_result == WAIT_TIMEOUT) {
-                restart_delay = 0U;
+                if (restart_policy.failure_count() != 0U) {
+                    blog(
+                        LOG_INFO,
+                        "[ChatView OBS] HUD remained stable; restart "
+                        "failure counter reset");
+                }
+                restart_policy.reset();
+                retry_deadline = 0U;
                 continue;
             }
             if (wait_result == WAIT_FAILED) {
@@ -682,11 +794,13 @@ void RuntimeController::supervisor_loop() noexcept
             if (wait_result != WAIT_OBJECT_0 + 1U) {
                 blog(
                     LOG_ERROR,
-                    "[ChatView OBS] HUD supervisor received unexpected wait result %lu",
+                    "[ChatView OBS] HUD supervisor received unexpected "
+                    "wait result %lu",
                     static_cast<unsigned long>(wait_result));
                 return;
             }
 
+            bool exited = false;
             {
                 std::scoped_lock lock(mutex_);
                 if (runtime_process_id_ == process_id &&
@@ -696,16 +810,23 @@ void RuntimeController::supervisor_loop() noexcept
                     runtime_process_.reset();
                     runtime_process_id_ = 0U;
                     runtime_job_.reset();
-                    restart_delay = next_restart_delay(restart_delay);
+                    exited = true;
                 }
+            }
+            if (exited) {
+                record_failure();
             }
         }
     } catch (const std::exception &error) {
-        blog(LOG_ERROR, "[ChatView OBS] HUD supervisor failed: %s", error.what());
+        blog(
+            LOG_ERROR,
+            "[ChatView OBS] HUD supervisor failed: %s",
+            error.what());
     } catch (...) {
         blog(
             LOG_ERROR,
-            "[ChatView OBS] HUD supervisor failed with an unknown exception");
+            "[ChatView OBS] HUD supervisor failed with an unknown "
+            "exception");
     }
 
     stopping_.store(true, std::memory_order_release);
@@ -799,6 +920,7 @@ void RuntimeController::cleanup_locked() noexcept
     event_name_.clear();
     ready_event_name_.clear();
     generation_ = 0U;
+    restart_requested_.store(false, std::memory_order_release);
     current_flags_.store(SharedStateNone, std::memory_order_release);
 }
 

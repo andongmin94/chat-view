@@ -381,6 +381,9 @@ void WebViewHost::close() noexcept
         if (new_window_requested_token_.value != 0) {
             webview_->remove_NewWindowRequested(new_window_requested_token_);
         }
+        if (permission_requested_token_.value != 0) {
+            webview_->remove_PermissionRequested(permission_requested_token_);
+        }
         if (process_failed_token_.value != 0) {
             webview_->remove_ProcessFailed(process_failed_token_);
         }
@@ -389,6 +392,7 @@ void WebViewHost::close() noexcept
     navigation_starting_token_ = {};
     navigation_completed_token_ = {};
     new_window_requested_token_ = {};
+    permission_requested_token_ = {};
     process_failed_token_ = {};
 
     if (controller_) {
@@ -655,8 +659,10 @@ HRESULT WebViewHost::on_controller_created(
         return S_OK;
     }
     if (FAILED(settings->put_AreDefaultContextMenusEnabled(FALSE)) ||
+        FAILED(settings->put_AreDefaultScriptDialogsEnabled(FALSE)) ||
         FAILED(settings->put_IsStatusBarEnabled(FALSE)) ||
-        FAILED(settings->put_AreDevToolsEnabled(FALSE))) {
+        FAILED(settings->put_AreDevToolsEnabled(FALSE)) ||
+        FAILED(settings->put_IsZoomControlEnabled(FALSE))) {
         post_failure(E_FAIL);
         return S_OK;
     }
@@ -736,6 +742,18 @@ HRESULT WebViewHost::on_controller_created(
             })
             .Get(),
         &new_window_requested_token_);
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
+
+    result = webview_->add_PermissionRequested(
+        Callback<ICoreWebView2PermissionRequestedEventHandler>(
+            [](ICoreWebView2 *, ICoreWebView2PermissionRequestedEventArgs *args) -> HRESULT {
+                return args->put_State(COREWEBVIEW2_PERMISSION_STATE_DENY);
+            })
+            .Get(),
+        &permission_requested_token_);
     if (FAILED(result)) {
         post_failure(result);
         return S_OK;

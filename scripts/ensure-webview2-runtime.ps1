@@ -5,6 +5,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $clientId = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+$minimumRuntimeVersion = [System.Version]'151.0.4129.50'
 $bootstrapperUrl = 'https://go.microsoft.com/fwlink/p/?LinkId=2124703'
 
 function Get-WebView2RuntimeVersion {
@@ -14,7 +15,7 @@ function Get-WebView2RuntimeVersion {
         "HKCU:\Software\Microsoft\EdgeUpdate\Clients\$clientId"
     )
 
-    foreach ($registryPath in $registryPaths) {
+    $versions = foreach ($registryPath in $registryPaths) {
         $value = Get-ItemPropertyValue `
             -LiteralPath $registryPath `
             -Name 'pv' `
@@ -26,7 +27,7 @@ function Get-WebView2RuntimeVersion {
         try {
             $version = [System.Version]$value
             if ($version -gt [System.Version]'0.0.0.0') {
-                return $value
+                $version
             }
         }
         catch {
@@ -34,11 +35,11 @@ function Get-WebView2RuntimeVersion {
         }
     }
 
-    return $null
+    return $versions | Sort-Object -Descending | Select-Object -First 1
 }
 
 $installedVersion = Get-WebView2RuntimeVersion
-if ($installedVersion) {
+if ($installedVersion -and $installedVersion -ge $minimumRuntimeVersion) {
     Write-Host "Microsoft Edge WebView2 Runtime $installedVersion is already installed."
     exit 0
 }
@@ -48,7 +49,13 @@ $installerPath = Join-Path `
     "MicrosoftEdgeWebview2Setup-$PID.exe"
 
 try {
-    Write-Host 'Microsoft Edge WebView2 Runtime was not found. Installing the Evergreen Runtime...'
+    if ($installedVersion) {
+        Write-Host "WebView2 Runtime $installedVersion is older than the required $minimumRuntimeVersion. Updating the Evergreen Runtime..."
+    }
+    else {
+        Write-Host "Microsoft Edge WebView2 Runtime $minimumRuntimeVersion or newer was not found. Installing the Evergreen Runtime..."
+    }
+
     Invoke-WebRequest -Uri $bootstrapperUrl -OutFile $installerPath
 
     $signature = Get-AuthenticodeSignature -LiteralPath $installerPath
@@ -64,19 +71,20 @@ try {
         -Wait `
         -PassThru
 
-    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+    for ($attempt = 0; $attempt -lt 60; $attempt++) {
         $installedVersion = Get-WebView2RuntimeVersion
-        if ($installedVersion) {
+        if ($installedVersion -and $installedVersion -ge $minimumRuntimeVersion) {
             break
         }
         Start-Sleep -Seconds 1
     }
 
-    if (-not $installedVersion) {
-        throw "WebView2 Runtime installation did not complete successfully (bootstrapper exit code $($process.ExitCode))."
+    if (-not $installedVersion -or $installedVersion -lt $minimumRuntimeVersion) {
+        $detected = if ($installedVersion) { $installedVersion } else { 'none' }
+        throw "WebView2 Runtime installation did not reach the required $minimumRuntimeVersion (detected $detected, bootstrapper exit code $($process.ExitCode))."
     }
 
-    Write-Host "Microsoft Edge WebView2 Runtime $installedVersion was installed."
+    Write-Host "Microsoft Edge WebView2 Runtime $installedVersion is ready."
 }
 finally {
     Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue

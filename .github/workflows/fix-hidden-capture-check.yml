@@ -1,0 +1,38 @@
+name: Fix hidden capture-affinity verification
+
+on:
+  push:
+    branches:
+      - OBS
+    paths:
+      - .github/workflows/fix-hidden-capture-check.yml
+      - scripts/fix-hidden-capture-check.py
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    name: Fix hidden-window affinity check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out OBS branch
+        uses: actions/checkout@v4
+        with:
+          ref: OBS
+          fetch-depth: 0
+
+      - name: Apply deterministic fix
+        run: python scripts/fix-hidden-capture-check.py
+
+      - name: Validate patch formatting
+        run: git diff --check
+
+      - name: Commit capture-affinity fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: keep suppressed HUD alive until safe restoration"
+          git push origin HEAD:OBS

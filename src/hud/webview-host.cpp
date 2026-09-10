@@ -9,13 +9,12 @@
 #include <dcomp.h>
 #include <dxgi.h>
 #include <windowsx.h>
-#include <winhttp.h>
 #include <wrl.h>
 #include <wrl/event.h>
 
 #include <cstdint>
+#include <cwchar>
 #include <string>
-#include <string_view>
 
 namespace chatview {
 namespace {
@@ -235,49 +234,15 @@ std::wstring javascript_string(const std::wstring &value)
     return output;
 }
 
-bool is_youtube_live_chat_document(const wchar_t *url) noexcept
-{
-    URL_COMPONENTSW components{};
-    components.dwStructSize = sizeof(components);
-    components.dwSchemeLength = static_cast<DWORD>(-1);
-    components.dwHostNameLength = static_cast<DWORD>(-1);
-    components.dwUrlPathLength = static_cast<DWORD>(-1);
-    components.dwUserNameLength = static_cast<DWORD>(-1);
-    components.dwPasswordLength = static_cast<DWORD>(-1);
-
-    if (!WinHttpCrackUrl(url, 0U, 0U, &components) ||
-        components.nScheme != INTERNET_SCHEME_HTTPS ||
-        components.nPort != INTERNET_DEFAULT_HTTPS_PORT ||
-        components.dwUserNameLength != 0U || components.dwPasswordLength != 0U ||
-        components.lpszHostName == nullptr || components.lpszUrlPath == nullptr) {
-        return false;
-    }
-
-    const std::wstring host(
-        components.lpszHostName,
-        components.lpszHostName + components.dwHostNameLength);
-    const std::wstring_view path(
-        components.lpszUrlPath, components.dwUrlPathLength);
-    const bool youtube_host =
-        _wcsicmp(host.c_str(), L"www.youtube.com") == 0 ||
-        _wcsicmp(host.c_str(), L"youtube.com") == 0 ||
-        _wcsicmp(host.c_str(), L"m.youtube.com") == 0;
-    return youtube_host && path == L"/live_chat";
-}
-
 bool is_allowed_document_url(const wchar_t *url) noexcept
 {
     if (url == nullptr) {
         return false;
     }
-
-    const std::wstring_view value(url);
-    if (value == L"about:blank") {
+    if (wcscmp(url, L"about:blank") == 0) {
         return true;
     }
-
-    return !normalize_chat_url(std::wstring(value)).empty() ||
-           is_youtube_live_chat_document(url);
+    return is_supported_chat_document_url(url);
 }
 
 HRESULT create_d3d_device(ComPtr<ID3D11Device> &device) noexcept
@@ -312,7 +277,8 @@ HRESULT create_d3d_device(ComPtr<ID3D11Device> &device) noexcept
 
 } // namespace
 
-WebViewHost::WebViewHost() : callback_state_(std::make_shared<CallbackState>())
+WebViewHost::WebViewHost()
+    : callback_state_(std::make_shared<CallbackState>())
 {
     callback_state_->owner = this;
 }
@@ -341,17 +307,22 @@ bool WebViewHost::initialize(HWND window) noexcept
         return false;
     }
 
-    SetEnvironmentVariableW(L"WEBVIEW2_DEFAULT_BACKGROUND_COLOR", L"00000000");
+    SetEnvironmentVariableW(
+        L"WEBVIEW2_DEFAULT_BACKGROUND_COLOR", L"00000000");
 
     const std::shared_ptr<CallbackState> state = callback_state_;
     const HRESULT result = CreateCoreWebView2EnvironmentWithOptions(
         nullptr,
         user_data_folder.c_str(),
         nullptr,
-        Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-            [state](HRESULT callback_result, ICoreWebView2Environment *environment) -> HRESULT {
+        Callback<
+            ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
+            [state](
+                HRESULT callback_result,
+                ICoreWebView2Environment *environment) -> HRESULT {
                 return state->owner != nullptr
-                           ? state->owner->on_environment_created(callback_result, environment)
+                           ? state->owner->on_environment_created(
+                                 callback_result, environment)
                            : S_OK;
             })
             .Get());
@@ -371,18 +342,24 @@ void WebViewHost::close() noexcept
 
     ready_ = false;
     current_url_.clear();
+    if (webview4_ && download_starting_token_.value != 0) {
+        webview4_->remove_DownloadStarting(download_starting_token_);
+    }
     if (webview_) {
         if (navigation_starting_token_.value != 0) {
             webview_->remove_NavigationStarting(navigation_starting_token_);
         }
         if (navigation_completed_token_.value != 0) {
-            webview_->remove_NavigationCompleted(navigation_completed_token_);
+            webview_->remove_NavigationCompleted(
+                navigation_completed_token_);
         }
         if (new_window_requested_token_.value != 0) {
-            webview_->remove_NewWindowRequested(new_window_requested_token_);
+            webview_->remove_NewWindowRequested(
+                new_window_requested_token_);
         }
         if (permission_requested_token_.value != 0) {
-            webview_->remove_PermissionRequested(permission_requested_token_);
+            webview_->remove_PermissionRequested(
+                permission_requested_token_);
         }
         if (process_failed_token_.value != 0) {
             webview_->remove_ProcessFailed(process_failed_token_);
@@ -394,10 +371,12 @@ void WebViewHost::close() noexcept
     new_window_requested_token_ = {};
     permission_requested_token_ = {};
     process_failed_token_ = {};
+    download_starting_token_ = {};
 
     if (controller_) {
         controller_->Close();
     }
+    webview4_.Reset();
     webview_.Reset();
     controller_.Reset();
     composition_controller_.Reset();
@@ -518,17 +497,22 @@ bool WebViewHost::forward_mouse_message(
     if (message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL) {
         ScreenToClient(window_, &point);
         mouse_data = static_cast<UINT32>(
-            static_cast<std::int32_t>(GET_WHEEL_DELTA_WPARAM(wparam)));
-    } else if (message == WM_XBUTTONDOWN || message == WM_XBUTTONUP ||
+            static_cast<std::int32_t>(
+                GET_WHEEL_DELTA_WPARAM(wparam)));
+    } else if (message == WM_XBUTTONDOWN ||
+               message == WM_XBUTTONUP ||
                message == WM_XBUTTONDBLCLK) {
-        mouse_data = static_cast<UINT32>(GET_XBUTTON_WPARAM(wparam));
+        mouse_data =
+            static_cast<UINT32>(GET_XBUTTON_WPARAM(wparam));
     }
 
-    const auto event_kind = static_cast<COREWEBVIEW2_MOUSE_EVENT_KIND>(message);
-    const auto virtual_keys = static_cast<COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS>(
-        GET_KEYSTATE_WPARAM(wparam));
-    return SUCCEEDED(
-        composition_controller_->SendMouseInput(event_kind, virtual_keys, mouse_data, point));
+    const auto event_kind =
+        static_cast<COREWEBVIEW2_MOUSE_EVENT_KIND>(message);
+    const auto virtual_keys =
+        static_cast<COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS>(
+            GET_KEYSTATE_WPARAM(wparam));
+    return SUCCEEDED(composition_controller_->SendMouseInput(
+        event_kind, virtual_keys, mouse_data, point));
 }
 
 void WebViewHost::focus() noexcept
@@ -537,7 +521,8 @@ void WebViewHost::focus() noexcept
         SetFocus(window_);
     }
     if (controller_) {
-        controller_->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+        controller_->MoveFocus(
+            COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
     }
 }
 
@@ -579,7 +564,8 @@ HRESULT WebViewHost::initialize_composition() noexcept
 }
 
 HRESULT WebViewHost::on_environment_created(
-    HRESULT result, ICoreWebView2Environment *environment) noexcept
+    HRESULT result,
+    ICoreWebView2Environment *environment) noexcept
 {
     if (FAILED(result) || environment == nullptr) {
         post_failure(FAILED(result) ? result : E_POINTER);
@@ -597,11 +583,14 @@ HRESULT WebViewHost::on_environment_created(
     const std::shared_ptr<CallbackState> state = callback_state_;
     result = environment3->CreateCoreWebView2CompositionController(
         window_,
-        Callback<ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
-            [state](HRESULT callback_result,
-                    ICoreWebView2CompositionController *controller) -> HRESULT {
+        Callback<
+            ICoreWebView2CreateCoreWebView2CompositionControllerCompletedHandler>(
+            [state](
+                HRESULT callback_result,
+                ICoreWebView2CompositionController *controller) -> HRESULT {
                 return state->owner != nullptr
-                           ? state->owner->on_controller_created(callback_result, controller)
+                           ? state->owner->on_controller_created(
+                                 callback_result, controller)
                            : S_OK;
             })
             .Get());
@@ -612,7 +601,8 @@ HRESULT WebViewHost::on_environment_created(
 }
 
 HRESULT WebViewHost::on_controller_created(
-    HRESULT result, ICoreWebView2CompositionController *controller) noexcept
+    HRESULT result,
+    ICoreWebView2CompositionController *controller) noexcept
 {
     if (FAILED(result) || controller == nullptr) {
         post_failure(FAILED(result) ? result : E_POINTER);
@@ -632,7 +622,14 @@ HRESULT WebViewHost::on_controller_created(
         return S_OK;
     }
 
-    result = composition_controller_->put_RootVisualTarget(root_visual_.Get());
+    result = webview_.As(&webview4_);
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
+
+    result = composition_controller_->put_RootVisualTarget(
+        root_visual_.Get());
     if (FAILED(result)) {
         post_failure(result);
         return S_OK;
@@ -662,7 +659,9 @@ HRESULT WebViewHost::on_controller_created(
         FAILED(settings->put_AreDefaultScriptDialogsEnabled(FALSE)) ||
         FAILED(settings->put_IsStatusBarEnabled(FALSE)) ||
         FAILED(settings->put_AreDevToolsEnabled(FALSE)) ||
-        FAILED(settings->put_IsZoomControlEnabled(FALSE))) {
+        FAILED(settings->put_IsZoomControlEnabled(FALSE)) ||
+        FAILED(settings->put_IsWebMessageEnabled(FALSE)) ||
+        FAILED(settings->put_AreHostObjectsAllowed(FALSE))) {
         post_failure(E_FAIL);
         return S_OK;
     }
@@ -670,7 +669,8 @@ HRESULT WebViewHost::on_controller_created(
     const std::shared_ptr<CallbackState> state = callback_state_;
     result = webview_->add_NavigationStarting(
         Callback<ICoreWebView2NavigationStartingEventHandler>(
-            [](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
+            [](ICoreWebView2 *,
+               ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
                 LPWSTR uri = nullptr;
                 const HRESULT uri_result = args->get_Uri(&uri);
                 if (FAILED(uri_result) || uri == nullptr) {
@@ -695,14 +695,17 @@ HRESULT WebViewHost::on_controller_created(
 
     result = webview_->add_NavigationCompleted(
         Callback<ICoreWebView2NavigationCompletedEventHandler>(
-            [state](ICoreWebView2 *,
-                    ICoreWebView2NavigationCompletedEventArgs *args) -> HRESULT {
-                if (state->owner == nullptr || state->owner->window_ == nullptr) {
+            [state](
+                ICoreWebView2 *,
+                ICoreWebView2NavigationCompletedEventArgs *args) -> HRESULT {
+                if (state->owner == nullptr ||
+                    state->owner->window_ == nullptr) {
                     return S_OK;
                 }
 
                 BOOL succeeded = FALSE;
-                HRESULT callback_result = args->get_IsSuccess(&succeeded);
+                HRESULT callback_result =
+                    args->get_IsSuccess(&succeeded);
                 if (FAILED(callback_result)) {
                     state->owner->post_failure(callback_result);
                     return S_OK;
@@ -736,9 +739,9 @@ HRESULT WebViewHost::on_controller_created(
 
     result = webview_->add_NewWindowRequested(
         Callback<ICoreWebView2NewWindowRequestedEventHandler>(
-            [](ICoreWebView2 *, ICoreWebView2NewWindowRequestedEventArgs *args) -> HRESULT {
-                args->put_Handled(TRUE);
-                return S_OK;
+            [](ICoreWebView2 *,
+               ICoreWebView2NewWindowRequestedEventArgs *args) -> HRESULT {
+                return args->put_Handled(TRUE);
             })
             .Get(),
         &new_window_requested_token_);
@@ -749,8 +752,10 @@ HRESULT WebViewHost::on_controller_created(
 
     result = webview_->add_PermissionRequested(
         Callback<ICoreWebView2PermissionRequestedEventHandler>(
-            [](ICoreWebView2 *, ICoreWebView2PermissionRequestedEventArgs *args) -> HRESULT {
-                return args->put_State(COREWEBVIEW2_PERMISSION_STATE_DENY);
+            [](ICoreWebView2 *,
+               ICoreWebView2PermissionRequestedEventArgs *args) -> HRESULT {
+                return args->put_State(
+                    COREWEBVIEW2_PERMISSION_STATE_DENY);
             })
             .Get(),
         &permission_requested_token_);
@@ -759,15 +764,35 @@ HRESULT WebViewHost::on_controller_created(
         return S_OK;
     }
 
+    result = webview4_->add_DownloadStarting(
+        Callback<ICoreWebView2DownloadStartingEventHandler>(
+            [](ICoreWebView2 *,
+               ICoreWebView2DownloadStartingEventArgs *args) -> HRESULT {
+                const HRESULT cancel_result = args->put_Cancel(TRUE);
+                if (FAILED(cancel_result)) {
+                    return cancel_result;
+                }
+                return args->put_Handled(TRUE);
+            })
+            .Get(),
+        &download_starting_token_);
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
+
     result = webview_->add_ProcessFailed(
         Callback<ICoreWebView2ProcessFailedEventHandler>(
-            [state](ICoreWebView2 *, ICoreWebView2ProcessFailedEventArgs *args) -> HRESULT {
+            [state](
+                ICoreWebView2 *,
+                ICoreWebView2ProcessFailedEventArgs *args) -> HRESULT {
                 if (state->owner == nullptr) {
                     return S_OK;
                 }
 
                 COREWEBVIEW2_PROCESS_FAILED_KIND kind{};
-                const HRESULT callback_result = args->get_ProcessFailedKind(&kind);
+                const HRESULT callback_result =
+                    args->get_ProcessFailedKind(&kind);
                 if (FAILED(callback_result)) {
                     state->owner->post_failure(callback_result);
                 } else {
@@ -784,10 +809,12 @@ HRESULT WebViewHost::on_controller_created(
 
     result = webview_->AddScriptToExecuteOnDocumentCreated(
         kOverlayBootstrapScript,
-        Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
+        Callback<
+            ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
             [state](HRESULT callback_result, LPCWSTR) -> HRESULT {
                 return state->owner != nullptr
-                           ? state->owner->on_bootstrap_registered(callback_result)
+                           ? state->owner->on_bootstrap_registered(
+                                 callback_result)
                            : S_OK;
             })
             .Get());
@@ -839,7 +866,8 @@ void WebViewHost::post_failure(HRESULT result) const noexcept
         PostMessageW(
             window_,
             kWebViewFailedMessage,
-            static_cast<WPARAM>(static_cast<std::uint32_t>(result)),
+            static_cast<WPARAM>(
+                static_cast<std::uint32_t>(result)),
             0L);
     }
 }
@@ -876,7 +904,8 @@ void WebViewHost::apply_host_state() noexcept
 
     std::wstring script =
         L"window.__chatviewEnsureHost && window.__chatviewEnsureHost();"
-        L"window.__chatviewApplyHostState && window.__chatviewApplyHostState({editing:";
+        L"window.__chatviewApplyHostState && "
+        L"window.__chatviewApplyHostState({editing:";
     script.append(editing_ ? L"true" : L"false");
     script.append(L",status:");
     script.append(javascript_string(status_text_));

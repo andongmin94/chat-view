@@ -12,6 +12,8 @@ struct ChatConfig {
 
 [[nodiscard]] std::wstring normalize_chat_url(const std::wstring &url) noexcept;
 [[nodiscard]] bool is_supported_chat_url(const std::wstring &url) noexcept;
+[[nodiscard]] bool is_supported_chat_document_url(
+    const std::wstring &url) noexcept;
 [[nodiscard]] bool load_chat_config(ChatConfig &config) noexcept;
 [[nodiscard]] bool save_chat_config(const ChatConfig &config) noexcept;
 [[nodiscard]] bool clear_chat_config() noexcept;

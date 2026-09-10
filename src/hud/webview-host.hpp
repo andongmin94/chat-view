@@ -54,12 +54,15 @@ private:
     HRESULT on_environment_created(
         HRESULT result, ICoreWebView2Environment *environment) noexcept;
     HRESULT on_controller_created(
-        HRESULT result, ICoreWebView2CompositionController *controller) noexcept;
+        HRESULT result,
+        ICoreWebView2CompositionController *controller) noexcept;
     HRESULT on_bootstrap_registered(HRESULT result) noexcept;
     [[nodiscard]] HRESULT finish_controller_initialization() noexcept;
     void post_failure(HRESULT result) const noexcept;
-    void post_process_failure(COREWEBVIEW2_PROCESS_FAILED_KIND kind) const noexcept;
-    void post_navigation_failure(COREWEBVIEW2_WEB_ERROR_STATUS status) const noexcept;
+    void post_process_failure(
+        COREWEBVIEW2_PROCESS_FAILED_KIND kind) const noexcept;
+    void post_navigation_failure(
+        COREWEBVIEW2_WEB_ERROR_STATUS status) const noexcept;
     void apply_host_state() noexcept;
 
     HWND window_ = nullptr;
@@ -75,14 +78,17 @@ private:
     Microsoft::WRL::ComPtr<IDCompositionTarget> composition_target_;
     Microsoft::WRL::ComPtr<IDCompositionVisual> root_visual_;
     Microsoft::WRL::ComPtr<ICoreWebView2Environment> environment_;
-    Microsoft::WRL::ComPtr<ICoreWebView2CompositionController> composition_controller_;
+    Microsoft::WRL::ComPtr<ICoreWebView2CompositionController>
+        composition_controller_;
     Microsoft::WRL::ComPtr<ICoreWebView2Controller> controller_;
     Microsoft::WRL::ComPtr<ICoreWebView2> webview_;
+    Microsoft::WRL::ComPtr<ICoreWebView2_4> webview4_;
     EventRegistrationToken navigation_starting_token_{};
     EventRegistrationToken navigation_completed_token_{};
     EventRegistrationToken new_window_requested_token_{};
     EventRegistrationToken permission_requested_token_{};
     EventRegistrationToken process_failed_token_{};
+    EventRegistrationToken download_starting_token_{};
 };
 
 } // namespace chatview

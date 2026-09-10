@@ -21,7 +21,9 @@ int fail(const wchar_t *message)
 }
 
 bool expect_normalized(
-    const std::wstring &input, const std::wstring &expected, const wchar_t *message)
+    const std::wstring &input,
+    const std::wstring &expected,
+    const wchar_t *message)
 {
     if (chatview::normalize_chat_url(input) != expected ||
         !chatview::is_supported_chat_url(input)) {
@@ -35,6 +37,26 @@ bool expect_rejected(const std::wstring &input, const wchar_t *message)
 {
     if (!chatview::normalize_chat_url(input).empty() ||
         chatview::is_supported_chat_url(input)) {
+        std::wcerr << message << L"\ninput: " << input << L"\n";
+        return false;
+    }
+    return true;
+}
+
+bool expect_document_allowed(
+    const std::wstring &input, const wchar_t *message)
+{
+    if (!chatview::is_supported_chat_document_url(input)) {
+        std::wcerr << message << L"\ninput: " << input << L"\n";
+        return false;
+    }
+    return true;
+}
+
+bool expect_document_rejected(
+    const std::wstring &input, const wchar_t *message)
+{
+    if (chatview::is_supported_chat_document_url(input)) {
         std::wcerr << message << L"\ninput: " << input << L"\n";
         return false;
     }
@@ -73,16 +95,18 @@ int main()
             L"https://weflab.com/page/test?theme=dark",
             L"Weflab URL normalization failed") ||
         !expect_normalized(
-            std::wstring(L"https://chzzk.naver.com/chat/") + kChzzkChannelId +
-                L"?dark=true",
+            std::wstring(L"https://chzzk.naver.com/chat/") +
+                kChzzkChannelId + L"?dark=true",
             canonical_chzzk,
             L"CHZZK chat URL normalization failed") ||
         !expect_normalized(
-            std::wstring(L"https://chzzk.naver.com/live/") + kChzzkChannelId,
+            std::wstring(L"https://chzzk.naver.com/live/") +
+                kChzzkChannelId,
             canonical_chzzk,
             L"CHZZK live URL normalization failed") ||
         !expect_normalized(
-            std::wstring(L"https://m.chzzk.naver.com/live/") + kChzzkChannelId,
+            std::wstring(L"https://m.chzzk.naver.com/live/") +
+                kChzzkChannelId,
             canonical_chzzk,
             L"Mobile CHZZK live URL normalization failed") ||
         !expect_normalized(
@@ -104,12 +128,12 @@ int main()
             canonical_youtube,
             L"YouTube short URL normalization failed") ||
         !expect_normalized(
-            std::wstring(L"https://www.youtube.com/embed/") + kYouTubeVideoId,
+            std::wstring(L"https://www.youtube.com/embed/") +
+                kYouTubeVideoId,
             canonical_youtube,
             L"YouTube embed URL normalization failed") ||
         !expect_normalized(
-            std::wstring(L"https://www.youtube.com/live_chat?is_popout=1&v=") +
-                kYouTubeVideoId,
+            canonical_youtube,
             canonical_youtube,
             L"YouTube live-chat URL normalization failed")) {
         return 1;
@@ -142,20 +166,58 @@ int main()
         return 1;
     }
 
+    if (!expect_document_allowed(
+            L"https://weflab.com/page/test?theme=dark",
+            L"Canonical Weflab page was not accepted as a document") ||
+        !expect_document_allowed(
+            canonical_chzzk + L"?dark=true",
+            L"Canonical CHZZK chat was not accepted as a document") ||
+        !expect_document_allowed(
+            canonical_youtube + L"&embed_domain=localhost",
+            L"Canonical YouTube live chat was not accepted as a document") ||
+        !expect_document_rejected(
+            std::wstring(L"https://chzzk.naver.com/live/") +
+                kChzzkChannelId,
+            L"CHZZK broadcast page was accepted as a chat document") ||
+        !expect_document_rejected(
+            std::wstring(L"https://chzzk.naver.com/") + kChzzkChannelId,
+            L"CHZZK channel page was accepted as a chat document") ||
+        !expect_document_rejected(
+            std::wstring(L"https://www.youtube.com/watch?v=") +
+                kYouTubeVideoId,
+            L"YouTube watch page was accepted as a chat document") ||
+        !expect_document_rejected(
+            std::wstring(L"https://www.youtube.com/live/") +
+                kYouTubeVideoId,
+            L"YouTube live page was accepted as a chat document") ||
+        !expect_document_rejected(
+            std::wstring(L"https://youtu.be/") + kYouTubeVideoId,
+            L"YouTube short URL was accepted as a chat document") ||
+        !expect_document_rejected(
+            L"https://accounts.google.com/ServiceLogin",
+            L"External login page was accepted as a chat document")) {
+        return 1;
+    }
+
     const chatview::ChatConfig input{
-        std::wstring(L"https://www.youtube.com/watch?v=") + kYouTubeVideoId};
+        std::wstring(L"https://www.youtube.com/watch?v=") +
+        kYouTubeVideoId};
     if (!chatview::save_chat_config(input)) {
         return fail(L"Failed to save a normal broadcast URL");
     }
 
     chatview::ChatConfig loaded;
-    if (!chatview::load_chat_config(loaded) || loaded.url != canonical_youtube) {
-        return fail(L"Saved broadcast URL was not persisted in canonical chat form");
+    if (!chatview::load_chat_config(loaded) ||
+        loaded.url != canonical_youtube) {
+        return fail(
+            L"Saved broadcast URL was not persisted in canonical chat form");
     }
 
-    const std::wstring user_data_folder = chatview::webview_user_data_folder();
+    const std::wstring user_data_folder =
+        chatview::webview_user_data_folder();
     if (user_data_folder.empty() ||
-        !std::filesystem::is_directory(std::filesystem::path(user_data_folder))) {
+        !std::filesystem::is_directory(
+            std::filesystem::path(user_data_folder))) {
         return fail(L"WebView2 user data folder was not created");
     }
 

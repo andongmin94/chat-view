@@ -18,11 +18,14 @@ namespace {
 
 constexpr UINT_PTR kStatusTimerId = 1U;
 constexpr UINT_PTR kNavigationRetryTimerId = 2U;
+constexpr UINT_PTR kCaptureSafetyTimerId = 3U;
 constexpr int kEditHotkeyId = 1;
+constexpr int kCaptureExclusionLostExitCode = 11;
 constexpr UINT kReadyDurationMs = 2200U;
 constexpr UINT kOfflineDurationMs = 1200U;
 constexpr UINT kNavigationRetryBaseMs = 5000U;
 constexpr UINT kNavigationRetryMaximumMs = 30000U;
+constexpr UINT kCaptureSafetyIntervalMs = 1000U;
 constexpr UINT kEditHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT;
 constexpr UINT kEditHotkeyVirtualKey = 'H';
 constexpr int kDefaultMarginDip = 24;
@@ -43,6 +46,13 @@ void debug_windows_error(const wchar_t *operation)
         operation,
         static_cast<unsigned long>(error));
     OutputDebugStringW(message);
+}
+
+bool set_window_long_checked(HWND window, int index, LONG_PTR value) noexcept
+{
+    SetLastError(ERROR_SUCCESS);
+    const LONG_PTR previous = SetWindowLongPtrW(window, index, value);
+    return previous != 0 || GetLastError() == ERROR_SUCCESS;
 }
 
 } // namespace
@@ -101,15 +111,9 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
         debug_windows_error(L"SetWindowDisplayAffinity");
         return false;
     }
-
-    DWORD display_affinity = 0U;
-    if (!GetWindowDisplayAffinity(window_, &display_affinity)) {
-        debug_windows_error(L"GetWindowDisplayAffinity");
-        return false;
-    }
-    if (display_affinity != WDA_EXCLUDEFROMCAPTURE) {
+    if (!capture_exclusion_intact()) {
         OutputDebugStringW(
-            L"[ChatView HUD] Capture exclusion was not retained; refusing to display the HUD\n");
+            L"[ChatView HUD] Capture exclusion was not retained; refusing to initialize the HUD\n");
         return false;
     }
 
@@ -134,6 +138,15 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
         return false;
     }
 
+    if (SetTimer(
+            window_,
+            kCaptureSafetyTimerId,
+            kCaptureSafetyIntervalMs,
+            nullptr) == 0U) {
+        debug_windows_error(L"SetTimer(capture safety)");
+        return false;
+    }
+
     ShowWindow(window_, SW_HIDE);
     return true;
 }
@@ -143,6 +156,7 @@ void HudWindow::destroy() noexcept
     if (window_ != nullptr) {
         KillTimer(window_, kStatusTimerId);
         KillTimer(window_, kNavigationRetryTimerId);
+        KillTimer(window_, kCaptureSafetyTimerId);
     }
 
     if (window_ != nullptr && edit_hotkey_registered_) {
@@ -229,17 +243,32 @@ LRESULT HudWindow::handle_message(
         webview_ready_ = true;
         reload_chat_config();
         update_host_state();
+        if (!capture_exclusion_intact()) {
+            fail_closed_capture_exclusion();
+            return 0L;
+        }
         ShowWindow(window_, SW_SHOWNOACTIVATE);
-        SetWindowPos(
-            window_,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        if (!SetWindowPos(
+                window_,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)) {
+            debug_windows_error(L"SetWindowPos(show HUD)");
+            ShowWindow(window_, SW_HIDE);
+            PostQuitMessage(12);
+            return 0L;
+        }
+        if (!capture_exclusion_intact()) {
+            fail_closed_capture_exclusion();
+            return 0L;
+        }
         if (ready_event_ != nullptr && !SetEvent(ready_event_)) {
             debug_windows_error(L"SetEvent(ready)");
+            ShowWindow(window_, SW_HIDE);
+            PostQuitMessage(13);
         }
         return 0L;
     case kWebViewDocumentReadyMessage:
@@ -261,6 +290,7 @@ LRESULT HudWindow::handle_message(
             L"[ChatView HUD] WebView2 host failed (0x%08lX)\n",
             static_cast<unsigned long>(static_cast<std::uint32_t>(wparam)));
         OutputDebugStringW(detail);
+        ShowWindow(window_, SW_HIDE);
         PostQuitMessage(2);
         return 0L;
     }
@@ -272,7 +302,14 @@ LRESULT HudWindow::handle_message(
         if (wparam == kNavigationRetryTimerId) {
             KillTimer(window_, kNavigationRetryTimerId);
             if (!webview_.reload()) {
+                ShowWindow(window_, SW_HIDE);
                 PostQuitMessage(10);
+            }
+            return 0L;
+        }
+        if (wparam == kCaptureSafetyTimerId) {
+            if (!capture_exclusion_intact()) {
+                fail_closed_capture_exclusion();
             }
             return 0L;
         }
@@ -305,6 +342,9 @@ LRESULT HudWindow::handle_message(
         if (edit_mode_) {
             capture_and_persist_bounds();
         }
+        if (!capture_exclusion_intact()) {
+            fail_closed_capture_exclusion();
+        }
         return 0L;
     case WM_MOVE:
         webview_.notify_parent_position_changed();
@@ -314,17 +354,25 @@ LRESULT HudWindow::handle_message(
         return 0L;
     case WM_DPICHANGED: {
         const RECT *suggested = reinterpret_cast<const RECT *>(lparam);
-        SetWindowPos(
-            window_,
-            nullptr,
-            suggested->left,
-            suggested->top,
-            suggested->right - suggested->left,
-            suggested->bottom - suggested->top,
-            SWP_NOZORDER | SWP_NOACTIVATE);
+        if (!SetWindowPos(
+                window_,
+                nullptr,
+                suggested->left,
+                suggested->top,
+                suggested->right - suggested->left,
+                suggested->bottom - suggested->top,
+                SWP_NOZORDER | SWP_NOACTIVATE)) {
+            debug_windows_error(L"SetWindowPos(DPI change)");
+            ShowWindow(window_, SW_HIDE);
+            PostQuitMessage(14);
+            return 0L;
+        }
         webview_.resize();
         if (edit_mode_) {
             capture_and_persist_bounds();
+        }
+        if (!capture_exclusion_intact()) {
+            fail_closed_capture_exclusion();
         }
         return 0L;
     }
@@ -420,7 +468,7 @@ LRESULT HudWindow::hit_test(LPARAM lparam) const noexcept
 
 void HudWindow::toggle_edit_mode()
 {
-    if (window_ == nullptr || !webview_ready_) {
+    if (window_ == nullptr || !webview_ready_ || capture_exclusion_failed_) {
         return;
     }
 
@@ -429,10 +477,17 @@ void HudWindow::toggle_edit_mode()
     }
     edit_mode_ = !edit_mode_;
     apply_window_mode();
+    if (capture_exclusion_failed_) {
+        return;
+    }
     update_host_state();
 
     if (edit_mode_) {
         ShowWindow(window_, SW_SHOW);
+        if (!capture_exclusion_intact()) {
+            fail_closed_capture_exclusion();
+            return;
+        }
         SetForegroundWindow(window_);
         webview_.focus();
     }
@@ -440,7 +495,7 @@ void HudWindow::toggle_edit_mode()
 
 void HudWindow::apply_window_mode() noexcept
 {
-    if (window_ == nullptr) {
+    if (window_ == nullptr || capture_exclusion_failed_) {
         return;
     }
 
@@ -455,22 +510,42 @@ void HudWindow::apply_window_mode() noexcept
         extended_style |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
     }
 
-    SetWindowLongPtrW(window_, GWL_STYLE, style);
-    SetWindowLongPtrW(window_, GWL_EXSTYLE, extended_style);
-    SetWindowPos(
-        window_,
-        HWND_TOPMOST,
-        0,
-        0,
-        0,
-        0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    if (!set_window_long_checked(window_, GWL_STYLE, style)) {
+        debug_windows_error(L"SetWindowLongPtrW(style)");
+        ShowWindow(window_, SW_HIDE);
+        PostQuitMessage(15);
+        return;
+    }
+    if (!set_window_long_checked(window_, GWL_EXSTYLE, extended_style)) {
+        debug_windows_error(L"SetWindowLongPtrW(extended style)");
+        ShowWindow(window_, SW_HIDE);
+        PostQuitMessage(16);
+        return;
+    }
+    if (!SetWindowPos(
+            window_,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED)) {
+        debug_windows_error(L"SetWindowPos(window mode)");
+        ShowWindow(window_, SW_HIDE);
+        PostQuitMessage(17);
+        return;
+    }
+
+    if (!capture_exclusion_intact()) {
+        fail_closed_capture_exclusion();
+        return;
+    }
     webview_.resize();
 }
 
 void HudWindow::reload_chat_config() noexcept
 {
-    if (!webview_ready_) {
+    if (!webview_ready_ || capture_exclusion_failed_) {
         return;
     }
 
@@ -503,11 +578,13 @@ void HudWindow::handle_webview_process_failure(
         navigation_tone_ = L"#5ac8fa";
         update_host_state();
         if (!webview_.reload()) {
+            ShowWindow(window_, SW_HIDE);
             PostQuitMessage(9);
         }
         return;
     case COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED:
     case COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE:
+        ShowWindow(window_, SW_HIDE);
         PostQuitMessage(9);
         return;
     default:
@@ -539,6 +616,7 @@ void HudWindow::schedule_navigation_retry(
     KillTimer(window_, kNavigationRetryTimerId);
     if (SetTimer(window_, kNavigationRetryTimerId, delay, nullptr) == 0U) {
         debug_windows_error(L"SetTimer(navigation retry)");
+        ShowWindow(window_, SW_HIDE);
         PostQuitMessage(10);
         return;
     }
@@ -555,9 +633,41 @@ void HudWindow::cancel_navigation_retry() noexcept
     navigation_tone_ = L"#ffcc00";
 }
 
+bool HudWindow::capture_exclusion_intact() const noexcept
+{
+    if (window_ == nullptr) {
+        return false;
+    }
+
+    DWORD affinity = WDA_NONE;
+    if (!GetWindowDisplayAffinity(window_, &affinity)) {
+        debug_windows_error(L"GetWindowDisplayAffinity");
+        return false;
+    }
+    return affinity == WDA_EXCLUDEFROMCAPTURE;
+}
+
+void HudWindow::fail_closed_capture_exclusion() noexcept
+{
+    if (capture_exclusion_failed_) {
+        return;
+    }
+
+    capture_exclusion_failed_ = true;
+    OutputDebugStringW(
+        L"[ChatView HUD] Capture exclusion was lost; hiding and terminating the HUD\n");
+    if (window_ != nullptr) {
+        ShowWindow(window_, SW_HIDE);
+        KillTimer(window_, kStatusTimerId);
+        KillTimer(window_, kNavigationRetryTimerId);
+        KillTimer(window_, kCaptureSafetyTimerId);
+    }
+    PostQuitMessage(kCaptureExclusionLostExitCode);
+}
+
 void HudWindow::update_host_state() noexcept
 {
-    if (!webview_ready_) {
+    if (!webview_ready_ || capture_exclusion_failed_) {
         return;
     }
 
@@ -590,7 +700,9 @@ void HudWindow::set_transient_status(
     transient_tone_ = std::move(tone);
     if (window_ != nullptr) {
         KillTimer(window_, kStatusTimerId);
-        SetTimer(window_, kStatusTimerId, duration_ms, nullptr);
+        if (SetTimer(window_, kStatusTimerId, duration_ms, nullptr) == 0U) {
+            debug_windows_error(L"SetTimer(status)");
+        }
     }
     update_host_state();
 }
@@ -620,19 +732,28 @@ void HudWindow::capture_and_persist_bounds() noexcept
 
 void HudWindow::restore_saved_bounds() noexcept
 {
-    if (window_ == nullptr) {
+    if (window_ == nullptr || capture_exclusion_failed_) {
         return;
     }
 
     const RECT bounds = resolve_hud_bounds(placement_, kDefaultMarginDip);
-    SetWindowPos(
-        window_,
-        HWND_TOPMOST,
-        bounds.left,
-        bounds.top,
-        bounds.right - bounds.left,
-        bounds.bottom - bounds.top,
-        SWP_NOACTIVATE);
+    if (!SetWindowPos(
+            window_,
+            HWND_TOPMOST,
+            bounds.left,
+            bounds.top,
+            bounds.right - bounds.left,
+            bounds.bottom - bounds.top,
+            SWP_NOACTIVATE)) {
+        debug_windows_error(L"SetWindowPos(restore bounds)");
+        ShowWindow(window_, SW_HIDE);
+        PostQuitMessage(18);
+        return;
+    }
+    if (!capture_exclusion_intact()) {
+        fail_closed_capture_exclusion();
+        return;
+    }
     webview_.resize();
 }
 

@@ -234,17 +234,6 @@ std::wstring javascript_string(const std::wstring &value)
     return output;
 }
 
-bool is_allowed_document_url(const wchar_t *url) noexcept
-{
-    if (url == nullptr) {
-        return false;
-    }
-    if (wcscmp(url, L"about:blank") == 0) {
-        return true;
-    }
-    return is_supported_chat_document_url(url);
-}
-
 HRESULT create_d3d_device(ComPtr<ID3D11Device> &device) noexcept
 {
     constexpr UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
@@ -657,6 +646,7 @@ HRESULT WebViewHost::on_controller_created(
     }
     if (FAILED(settings->put_AreDefaultContextMenusEnabled(FALSE)) ||
         FAILED(settings->put_AreDefaultScriptDialogsEnabled(FALSE)) ||
+        FAILED(settings->put_IsBuiltInErrorPageEnabled(FALSE)) ||
         FAILED(settings->put_IsStatusBarEnabled(FALSE)) ||
         FAILED(settings->put_AreDevToolsEnabled(FALSE)) ||
         FAILED(settings->put_IsZoomControlEnabled(FALSE)) ||
@@ -666,25 +656,35 @@ HRESULT WebViewHost::on_controller_created(
         return S_OK;
     }
 
+    ComPtr<ICoreWebView2Settings3> settings3;
+    result = settings.As(&settings3);
+    if (FAILED(result) ||
+        FAILED(settings3->put_AreBrowserAcceleratorKeysEnabled(FALSE))) {
+        post_failure(FAILED(result) ? result : E_FAIL);
+        return S_OK;
+    }
+
     const std::shared_ptr<CallbackState> state = callback_state_;
     result = webview_->add_NavigationStarting(
         Callback<ICoreWebView2NavigationStartingEventHandler>(
-            [](ICoreWebView2 *,
-               ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
+            [state](
+                ICoreWebView2 *,
+                ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
+                if (state->owner == nullptr) {
+                    return args->put_Cancel(TRUE);
+                }
+
                 LPWSTR uri = nullptr;
                 const HRESULT uri_result = args->get_Uri(&uri);
                 if (FAILED(uri_result) || uri == nullptr) {
-                    args->put_Cancel(TRUE);
                     CoTaskMemFree(uri);
-                    return S_OK;
+                    return args->put_Cancel(TRUE);
                 }
 
-                const bool allowed = is_allowed_document_url(uri);
+                const bool allowed =
+                    state->owner->is_navigation_allowed(uri);
                 CoTaskMemFree(uri);
-                if (!allowed) {
-                    args->put_Cancel(TRUE);
-                }
-                return S_OK;
+                return args->put_Cancel(allowed ? FALSE : TRUE);
             })
             .Get(),
         &navigation_starting_token_);
@@ -858,6 +858,23 @@ HRESULT WebViewHost::finish_controller_initialization() noexcept
         return HRESULT_FROM_WIN32(GetLastError());
     }
     return S_OK;
+}
+
+bool WebViewHost::is_navigation_allowed(
+    const wchar_t *url) const noexcept
+{
+    if (url == nullptr) {
+        return false;
+    }
+
+    if (wcscmp(url, L"about:blank") == 0) {
+        return current_url_.empty();
+    }
+    if (current_url_.empty()) {
+        return false;
+    }
+
+    return is_matching_chat_document_url(url, current_url_);
 }
 
 void WebViewHost::post_failure(HRESULT result) const noexcept

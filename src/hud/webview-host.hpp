@@ -58,6 +58,8 @@ private:
         ICoreWebView2CompositionController *controller) noexcept;
     HRESULT on_bootstrap_registered(HRESULT result) noexcept;
     [[nodiscard]] HRESULT finish_controller_initialization() noexcept;
+    [[nodiscard]] bool is_navigation_allowed(
+        const wchar_t *url) const noexcept;
     void post_failure(HRESULT result) const noexcept;
     void post_process_failure(
         COREWEBVIEW2_PROCESS_FAILED_KIND kind) const noexcept;

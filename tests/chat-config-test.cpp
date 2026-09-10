@@ -12,7 +12,9 @@
 namespace {
 
 constexpr wchar_t kChzzkChannelId[] = L"733c98be047f710d3b1bc7a27b0c83e2";
+constexpr wchar_t kOtherChzzkChannelId[] = L"0123456789abcdef0123456789abcdef";
 constexpr wchar_t kYouTubeVideoId[] = L"dQw4w9WgXcQ";
+constexpr wchar_t kOtherYouTubeVideoId[] = L"abcdefghijk";
 
 int fail(const wchar_t *message)
 {
@@ -44,7 +46,8 @@ bool expect_rejected(const std::wstring &input, const wchar_t *message)
 }
 
 bool expect_document_allowed(
-    const std::wstring &input, const wchar_t *message)
+    const std::wstring &input,
+    const wchar_t *message)
 {
     if (!chatview::is_supported_chat_document_url(input)) {
         std::wcerr << message << L"\ninput: " << input << L"\n";
@@ -54,10 +57,37 @@ bool expect_document_allowed(
 }
 
 bool expect_document_rejected(
-    const std::wstring &input, const wchar_t *message)
+    const std::wstring &input,
+    const wchar_t *message)
 {
     if (chatview::is_supported_chat_document_url(input)) {
         std::wcerr << message << L"\ninput: " << input << L"\n";
+        return false;
+    }
+    return true;
+}
+
+bool expect_matching_document(
+    const std::wstring &candidate,
+    const std::wstring &configured,
+    const wchar_t *message)
+{
+    if (!chatview::is_matching_chat_document_url(candidate, configured)) {
+        std::wcerr << message << L"\ncandidate: " << candidate
+                   << L"\nconfigured: " << configured << L"\n";
+        return false;
+    }
+    return true;
+}
+
+bool expect_nonmatching_document(
+    const std::wstring &candidate,
+    const std::wstring &configured,
+    const wchar_t *message)
+{
+    if (chatview::is_matching_chat_document_url(candidate, configured)) {
+        std::wcerr << message << L"\ncandidate: " << candidate
+                   << L"\nconfigured: " << configured << L"\n";
         return false;
     }
     return true;
@@ -69,7 +99,8 @@ int main()
 {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
-        (L"chatview-config-test-" + std::to_wstring(GetCurrentProcessId()));
+        (L"chatview-config-test-" +
+         std::to_wstring(GetCurrentProcessId()));
 
     std::error_code error;
     std::filesystem::remove_all(root, error);
@@ -85,10 +116,19 @@ int main()
     }
 
     const std::wstring canonical_chzzk =
-        std::wstring(L"https://chzzk.naver.com/chat/") + kChzzkChannelId;
+        std::wstring(L"https://chzzk.naver.com/chat/") +
+        kChzzkChannelId;
+    const std::wstring other_chzzk =
+        std::wstring(L"https://chzzk.naver.com/chat/") +
+        kOtherChzzkChannelId;
     const std::wstring canonical_youtube =
-        std::wstring(L"https://www.youtube.com/live_chat?is_popout=1&v=") +
+        std::wstring(
+            L"https://www.youtube.com/live_chat?is_popout=1&v=") +
         kYouTubeVideoId;
+    const std::wstring other_youtube =
+        std::wstring(
+            L"https://www.youtube.com/live_chat?is_popout=1&v=") +
+        kOtherYouTubeVideoId;
 
     if (!expect_normalized(
             L"https://weflab.com/page/test?theme=dark#ignored",
@@ -110,7 +150,8 @@ int main()
             canonical_chzzk,
             L"Mobile CHZZK live URL normalization failed") ||
         !expect_normalized(
-            std::wstring(L"https://chzzk.naver.com/") + kChzzkChannelId,
+            std::wstring(L"https://chzzk.naver.com/") +
+                kChzzkChannelId,
             canonical_chzzk,
             L"CHZZK channel URL normalization failed") ||
         !expect_normalized(
@@ -124,7 +165,8 @@ int main()
             canonical_youtube,
             L"YouTube live URL normalization failed") ||
         !expect_normalized(
-            std::wstring(L"https://youtu.be/") + kYouTubeVideoId + L"?t=5",
+            std::wstring(L"https://youtu.be/") +
+                kYouTubeVideoId + L"?t=5",
             canonical_youtube,
             L"YouTube short URL normalization failed") ||
         !expect_normalized(
@@ -180,7 +222,8 @@ int main()
                 kChzzkChannelId,
             L"CHZZK broadcast page was accepted as a chat document") ||
         !expect_document_rejected(
-            std::wstring(L"https://chzzk.naver.com/") + kChzzkChannelId,
+            std::wstring(L"https://chzzk.naver.com/") +
+                kChzzkChannelId,
             L"CHZZK channel page was accepted as a chat document") ||
         !expect_document_rejected(
             std::wstring(L"https://www.youtube.com/watch?v=") +
@@ -191,11 +234,53 @@ int main()
                 kYouTubeVideoId,
             L"YouTube live page was accepted as a chat document") ||
         !expect_document_rejected(
-            std::wstring(L"https://youtu.be/") + kYouTubeVideoId,
+            std::wstring(L"https://youtu.be/") +
+                kYouTubeVideoId,
             L"YouTube short URL was accepted as a chat document") ||
         !expect_document_rejected(
             L"https://accounts.google.com/ServiceLogin",
             L"External login page was accepted as a chat document")) {
+        return 1;
+    }
+
+    if (!expect_matching_document(
+            canonical_chzzk + L"?dark=true",
+            canonical_chzzk,
+            L"Matching CHZZK document was rejected") ||
+        !expect_matching_document(
+            canonical_youtube + L"&embed_domain=localhost",
+            canonical_youtube,
+            L"Matching YouTube document was rejected") ||
+        !expect_matching_document(
+            L"https://weflab.com/page/test?theme=dark#ignored",
+            L"https://weflab.com/page/test?theme=dark",
+            L"Matching Weflab document was rejected") ||
+        !expect_nonmatching_document(
+            other_chzzk,
+            canonical_chzzk,
+            L"Different CHZZK channel was accepted") ||
+        !expect_nonmatching_document(
+            other_youtube,
+            canonical_youtube,
+            L"Different YouTube video was accepted") ||
+        !expect_nonmatching_document(
+            std::wstring(L"https://chzzk.naver.com/live/") +
+                kChzzkChannelId,
+            canonical_chzzk,
+            L"CHZZK broadcast page matched a chat document") ||
+        !expect_nonmatching_document(
+            std::wstring(L"https://www.youtube.com/watch?v=") +
+                kYouTubeVideoId,
+            canonical_youtube,
+            L"YouTube watch page matched a chat document") ||
+        !expect_nonmatching_document(
+            L"https://weflab.com/page/other?theme=dark",
+            L"https://weflab.com/page/test?theme=dark",
+            L"Different Weflab page was accepted") ||
+        !expect_nonmatching_document(
+            L"https://weflab.com/page/test?theme=light",
+            L"https://weflab.com/page/test?theme=dark",
+            L"Different Weflab configuration was accepted")) {
         return 1;
     }
 

@@ -138,7 +138,7 @@ bool RuntimeController::start() noexcept
             std::scoped_lock lock(mutex_);
             stopping_.store(false, std::memory_order_release);
 
-            if (!create_transport_locked() || !create_runtime_job_locked()) {
+            if (!create_transport_locked()) {
                 stopping_.store(true, std::memory_order_release);
                 cleanup_locked();
                 return false;
@@ -385,6 +385,7 @@ bool RuntimeController::create_transport_locked()
 
 bool RuntimeController::create_runtime_job_locked()
 {
+    runtime_job_.reset();
     runtime_job_.reset(CreateJobObjectW(nullptr, nullptr));
     if (!runtime_job_) {
         log_windows_error("CreateJobObjectW", GetLastError());
@@ -399,6 +400,7 @@ bool RuntimeController::create_runtime_job_locked()
             &limits,
             static_cast<DWORD>(sizeof(limits)))) {
         log_windows_error("SetInformationJobObject", GetLastError());
+        runtime_job_.reset();
         return false;
     }
     return true;
@@ -417,6 +419,10 @@ bool RuntimeController::launch_runtime_locked()
 
     if (!ResetEvent(runtime_ready_event_.get())) {
         log_windows_error("ResetEvent(runtime ready)", GetLastError());
+        return false;
+    }
+
+    if (!create_runtime_job_locked()) {
         return false;
     }
 
@@ -441,6 +447,7 @@ bool RuntimeController::launch_runtime_locked()
             &startup_info,
             &process_info)) {
         log_windows_error("CreateProcessW(HUD)", GetLastError());
+        runtime_job_.reset();
         return false;
     }
 
@@ -451,6 +458,7 @@ bool RuntimeController::launch_runtime_locked()
         log_windows_error("AssignProcessToJobObject(HUD)", GetLastError());
         TerminateProcess(process.get(), 1U);
         WaitForSingleObject(process.get(), kRuntimeTerminateWaitMs);
+        runtime_job_.reset();
         return false;
     }
 
@@ -458,6 +466,7 @@ bool RuntimeController::launch_runtime_locked()
         log_windows_error("ResumeThread(HUD)", GetLastError());
         TerminateProcess(process.get(), 1U);
         WaitForSingleObject(process.get(), kRuntimeTerminateWaitMs);
+        runtime_job_.reset();
         return false;
     }
 
@@ -470,11 +479,13 @@ bool RuntimeController::launch_runtime_locked()
         WaitForMultipleObjects(3U, wait_handles, FALSE, kRuntimeReadyWaitMs);
     if (wait_result == WAIT_OBJECT_0 + 1U) {
         log_process_exit(process.get(), "exited before reporting ready");
+        runtime_job_.reset();
         return false;
     }
     if (wait_result == WAIT_OBJECT_0 + 2U) {
         TerminateProcess(process.get(), 0U);
         WaitForSingleObject(process.get(), kRuntimeTerminateWaitMs);
+        runtime_job_.reset();
         return false;
     }
     if (wait_result != WAIT_OBJECT_0) {
@@ -491,6 +502,7 @@ bool RuntimeController::launch_runtime_locked()
             TerminateProcess(process.get(), 1U);
             WaitForSingleObject(process.get(), kRuntimeTerminateWaitMs);
         }
+        runtime_job_.reset();
         return false;
     }
 
@@ -635,6 +647,7 @@ void RuntimeController::supervisor_loop() noexcept
                     log_process_exit(runtime_process_.get(), "exited unexpectedly");
                     runtime_process_.reset();
                     runtime_process_id_ = 0U;
+                    runtime_job_.reset();
                     restart_delay = next_restart_delay(restart_delay);
                 }
             }
@@ -679,6 +692,7 @@ void RuntimeController::publish_locked(std::uint32_t flags) noexcept
 void RuntimeController::terminate_runtime_locked(const char *reason) noexcept
 {
     if (!runtime_process_) {
+        runtime_job_.reset();
         return;
     }
 
@@ -700,6 +714,10 @@ void RuntimeController::terminate_runtime_locked(const char *reason) noexcept
     } else if (wait_result == WAIT_FAILED) {
         log_windows_error("WaitForSingleObject(HUD terminate)", GetLastError());
     }
+
+    runtime_process_.reset();
+    runtime_process_id_ = 0U;
+    runtime_job_.reset();
 }
 
 void RuntimeController::cleanup_locked() noexcept

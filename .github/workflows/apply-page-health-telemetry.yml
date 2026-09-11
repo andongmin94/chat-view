@@ -1,0 +1,43 @@
+name: Apply page health telemetry
+
+on:
+  push:
+    branches:
+      - OBS
+    paths:
+      - scripts/apply-page-health-telemetry.py
+      - .github/workflows/apply-page-health-telemetry.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply source patch
+        run: python scripts/apply-page-health-telemetry.py
+
+      - name: Commit patched source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            CMakeLists.txt \
+            .github/workflows/windows-build.yml \
+            src/hud/webview-host.hpp \
+            src/hud/webview-host.cpp \
+            src/hud/hud-window.hpp \
+            src/hud/hud-window.cpp
+          if git diff --cached --quiet; then
+            echo "No source changes were produced."
+            exit 1
+          fi
+          git commit -m "feat: report platform page health from WebView"
+          git push origin HEAD:OBS

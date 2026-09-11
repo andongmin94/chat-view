@@ -50,57 +50,68 @@ int main()
     using chatview::HudProvider;
 
     if (!expect_valid(
-            L"CVH1|4|4|3",
+            L"CVH2|4|4|3",
             HudProvider::YouTube,
             HudPageState::Ready,
             3U) ||
         !expect_valid(
-            L"CVH1|2|7|1",
+            L"CVH2|2|7|1",
             HudProvider::Chzzk,
             HudPageState::LoginRequired,
             1U) ||
         !expect_valid(
-            L"CVH1|3|8|65535",
+            L"CVH2|3|8|65535",
             HudProvider::Soop,
             HudPageState::Offline,
             65535U) ||
         !expect_valid(
-            L"CVH1|1|9|0",
+            L"CVH2|1|9|0",
             HudProvider::Weflab,
             HudPageState::LayoutChanged,
             0U) ||
         !expect_valid(
-            L"CVH1|1|3|0",
+            L"CVH2|1|3|0",
             HudProvider::Weflab,
             HudPageState::Loading,
-            0U)) {
+            0U) ||
+        !expect_valid(
+            L"CVH2|4|10|1",
+            HudProvider::YouTube,
+            HudPageState::NetworkOffline,
+            1U) ||
+        !expect_valid(
+            L"CVH2|2|11|9",
+            HudProvider::Chzzk,
+            HudPageState::ConnectionLost,
+            9U)) {
         return fail("A valid page-health message was rejected or changed");
     }
 
     constexpr std::wstring_view invalid_messages[] = {
         L"",
         L"CVH0|4|4|0",
-        L"CVH1|0|4|0",
-        L"CVH1|5|4|0",
-        L"CVH1|9|4|0",
-        L"CVH1|4294967295|4|0",
-        L"CVH1|4|0|0",
-        L"CVH1|4|1|0",
-        L"CVH1|4|5|0",
-        L"CVH1|4|10|0",
-        L"CVH1|4|99|0",
-        L"CVH1|4|4294967295|0",
-        L"CVH1|4|4|65536",
-        L"CVH1|4|4|4294967295",
-        L"CVH1|4|4|-1",
-        L"CVH1|4|4| 1",
-        L"CVH1|4|4|1 ",
-        L"CVH1|4|4|01x",
-        L"CVH1|4|4|1|extra",
-        L"CVH1|4|4",
-        L"CVH1||4|0",
-        L"CVH1|4||0",
-        L"CVH1|4|4|",
+        L"CVH1|4|4|0",
+        L"CVH2|0|4|0",
+        L"CVH2|5|4|0",
+        L"CVH2|9|4|0",
+        L"CVH2|4294967295|4|0",
+        L"CVH2|4|0|0",
+        L"CVH2|4|1|0",
+        L"CVH2|4|5|0",
+        L"CVH2|4|12|0",
+        L"CVH2|4|99|0",
+        L"CVH2|4|4294967295|0",
+        L"CVH2|4|4|65536",
+        L"CVH2|4|4|4294967295",
+        L"CVH2|4|4|-1",
+        L"CVH2|4|4| 1",
+        L"CVH2|4|4|1 ",
+        L"CVH2|4|4|01x",
+        L"CVH2|4|4|1|extra",
+        L"CVH2|4|4",
+        L"CVH2||4|0",
+        L"CVH2|4||0",
+        L"CVH2|4|4|",
     };
     for (const std::wstring_view message : invalid_messages) {
         if (!expect_invalid(message)) {
@@ -130,6 +141,10 @@ int main()
 
     if (!chatview::is_dom_reportable_page_state(HudPageState::Ready) ||
         !chatview::is_dom_reportable_page_state(HudPageState::Loading) ||
+        !chatview::is_dom_reportable_page_state(
+            HudPageState::NetworkOffline) ||
+        !chatview::is_dom_reportable_page_state(
+            HudPageState::ConnectionLost) ||
         chatview::is_dom_reportable_page_state(HudPageState::Fatal) ||
         chatview::is_dom_reportable_page_state(HudPageState::Recovering)) {
         return fail("DOM-reportable page-state policy is inconsistent");
@@ -137,7 +152,7 @@ int main()
 
     const std::wstring_view script =
         chatview::page_health_bootstrap_script();
-    if (script.find(L"CVH1|") == std::wstring_view::npos ||
+    if (script.find(L"CVH2|") == std::wstring_view::npos ||
         script.find(L"MutationObserver") == std::wstring_view::npos ||
         script.find(L"weflab.com") == std::wstring_view::npos ||
         script.find(L"chzzk.naver.com") == std::wstring_view::npos ||

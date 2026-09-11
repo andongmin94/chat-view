@@ -10,7 +10,7 @@
 namespace chatview {
 namespace {
 
-constexpr std::wstring_view kMessagePrefix = L"CVH1";
+constexpr std::wstring_view kMessagePrefix = L"CVH2";
 constexpr std::size_t kMaximumMessageLength = 64U;
 
 constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
@@ -134,6 +134,18 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
     'log in to chat',
     'login required'
   ];
+  const connectionPhrases = [
+    '채팅 연결이 끊어졌습니다',
+    '연결이 끊어졌습니다',
+    '네트워크 연결이 불안정합니다',
+    '재연결 중',
+    'connection lost',
+    'chat disconnected',
+    'disconnected from chat',
+    'reconnecting to chat',
+    'unable to connect to chat',
+    'failed to connect to chat'
+  ];
 
   const isRendered = (element, minimumWidth = 1, minimumHeight = 1) => {
     if (!element || typeof element.getBoundingClientRect !== 'function') return false;
@@ -195,6 +207,8 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
       case 'login-required': return [7, 102];
       case 'offline': return [8, 103];
       case 'layout-changed': return [9, 104];
+      case 'network-offline': return [10, 105];
+      case 'connection-lost': return [11, 106];
       default: return null;
     }
   };
@@ -215,7 +229,7 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
   }
 
   const send = (state, detail = 0) => {
-    const message = `CVH1|${provider}|${state}|${detail}`;
+    const message = `CVH2|${provider}|${state}|${detail}`;
     const now = performance.now();
     if (message !== lastMessage ||
         now - lastSentAt >= heartbeatIntervalMs) {
@@ -223,11 +237,16 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
       lastSentAt = now;
       try { post(message); } catch (_) {}
     }
-    if (state === 3) startObserving();
+    if (state === 3 || state === 11) startObserving();
     else stopObserving();
   };
 
   function evaluate() {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      send(10, 1);
+      return;
+    }
+
     if (!document.body || document.readyState === 'loading') {
       send(3, 0);
       return;
@@ -249,6 +268,12 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
     const loginDetail = includesAny(statusText, loginPhrases);
     if (loginDetail) {
       send(7, loginDetail);
+      return;
+    }
+
+    const connectionDetail = includesAny(statusText, connectionPhrases);
+    if (connectionDetail) {
+      send(11, connectionDetail);
       return;
     }
 
@@ -287,6 +312,14 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
     evaluate();
   };
 
+  window.addEventListener('offline', () => {
+    send(10, 200);
+  });
+  window.addEventListener('online', () => {
+    startObserving();
+    send(11, 201);
+    schedule();
+  });
   document.addEventListener('DOMContentLoaded', schedule, { once: true });
   window.addEventListener('load', schedule, { once: true });
   setInterval(evaluate, periodicIntervalMs);
@@ -378,6 +411,8 @@ bool is_dom_reportable_page_state(HudPageState state) noexcept
     case HudPageState::LoginRequired:
     case HudPageState::Offline:
     case HudPageState::LayoutChanged:
+    case HudPageState::NetworkOffline:
+    case HudPageState::ConnectionLost:
         return true;
     default:
         return false;

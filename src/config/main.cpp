@@ -256,6 +256,12 @@ HealthPresentation health_presentation(
         return {
             provider + L" page layout changed",
             kColorError};
+    case chatview::HudPageState::NetworkOffline:
+        return {L"Internet connection offline", kColorError};
+    case chatview::HudPageState::ConnectionLost:
+        return {
+            provider + L" chat disconnected — reconnecting",
+            kColorWarning};
     case chatview::HudPageState::Fatal:
         return {L"Chat engine failed", kColorError};
     case chatview::HudPageState::Unknown:

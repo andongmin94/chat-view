@@ -13,6 +13,7 @@ This branch currently provides an installable single-PC alpha:
 - transparent WebView2 composition rendering;
 - Weflab, CHZZK, SOOP, and YouTube chat pages;
 - automatic conversion of ordinary CHZZK, SOOP, and YouTube broadcast URLs;
+- browser connectivity and provider connection-loss recovery;
 - OBS **Tools → ChatView Settings...** configuration;
 - click-through locked mode;
 - draggable and resizable edit mode;
@@ -120,7 +121,7 @@ OBS Studio
       └── exits when OBS exits
 ```
 
-The platform page probe sends a compact health heartbeat every two seconds, even when the detected state has not changed. The native HUD watchdog reloads a configured chat page after twelve seconds without a valid heartbeat. Two consecutive stale reloads escalate to a full HUD-process restart, which is then governed by the existing bounded supervisor policy. The watchdog is paused while the Display Capture interlock hides the HUD so Chromium background throttling cannot create a false failure.
+The platform page probe sends a compact health heartbeat every two seconds, even when the detected state has not changed. It also reports browser offline/online transitions and provider reconnecting or disconnected banners from bounded structural status regions rather than ordinary chat messages. The native HUD watchdog reloads a configured chat page after twelve seconds without a valid heartbeat. A separately bounded connection-recovery policy gives a reported disconnect ten seconds to recover, reloads the page once, and restarts the HUD if the disconnect survives another fifteen seconds. Browser-offline time and Display Capture suppression time do not count toward either recovery deadline.
 
 `WDA_EXCLUDEFROMCAPTURE` is a best-effort Windows capture hint. It does not remove the HUD from a physical HDMI signal sent to a capture card. As a second software-side barrier, ChatView hides the private HUD whenever OBS reports an active or showing Display Capture source while streaming, recording, replay buffering, or virtual-camera output is running. At output start it temporarily treats any configured Display Capture source as risky until OBS source activation settles. Failed starts expire automatically, and the HUD returns only after the risk condition clears. While hidden by that policy, the HUD pauses the periodic hidden-window affinity query. It explicitly reapplies and verifies capture exclusion before showing again, then verifies once more after restoration.
 

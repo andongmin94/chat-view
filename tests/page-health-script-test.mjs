@@ -47,10 +47,13 @@ function runProbe({
   title = '',
   selectors = new Map(),
   nowValues = [0, 0],
+  navigatorOnline = true,
 }) {
   const messages = [];
   const observers = [];
   const intervals = [];
+  const events = new Map();
+  const navigator = { onLine: navigatorOnline };
   let nowIndex = 0;
 
   const body = {
@@ -101,7 +104,9 @@ function runProbe({
   };
   const window = {
     chrome: { webview },
-    addEventListener() {},
+    addEventListener(type, callback) {
+      events.set(type, callback);
+    },
   };
   window.top = window;
 
@@ -112,6 +117,7 @@ function runProbe({
     },
     location: { hostname },
     MutationObserver: FakeMutationObserver,
+    navigator,
     Number,
     performance: {
       now() {
@@ -133,7 +139,7 @@ function runProbe({
   });
 
   vm.runInContext(script, context, { filename: 'page-health-message.js' });
-  return { messages, observers, intervals };
+  return { messages, observers, intervals, events, navigator };
 }
 
 const providerCases = [
@@ -153,7 +159,7 @@ for (const [hostname, selector, provider] of providerCases) {
   });
   assert.deepEqual(
     result.messages,
-    [`CVH1|${provider}|4|1`],
+    [`CVH2|${provider}|4|1`],
     `${hostname} did not report the expected ready state`,
   );
   assert.equal(
@@ -169,13 +175,32 @@ assert.deepEqual(
   'an unsupported host emitted page-health telemetry',
 );
 
+const networkOffline = runProbe({
+  hostname: 'www.youtube.com',
+  navigatorOnline: false,
+  selectors: new Map([['yt-live-chat-renderer #items', new FakeElement()]]),
+  nowValues: [0, 0, 100, 101],
+});
+assert.deepEqual(
+  networkOffline.messages,
+  ['CVH2|4|10|1'],
+  'navigator offline state did not report NetworkOffline',
+);
+networkOffline.navigator.onLine = true;
+networkOffline.events.get('online')();
+assert.deepEqual(
+  networkOffline.messages,
+  ['CVH2|4|10|1', 'CVH2|4|11|201', 'CVH2|4|4|1'],
+  'returning online did not report recovery and immediately re-evaluate chat',
+);
+
 const loading = runProbe({
   hostname: 'www.youtube.com',
   readyState: 'loading',
 });
 assert.deepEqual(
   loading.messages,
-  ['CVH1|4|3|0'],
+  ['CVH2|4|3|0'],
   'a loading document did not report Loading',
 );
 assert.equal(
@@ -192,7 +217,7 @@ assert.deepEqual(
       new FakeElement({ textContent: '방송이 종료되었습니다' }),
     ]]),
   }).messages,
-  ['CVH1|2|8|1'],
+  ['CVH2|2|8|1'],
   'an ended CHZZK broadcast did not report Offline',
 );
 
@@ -204,8 +229,20 @@ assert.deepEqual(
       new FakeElement({ textContent: 'Sign in to chat' }),
     ]]),
   }).messages,
-  ['CVH1|4|7|5'],
+  ['CVH2|4|7|5'],
   'a YouTube sign-in prompt did not report LoginRequired',
+);
+
+assert.deepEqual(
+  runProbe({
+    hostname: 'www.youtube.com',
+    selectors: new Map([[
+      'yt-live-chat-banner-renderer',
+      new FakeElement({ textContent: 'Reconnecting to chat' }),
+    ]]),
+  }).messages,
+  ['CVH2|4|11|8'],
+  'a provider reconnecting banner did not report ConnectionLost',
 );
 
 assert.deepEqual(
@@ -214,8 +251,18 @@ assert.deepEqual(
     bodyText: 'A viewer wrote: sign in to chat',
     selectors: new Map([['yt-live-chat-renderer #items', new FakeElement()]]),
   }).messages,
-  ['CVH1|4|4|1'],
+  ['CVH2|4|4|1'],
   'ordinary chat message text was incorrectly treated as a login prompt',
+);
+
+assert.deepEqual(
+  runProbe({
+    hostname: 'www.youtube.com',
+    bodyText: 'A viewer wrote: reconnecting to chat',
+    selectors: new Map([['yt-live-chat-renderer #items', new FakeElement()]]),
+  }).messages,
+  ['CVH2|4|4|1'],
+  'ordinary chat message text was incorrectly treated as a connection failure',
 );
 
 const explicitReady = new FakeElement({ dataState: 'ready' });
@@ -224,7 +271,7 @@ assert.deepEqual(
     hostname: 'weflab.com',
     selectors: new Map([['[data-chatview-state]', explicitReady]]),
   }).messages,
-  ['CVH1|1|4|101'],
+  ['CVH2|1|4|101'],
   'an explicit Weflab ready state was ignored',
 );
 
@@ -234,7 +281,7 @@ assert.deepEqual(
     hostname: 'weflab.com',
     selectors: new Map([['[data-chatview-state]', explicitOffline]]),
   }).messages,
-  ['CVH1|1|8|103'],
+  ['CVH2|1|8|103'],
   'an explicit Weflab offline state was ignored',
 );
 
@@ -243,7 +290,7 @@ assert.deepEqual(
     hostname: 'weflab.com',
     nowValues: [0, 16000],
   }).messages,
-  ['CVH1|1|9|1'],
+  ['CVH2|1|9|1'],
   'a page without a recognized chat layout did not report LayoutChanged',
 );
 
@@ -255,7 +302,7 @@ assert.deepEqual(
       new FakeElement({ width: 40, height: 40 }),
     ]]),
   }).messages,
-  ['CVH1|3|3|0'],
+  ['CVH2|3|3|0'],
   'an undersized SOOP element was incorrectly accepted as a ready chat surface',
 );
 
@@ -270,7 +317,7 @@ assert.deepEqual(
       }),
     ]]),
   }).messages,
-  ['CVH1|2|3|0'],
+  ['CVH2|2|3|0'],
   'a hidden status banner was incorrectly reported as an active page state',
 );
 
@@ -284,13 +331,13 @@ assert.equal(heartbeats.intervals.length, 1, 'the periodic health check was not 
 heartbeats.intervals[0]();
 assert.deepEqual(
   heartbeats.messages,
-  ['CVH1|4|4|1'],
+  ['CVH2|4|4|1'],
   'unchanged state emitted before the heartbeat interval elapsed',
 );
 heartbeats.intervals[0]();
 assert.deepEqual(
   heartbeats.messages,
-  ['CVH1|4|4|1', 'CVH1|4|4|1'],
+  ['CVH2|4|4|1', 'CVH2|4|4|1'],
   'an unchanged ready page did not emit its periodic heartbeat',
 );
 
@@ -310,7 +357,7 @@ changingSelectors.set(
 changedState.intervals[0]();
 assert.deepEqual(
   changedState.messages,
-  ['CVH1|4|4|1', 'CVH1|4|7|5'],
+  ['CVH2|4|4|1', 'CVH2|4|7|5'],
   'a changed page state waited for the heartbeat interval before reporting',
 );
 

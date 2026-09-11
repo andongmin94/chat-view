@@ -44,6 +44,14 @@ int main()
         return fail("A valid HUD health snapshot was rejected");
     }
 
+    constexpr HudHealthSnapshot connection_lost{
+        HudPageState::ConnectionLost,
+        HudProvider::Soop,
+        7U};
+    if (!chatview::is_valid_hud_health(connection_lost)) {
+        return fail("A valid connection-loss state was rejected");
+    }
+
     constexpr HudHealthSnapshot invalid_state{
         static_cast<HudPageState>(0xffU),
         HudProvider::Unknown,

@@ -22,7 +22,9 @@ constexpr UINT_PTR kCaptureSafetyTimerId = 3U;
 constexpr int kEditHotkeyId = 1;
 constexpr int kCaptureExclusionLostExitCode = 11;
 constexpr int kPageHealthWatchdogExitCode = 19;
+constexpr int kPageConnectionRecoveryExitCode = 20;
 constexpr std::uint16_t kPageHealthWatchdogDetailBase = 0x7100U;
+constexpr std::uint16_t kPageConnectionRecoveryDetailBase = 0x7200U;
 constexpr UINT kReadyDurationMs = 2200U;
 constexpr UINT kOfflineDurationMs = 1200U;
 constexpr UINT kNavigationRetryBaseMs = 5000U;
@@ -204,6 +206,7 @@ void HudWindow::destroy() noexcept
         edit_hotkey_registered_ = false;
     }
 
+    page_connection_recovery_.reset();
     page_health_watchdog_.disarm();
     webview_.close();
     ready_event_ = nullptr;
@@ -336,7 +339,16 @@ LRESULT HudWindow::handle_message(
         const HudHealthSnapshot health = decode_hud_health(
             static_cast<std::uint32_t>(wparam));
         if (apply_page_health(health)) {
-            page_health_watchdog_.heartbeat(GetTickCount64());
+            const ULONGLONG now = GetTickCount64();
+            if (health.state == HudPageState::NetworkOffline) {
+                page_connection_recovery_.reset();
+                page_health_watchdog_.disarm();
+            } else {
+                page_health_watchdog_.heartbeat(now);
+                if (health.state == HudPageState::ConnectionLost) {
+                    page_connection_recovery_.begin(now);
+                }
+            }
         }
         return 0L;
     }
@@ -372,6 +384,7 @@ LRESULT HudWindow::handle_message(
         }
         if (wparam == kNavigationRetryTimerId) {
             KillTimer(window_, kNavigationRetryTimerId);
+            page_connection_recovery_.reset();
             set_page_health(
                 HudPageState::Loading, page_provider_);
             if (capture_risk_) {
@@ -394,7 +407,7 @@ LRESULT HudWindow::handle_message(
             if (!capture_risk_) {
                 if (!capture_exclusion_intact()) {
                     fail_closed_capture_exclusion();
-                } else {
+                } else if (!check_page_connection_recovery()) {
                     check_page_health_watchdog();
                 }
             }
@@ -677,6 +690,7 @@ void HudWindow::reload_chat_config() noexcept
     }
 
     cancel_navigation_retry();
+    page_connection_recovery_.reset();
 
     ChatConfig config;
     if (load_chat_config(config)) {
@@ -725,24 +739,40 @@ bool HudWindow::apply_page_health(
         navigation_tone_ = L"#ffcc00";
         break;
     case HudPageState::Ready:
+        page_connection_recovery_.reset();
         cancel_navigation_retry();
         navigation_status_.clear();
         navigation_tone_ = L"#ffcc00";
         break;
     case HudPageState::LoginRequired:
+        page_connection_recovery_.reset();
         cancel_navigation_retry();
         navigation_status_ = L"LOGIN REQUIRED";
         navigation_tone_ = L"#ffcc00";
         break;
     case HudPageState::Offline:
+        page_connection_recovery_.reset();
         cancel_navigation_retry();
         navigation_status_ = L"BROADCAST OFFLINE";
         navigation_tone_ = L"#aeb0b2";
         break;
     case HudPageState::LayoutChanged:
+        page_connection_recovery_.reset();
         cancel_navigation_retry();
         navigation_status_ = L"CHAT PAGE CHANGED";
         navigation_tone_ = L"#ff3b30";
+        break;
+    case HudPageState::NetworkOffline:
+        page_connection_recovery_.reset();
+        page_health_watchdog_.disarm();
+        cancel_navigation_retry();
+        navigation_status_ = L"NETWORK OFFLINE";
+        navigation_tone_ = L"#ff9500";
+        break;
+    case HudPageState::ConnectionLost:
+        cancel_navigation_retry();
+        navigation_status_ = L"CHAT DISCONNECTED";
+        navigation_tone_ = L"#ff9500";
         break;
     default:
         return false;
@@ -761,6 +791,7 @@ void HudWindow::handle_webview_process_failure(
         static_cast<unsigned int>(kind));
     OutputDebugStringW(detail);
 
+    page_connection_recovery_.reset();
     page_health_watchdog_.disarm();
     set_page_health(
         HudPageState::Recovering,
@@ -813,6 +844,7 @@ void HudWindow::schedule_navigation_retry(
         static_cast<unsigned int>(status));
     OutputDebugStringW(detail);
 
+    page_connection_recovery_.reset();
     page_health_watchdog_.disarm();
     set_page_health(
         HudPageState::Retrying,
@@ -855,6 +887,62 @@ void HudWindow::cancel_navigation_retry() noexcept
     navigation_retry_attempt_ = 0U;
     navigation_status_.clear();
     navigation_tone_ = L"#ffcc00";
+}
+
+bool HudWindow::check_page_connection_recovery() noexcept
+{
+    if (window_ == nullptr || !webview_ready_ || capture_risk_ ||
+        capture_exclusion_failed_ || page_provider_ == HudProvider::Unknown) {
+        return false;
+    }
+
+    const PageConnectionRecoveryAction action =
+        page_connection_recovery_.poll(GetTickCount64());
+    if (action == PageConnectionRecoveryAction::None) {
+        return false;
+    }
+
+    const std::uint16_t detail = static_cast<std::uint16_t>(
+        kPageConnectionRecoveryDetailBase +
+        (action == PageConnectionRecoveryAction::Reload ? 1U : 2U));
+
+    KillTimer(window_, kNavigationRetryTimerId);
+    navigation_retry_attempt_ = 0U;
+
+    if (action == PageConnectionRecoveryAction::Reload) {
+        OutputDebugStringW(
+            L"[ChatView HUD] Chat connection remained disconnected; "
+            L"reloading the page\n");
+        set_page_health(
+            HudPageState::Recovering, page_provider_, detail);
+        navigation_status_ = L"CHAT RECONNECTING";
+        navigation_tone_ = L"#5ac8fa";
+        page_health_watchdog_.arm(GetTickCount64());
+        update_host_state();
+        if (!webview_.reload()) {
+            page_connection_recovery_.reset();
+            page_health_watchdog_.disarm();
+            set_page_health(
+                HudPageState::Fatal, page_provider_, detail);
+            ShowWindow(window_, SW_HIDE);
+            PostQuitMessage(kPageConnectionRecoveryExitCode);
+        }
+        return true;
+    }
+
+    OutputDebugStringW(
+        L"[ChatView HUD] Chat connection remained disconnected after reload; "
+        L"restarting the HUD process\n");
+    page_connection_recovery_.reset();
+    page_health_watchdog_.disarm();
+    set_page_health(
+        HudPageState::Fatal, page_provider_, detail);
+    navigation_status_ = L"CHAT DISCONNECTED";
+    navigation_tone_ = L"#ff3b30";
+    update_host_state();
+    ShowWindow(window_, SW_HIDE);
+    PostQuitMessage(kPageConnectionRecoveryExitCode);
+    return true;
 }
 
 void HudWindow::check_page_health_watchdog() noexcept
@@ -937,6 +1025,7 @@ void HudWindow::fail_closed_capture_exclusion() noexcept
     }
 
     capture_exclusion_failed_ = true;
+    page_connection_recovery_.reset();
     page_health_watchdog_.disarm();
     set_page_health(
         HudPageState::Fatal,
@@ -963,6 +1052,7 @@ bool HudWindow::apply_capture_policy() noexcept
     }
 
     if (capture_risk_) {
+        page_connection_recovery_.reset();
         page_health_watchdog_.disarm();
         if (edit_mode_) {
             capture_and_persist_bounds();
@@ -1014,6 +1104,7 @@ bool HudWindow::apply_capture_policy() noexcept
         page_provider_ != HudProvider::Unknown &&
         page_state_ != HudPageState::SetupRequired &&
         page_state_ != HudPageState::Retrying &&
+        page_state_ != HudPageState::NetworkOffline &&
         page_state_ != HudPageState::Fatal) {
         page_health_watchdog_.arm(GetTickCount64());
     }

@@ -344,7 +344,11 @@ LRESULT HudWindow::handle_message(
                 page_connection_recovery_.reset();
                 page_health_watchdog_.disarm();
             } else {
-                page_health_watchdog_.heartbeat(now);
+                if (page_health_watchdog_.armed()) {
+                    page_health_watchdog_.heartbeat(now);
+                } else {
+                    page_health_watchdog_.arm(now);
+                }
                 if (health.state == HudPageState::ConnectionLost) {
                     page_connection_recovery_.begin(now);
                 }

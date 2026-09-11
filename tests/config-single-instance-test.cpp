@@ -402,7 +402,7 @@ int wmain(int argument_count, wchar_t **arguments)
                        child_text_contains(
                            control_center, L"Private HUD safety active") &&
                        child_text_contains(
-                           control_center, L"YouTube chat ready");
+                           control_center, L"YouTube chat ready") &&
                        child_text_contains(
                            control_center,
                            L"BLOCKED — Save a supported chat URL");
@@ -454,7 +454,7 @@ int wmain(int argument_count, wchar_t **arguments)
                            L"Saved and applied to the running HUD") &&
                        saved_url_matches(
                            config_file,
-                           L"https://www.youtube.com/live_chat?is_popout=1&v=dQw4w9WgXcQ");
+                           L"https://www.youtube.com/live_chat?is_popout=1&v=dQw4w9WgXcQ") &&
                        child_text_contains(
                            control_center, L"READY TO STREAM");
             },
@@ -462,10 +462,6 @@ int wmain(int argument_count, wchar_t **arguments)
         DestroyWindow(fake_hud);
         return fail(
             L"Save & Apply did not persist and acknowledge the canonical URL",
-            first.process.get());
-    }
-
-    if (!post_command(control_center, kEditButtonId, edit_button) ||
             first.process.get());
     }
 

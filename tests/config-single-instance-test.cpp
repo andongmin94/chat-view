@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/control-status.hpp"
+#include "common/hud-health.hpp"
 #include "common/win32-handle.hpp"
 #include "common/window-messages.hpp"
 
@@ -26,6 +27,7 @@ constexpr DWORD kProcessExitTimeoutMs = 5000U;
 
 std::atomic_bool edit_message_received{false};
 UINT edit_message = 0U;
+UINT health_message = 0U;
 
 class MappedStatus final {
 public:
@@ -75,6 +77,13 @@ LRESULT CALLBACK fake_hud_window_proc(
     if (message == edit_message && edit_message != 0U) {
         edit_message_received.store(true, std::memory_order_release);
         return 0L;
+    }
+    if (message == health_message && health_message != 0U) {
+        return static_cast<LRESULT>(chatview::encode_hud_health(
+            chatview::HudHealthSnapshot{
+                chatview::HudPageState::Ready,
+                chatview::HudProvider::YouTube,
+                0U}));
     }
     return DefWindowProcW(window, message, wparam, lparam);
 }
@@ -318,8 +327,10 @@ int wmain(int argument_count, wchar_t **arguments)
 
     edit_message = RegisterWindowMessageW(
         chatview::kToggleEditMessageName);
-    if (edit_message == 0U) {
-        return fail(L"Failed to register the fake HUD edit message");
+    health_message = RegisterWindowMessageW(
+        chatview::kQueryHudHealthMessageName);
+    if (edit_message == 0U || health_message == 0U) {
+        return fail(L"Failed to register fake HUD messages");
     }
 
     WNDCLASSEXW fake_hud_class{};
@@ -378,10 +389,11 @@ int wmain(int argument_count, wchar_t **arguments)
     }
 
     if (!wait_for_child_text(control_center, L"Connected to OBS Studio") ||
-        !wait_for_child_text(control_center, L"Private HUD safety active")) {
+        !wait_for_child_text(control_center, L"Private HUD safety active") ||
+        !wait_for_child_text(control_center, L"YouTube chat ready")) {
         DestroyWindow(fake_hud);
         return fail(
-            L"The Control Center did not render the live OBS status",
+            L"The Control Center did not render live OBS and HUD health",
             first.process.get());
     }
 
@@ -457,7 +469,9 @@ int wmain(int argument_count, wchar_t **arguments)
     if (!PostMessageW(control_center, WM_CLOSE, 0U, 0L) ||
         !exited_successfully(first.process.get(), kProcessExitTimeoutMs)) {
         DestroyWindow(fake_hud);
-        return fail(L"The Control Center did not exit cleanly", first.process.get());
+        return fail(
+            L"The Control Center did not exit cleanly",
+            first.process.get());
     }
 
     DestroyWindow(fake_hud);

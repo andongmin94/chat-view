@@ -274,6 +274,7 @@ assert.deepEqual(
   'a hidden status banner was incorrectly reported as an active page state',
 );
 
+// Repeated unchanged messages are intentional heartbeats for the native watchdog.
 const heartbeats = runProbe({
   hostname: 'www.youtube.com',
   selectors: new Map([['yt-live-chat-renderer #items', new FakeElement()]]),

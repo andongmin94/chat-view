@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.3.0 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.3.1 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -112,6 +112,7 @@ add_executable(chat-view-hud WIN32
     src/hud/webview-host.cpp
     src/hud/webview-host.hpp
     src/common/chat-config.hpp
+    src/common/hud-health.hpp
     src/common/shared-state.hpp
     src/common/win32-handle.hpp
     src/common/window-messages.hpp
@@ -145,6 +146,7 @@ add_executable(chat-view-config WIN32
     src/config/control-status-reader.cpp
     src/config/control-status-reader.hpp
     src/common/control-status.hpp
+    src/common/hud-health.hpp
     src/common/win32-handle.hpp
     src/common/window-messages.hpp
 )
@@ -203,7 +205,9 @@ if(BUILD_TESTING)
 
     add_executable(chat-view-config-single-instance-test
         tests/config-single-instance-test.cpp
+        src/common/hud-health.hpp
         src/common/win32-handle.hpp
+        src/common/window-messages.hpp
     )
     target_include_directories(
         chat-view-config-single-instance-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
@@ -215,6 +219,18 @@ if(BUILD_TESTING)
         COMMAND chat-view-config-single-instance-test "$<TARGET_FILE:chat-view-config>"
     )
     set_tests_properties(chat-view-config-single-instance PROPERTIES TIMEOUT 15)
+
+    add_executable(chat-view-hud-health-test
+        tests/hud-health-test.cpp
+        src/common/hud-health.hpp
+    )
+    target_include_directories(
+        chat-view-hud-health-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_warnings(chat-view-hud-health-test)
+    add_test(
+        NAME chat-view-hud-health
+        COMMAND chat-view-hud-health-test
+    )
 
     add_executable(chat-view-hud-placement-test
         tests/hud-placement-test.cpp

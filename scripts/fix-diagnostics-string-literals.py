@@ -65,6 +65,4 @@ updated = text[:start] + replacement + text[end:]
 expected = r'summary << L"\nLive runtime snapshot\n"'
 if expected not in updated:
     raise SystemExit("escaped diagnostics literals were not installed")
-if 'summary << L"\nLive runtime snapshot\n"' not in updated:
-    raise SystemExit("diagnostics literal verification failed")
 path.write_text(updated, encoding="utf-8", newline="\n")

@@ -101,6 +101,14 @@ bool ControlStatusReader::read(
         candidate.hud_process_id = status_->hud_process_id;
         candidate.generation = status_->generation;
         candidate.updated_tick_ms = status_->updated_tick_ms;
+        candidate.runtime_telemetry = RuntimeTelemetrySnapshot{
+            status_->last_hud_exit_code,
+            static_cast<RuntimeRestartReason>(
+                status_->runtime_restart_reason),
+            status_->consecutive_runtime_failures,
+            status_->runtime_telemetry_flags,
+            status_->runtime_event_filetime_utc,
+        };
         MemoryBarrier();
 
         const LONG after = status_->sequence;

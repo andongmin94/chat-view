@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "common/runtime-history-store.hpp"
 #include "common/shared-state.hpp"
 #include "common/srw-lock.hpp"
 #include "common/win32-handle.hpp"
@@ -28,23 +29,34 @@ public:
     void stop() noexcept;
     void update(
         bool streaming, bool recording, bool capture_risk) noexcept;
+    [[nodiscard]] RuntimeTelemetrySnapshot runtime_telemetry() const noexcept;
     [[nodiscard]] bool restart_hud() noexcept;
     [[nodiscard]] bool toggle_edit_mode() noexcept;
 
 private:
+    struct RuntimeLaunchResult {
+        bool started = false;
+        RuntimeRestartReason failure_reason =
+            RuntimeRestartReason::LaunchFailure;
+        std::uint32_t exit_code = kRuntimeExitCodeUnavailable;
+    };
+
     [[nodiscard]] bool create_transport_locked();
     [[nodiscard]] bool create_runtime_job_locked();
-    [[nodiscard]] bool launch_runtime_locked();
+    [[nodiscard]] RuntimeLaunchResult launch_runtime_locked();
     [[nodiscard]] HWND find_runtime_window_locked() const noexcept;
     [[nodiscard]] std::wstring find_sibling_path(const wchar_t *file_name) const;
 
     void supervisor_loop() noexcept;
+    void update_runtime_telemetry(
+        const RuntimeTelemetrySnapshot &snapshot) noexcept;
     void publish_locked(std::uint32_t flags) noexcept;
     void terminate_runtime_locked(const char *reason) noexcept;
     void cleanup_locked() noexcept;
 
     std::mutex mutex_;
     SRWLOCK state_publish_lock_ = SRWLOCK_INIT;
+    mutable SRWLOCK runtime_telemetry_lock_ = SRWLOCK_INIT;
     std::thread supervisor_thread_;
     std::atomic_bool stopping_{true};
     std::atomic_bool restart_requested_{false};
@@ -63,6 +75,8 @@ private:
     std::wstring ready_event_name_;
     DWORD runtime_process_id_ = 0U;
     std::uint64_t generation_ = 0U;
+    RuntimeTelemetrySnapshot runtime_telemetry_state_;
+    RuntimeHistoryStore runtime_history_store_;
 };
 
 } // namespace chatview

@@ -2,11 +2,14 @@
 
 #pragma once
 
+#include "common/runtime-telemetry.hpp"
+
 #include <cstdint>
 
 namespace chatview {
 
-inline constexpr std::uint32_t kMaximumAutomaticRestartFailures = 6U;
+inline constexpr std::uint32_t kMaximumAutomaticRestartFailures =
+    kMaximumRuntimeFailureCount;
 inline constexpr std::uint32_t kInitialAutomaticRestartDelayMs = 500U;
 inline constexpr std::uint32_t kMaximumAutomaticRestartDelayMs = 30000U;
 
@@ -17,6 +20,14 @@ public:
         if (failure_count_ < kMaximumAutomaticRestartFailures) {
             ++failure_count_;
         }
+    }
+
+    constexpr void restore(std::uint32_t failure_count) noexcept
+    {
+        failure_count_ =
+            failure_count > kMaximumAutomaticRestartFailures
+                ? kMaximumAutomaticRestartFailures
+                : failure_count;
     }
 
     constexpr void reset() noexcept

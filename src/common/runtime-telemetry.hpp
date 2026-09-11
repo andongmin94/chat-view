@@ -97,8 +97,7 @@ struct RuntimeTelemetrySnapshot {
                snapshot.last_exit_code == kRuntimeExitCodeUnavailable;
     }
 
-    return automatic &&
-           (snapshot.consecutive_failures == 0U || automatic);
+    return automatic;
 }
 
 [[nodiscard]] constexpr RuntimeRestartReason

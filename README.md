@@ -24,7 +24,7 @@ This branch currently provides an installable single-PC alpha:
 - LIVE and REC status indicators;
 - Windows capture-exclusion request through `WDA_EXCLUDEFROMCAPTURE`;
 - fail-closed Display Capture interlock while streaming, recording, replay buffering, or virtual-camera output is active;
-- bounded shutdown and an automatic restart circuit that stops crash loops;
+- bounded shutdown and a persistent automatic restart circuit that stops crash loops across OBS restarts;
 - explicit **Tools → Restart ChatView HUD** recovery without restarting OBS;
 - actual OBS Display Capture → scene → main-texture pixel qualification in official OBS Studio;
 - pinned Windows CI, native tests, installer test, and packaged artifact.
@@ -81,7 +81,7 @@ https://www.youtube.com/live_chat?is_popout=1&v=<video-id>
 
 Saving broadcasts a local configuration-change message, so the running HUD reloads without restarting OBS.
 
-Use **Export diagnostics** in the Control Center, or **Tools → Export ChatView Diagnostics...** in OBS, to create a Desktop folder containing a binary-integrity summary, the current OBS/HUD state when available, and only ChatView-tagged OBS log lines. The export omits the configured URL and chat messages, redacts user-profile paths and IPC names, uploads nothing automatically, and must be reviewed before sharing.
+Use **Export diagnostics** in the Control Center, or **Tools → Export ChatView Diagnostics...** in OBS, to create a Desktop folder containing a binary-integrity summary, the current OBS/HUD state when available, the persisted last HUD exit and restart-circuit history, and only ChatView-tagged OBS log lines. The export omits the configured URL and chat messages, redacts user-profile paths and IPC names, uploads nothing automatically, and must be reviewed before sharing.
 
 The URL normalizer requires HTTPS, the default HTTPS port, no embedded credentials, a supported host and path, a valid CHZZK channel ID, a valid SOOP channel path, and a non-empty YouTube video ID. SOOP broadcast-number routes are reduced to a channel-scoped `vtype=chat` URL so a live redirect remains bound to the configured streamer. It stores only the normalized chat URL. New top-level WebView navigation outside the allowlist is cancelled.
 

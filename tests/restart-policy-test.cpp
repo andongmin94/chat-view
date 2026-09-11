@@ -56,6 +56,20 @@ int main()
     }
 
     policy.reset();
+    policy.restore(3U);
+    if (!policy.automatic_restart_allowed() ||
+        policy.failure_count() != 3U || policy.delay_ms() != 2000U) {
+        return fail("A persisted restart count was not restored");
+    }
+
+    policy.restore(999U);
+    if (policy.automatic_restart_allowed() ||
+        policy.failure_count() !=
+            chatview::kMaximumAutomaticRestartFailures) {
+        return fail("A restored restart count did not saturate safely");
+    }
+
+    policy.reset();
     if (!policy.automatic_restart_allowed() ||
         policy.failure_count() != 0U ||
         policy.delay_ms() != 0U) {

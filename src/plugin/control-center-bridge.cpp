@@ -257,8 +257,9 @@ bool ControlCenterBridge::start() noexcept
             restart_event_name_ = restart_event_name;
             last_flags_ = ControlStatusNone;
             last_hud_process_id_ = 0U;
+            last_runtime_telemetry_ = {};
             generation_ = 0U;
-            publish_locked(ControlStatusNone, 0U);
+            publish_locked(ControlStatusNone, 0U, {});
         }
         return true;
     } catch (const std::exception &error) {
@@ -293,6 +294,7 @@ void ControlCenterBridge::stop() noexcept
     restart_event_name_.clear();
     last_flags_ = ControlStatusNone;
     last_hud_process_id_ = 0U;
+    last_runtime_telemetry_ = {};
     generation_ = 0U;
 }
 
@@ -301,7 +303,8 @@ void ControlCenterBridge::update(
     bool recording,
     bool replay_buffer,
     bool virtual_camera,
-    bool capture_risk) noexcept
+    bool capture_risk,
+    const RuntimeTelemetrySnapshot &runtime_telemetry) noexcept
 {
     const HudWindowSearch hud = current_hud_window();
 
@@ -328,13 +331,19 @@ void ControlCenterBridge::update(
         }
     }
 
+    const RuntimeTelemetrySnapshot safe_telemetry =
+        is_valid_runtime_telemetry(runtime_telemetry)
+            ? runtime_telemetry
+            : RuntimeTelemetrySnapshot{};
+
     ExclusiveSrwLockGuard guard(lock_);
     if (status_ == nullptr ||
         (flags == last_flags_ &&
-         hud.process_id == last_hud_process_id_)) {
+         hud.process_id == last_hud_process_id_ &&
+         safe_telemetry == last_runtime_telemetry_)) {
         return;
     }
-    publish_locked(flags, hud.process_id);
+    publish_locked(flags, hud.process_id, safe_telemetry);
 }
 
 bool ControlCenterBridge::open_control_center() noexcept
@@ -453,7 +462,9 @@ std::wstring ControlCenterBridge::find_sibling_path(
 }
 
 void ControlCenterBridge::publish_locked(
-    std::uint32_t flags, DWORD hud_process_id) noexcept
+    std::uint32_t flags,
+    DWORD hud_process_id,
+    const RuntimeTelemetrySnapshot &runtime_telemetry) noexcept
 {
     if (status_ == nullptr) {
         return;
@@ -463,13 +474,22 @@ void ControlCenterBridge::publish_locked(
     MemoryBarrier();
     status_->flags = flags;
     status_->hud_process_id = hud_process_id;
+    status_->runtime_telemetry_flags = runtime_telemetry.flags;
     status_->generation = ++generation_;
     status_->updated_tick_ms = GetTickCount64();
+    status_->runtime_event_filetime_utc =
+        runtime_telemetry.event_filetime_utc;
+    status_->last_hud_exit_code = runtime_telemetry.last_exit_code;
+    status_->runtime_restart_reason =
+        static_cast<std::uint32_t>(runtime_telemetry.restart_reason);
+    status_->consecutive_runtime_failures =
+        runtime_telemetry.consecutive_failures;
     MemoryBarrier();
     InterlockedIncrement(&status_->sequence);
 
     last_flags_ = flags;
     last_hud_process_id_ = hud_process_id;
+    last_runtime_telemetry_ = runtime_telemetry;
     if (status_changed_event_ &&
         !SetEvent(status_changed_event_.get())) {
         log_windows_error(

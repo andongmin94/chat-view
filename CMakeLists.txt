@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.3.8 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.3.9 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -83,6 +83,16 @@ target_include_directories(
 chatview_enable_win32(chat-view-diagnostic-redaction)
 chatview_enable_warnings(chat-view-diagnostic-redaction)
 
+add_library(chat-view-runtime-history STATIC
+    src/common/runtime-history-store.cpp
+    src/common/runtime-history-store.hpp
+    src/common/runtime-telemetry.hpp
+)
+target_include_directories(
+    chat-view-runtime-history PUBLIC "${CHATVIEW_SOURCE_DIR}")
+chatview_enable_win32(chat-view-runtime-history)
+chatview_enable_warnings(chat-view-runtime-history)
+
 add_library(chat-view-obs MODULE
     src/plugin/plugin-main.cpp
     src/plugin/capture-risk-policy.hpp
@@ -101,7 +111,12 @@ add_library(chat-view-obs MODULE
 )
 target_include_directories(chat-view-obs PRIVATE "${CHATVIEW_SOURCE_DIR}")
 target_link_libraries(
-    chat-view-obs PRIVATE OBS::libobs OBS::obs-frontend-api bcrypt)
+    chat-view-obs PRIVATE
+    OBS::libobs
+    OBS::obs-frontend-api
+    chat-view-runtime-history
+    bcrypt
+)
 target_compile_definitions(chat-view-obs PRIVATE CHATVIEW_VERSION="${PROJECT_VERSION}")
 chatview_enable_win32(chat-view-obs)
 set_target_properties(chat-view-obs PROPERTIES PREFIX "" OUTPUT_NAME "chat-view-obs")
@@ -183,6 +198,7 @@ target_include_directories(
 target_link_libraries(chat-view-diagnostics-core PUBLIC
     chat-view-common
     chat-view-diagnostic-redaction
+    chat-view-runtime-history
     bcrypt
     ole32
     shell32
@@ -244,6 +260,30 @@ if(BUILD_TESTING)
     add_test(
         NAME chat-view-diagnostic-redaction
         COMMAND chat-view-diagnostic-redaction-test
+    )
+
+    add_executable(chat-view-runtime-telemetry-test
+        tests/runtime-telemetry-test.cpp
+    )
+    target_include_directories(
+        chat-view-runtime-telemetry-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_warnings(chat-view-runtime-telemetry-test)
+    add_test(
+        NAME chat-view-runtime-telemetry
+        COMMAND chat-view-runtime-telemetry-test
+    )
+
+    add_executable(chat-view-runtime-history-store-test
+        tests/runtime-history-store-test.cpp
+    )
+    target_link_libraries(
+        chat-view-runtime-history-store-test PRIVATE
+        chat-view-runtime-history)
+    chatview_enable_win32(chat-view-runtime-history-store-test)
+    chatview_enable_warnings(chat-view-runtime-history-store-test)
+    add_test(
+        NAME chat-view-runtime-history-store
+        COMMAND chat-view-runtime-history-store-test
     )
 
     add_executable(chat-view-diagnostics-exporter-test

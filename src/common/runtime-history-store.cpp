@@ -68,7 +68,7 @@ std::uint32_t record_checksum(
     constexpr std::size_t checksum_begin =
         offsetof(RuntimeHistoryRecord, checksum);
     constexpr std::size_t checksum_end =
-        checksum_begin + sizeof(RuntimeHistoryRecord::checksum);
+        checksum_begin + sizeof(std::uint32_t);
 
     std::uint32_t checksum = kFnvOffsetBasis;
     for (std::size_t index = 0U;

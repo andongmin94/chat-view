@@ -29,7 +29,8 @@ public:
         bool recording,
         bool replay_buffer,
         bool virtual_camera,
-        bool capture_risk) noexcept;
+        bool capture_risk,
+        const RuntimeTelemetrySnapshot &runtime_telemetry) noexcept;
 
     [[nodiscard]] bool open_control_center() noexcept;
     [[nodiscard]] bool consume_restart_request() noexcept;
@@ -38,7 +39,9 @@ private:
     [[nodiscard]] std::wstring find_sibling_path(
         const wchar_t *file_name) const;
     void publish_locked(
-        std::uint32_t flags, DWORD hud_process_id) noexcept;
+        std::uint32_t flags,
+        DWORD hud_process_id,
+        const RuntimeTelemetrySnapshot &runtime_telemetry) noexcept;
 
     SRWLOCK lock_ = SRWLOCK_INIT;
     UniqueHandle mapping_;
@@ -50,6 +53,7 @@ private:
     std::wstring restart_event_name_;
     std::uint32_t last_flags_ = ControlStatusNone;
     DWORD last_hud_process_id_ = 0U;
+    RuntimeTelemetrySnapshot last_runtime_telemetry_;
     std::uint64_t generation_ = 0U;
 };
 

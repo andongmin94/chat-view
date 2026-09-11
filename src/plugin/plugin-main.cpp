@@ -170,7 +170,8 @@ void publish_frontend_state() noexcept
             recording,
             replay_buffer,
             virtual_camera,
-            suppress);
+            suppress,
+            runtime_controller->runtime_telemetry());
     }
 }
 

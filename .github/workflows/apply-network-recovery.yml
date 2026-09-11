@@ -20,43 +20,43 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply network recovery changes
+      - name: Rearm page-health watchdog after reconnect
         shell: bash
         run: |
           python - <<'PY'
-          import base64
-          import gzip
           from pathlib import Path
 
-          payload = "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"
-          Path('scripts/apply-network-recovery.py').write_bytes(
-              gzip.decompress(base64.b64decode(payload))
-          )
+          path = Path('src/hud/hud-window.cpp')
+          text = path.read_text(encoding='utf-8')
+          old = '''            } else {
+                page_health_watchdog_.heartbeat(now);
+                if (health.state == HudPageState::ConnectionLost) {
+                    page_connection_recovery_.begin(now);
+                }
+            }
+'''
+          new = '''            } else {
+                if (page_health_watchdog_.armed()) {
+                    page_health_watchdog_.heartbeat(now);
+                } else {
+                    page_health_watchdog_.arm(now);
+                }
+                if (health.state == HudPageState::ConnectionLost) {
+                    page_connection_recovery_.begin(now);
+                }
+            }
+'''
+          if text.count(old) != 1:
+              raise SystemExit('watchdog rearm anchor was not unique')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8', newline='\n')
           PY
-          python scripts/apply-network-recovery.py
 
-      - name: Commit network recovery
+      - name: Commit watchdog rearm fix
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            CMakeLists.txt \
-            README.md \
-            src/common/hud-health.hpp \
-            src/config/main.cpp \
-            src/hud/hud-window.cpp \
-            src/hud/hud-window.hpp \
-            src/hud/page-connection-recovery.hpp \
-            src/hud/page-health-message.cpp \
-            tests/hud-health-test.cpp \
-            tests/page-connection-recovery-test.cpp \
-            tests/page-health-message-test.cpp \
-            tests/page-health-script-test.mjs
-          if git diff --cached --quiet; then
-            echo "No source changes were produced."
-            exit 1
-          fi
-          git commit -m "feat: recover browser and chat disconnects"
+          git add src/hud/hud-window.cpp
+          git commit -m "fix: rearm page watchdog after reconnect"
           git push origin HEAD:OBS

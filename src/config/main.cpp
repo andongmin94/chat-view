@@ -987,7 +987,7 @@ private:
                 recovery_color_);
             EnableWindow(edit_button_, FALSE);
             EnableWindow(restart_button_, FALSE);
-            refresh_stream_readiness(false, false, {}, false, {});
+            refresh_stream_readiness(true, false, {}, false, {});
             return;
         }
 

@@ -166,9 +166,20 @@ int main()
         return fail(L"A visible HUD without a running process was accepted");
     }
 
+    publish(
+        mapped.get(),
+        chatview::ControlStatusDisplayCaptureActive,
+        0U,
+        10U,
+        {});
+    if (reader.read(snapshot)) {
+        return fail(
+            L"Active Display Capture without a stable scene graph was accepted");
+    }
+
     chatview::RuntimeTelemetrySnapshot invalid = telemetry;
     invalid.flags |= chatview::RuntimeTelemetryCircuitOpen;
-    publish(mapped.get(), chatview::ControlStatusNone, 0U, 10U, invalid);
+    publish(mapped.get(), chatview::ControlStatusNone, 0U, 11U, invalid);
     if (reader.read(snapshot)) {
         return fail(L"Invalid runtime telemetry was accepted");
     }

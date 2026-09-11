@@ -85,6 +85,13 @@ struct ControlStatusSnapshot {
     if (visible && !running) {
         return false;
     }
+    const bool scene_graph_ready = has_control_status_flag(
+        snapshot, ControlStatusSceneGraphReady);
+    const bool display_capture_active = has_control_status_flag(
+        snapshot, ControlStatusDisplayCaptureActive);
+    if (display_capture_active && !scene_graph_ready) {
+        return false;
+    }
     return running == (snapshot.hud_process_id != 0U);
 }
 

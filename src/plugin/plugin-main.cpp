@@ -3,14 +3,18 @@
 #include "plugin/capture-risk-policy.hpp"
 #include "plugin/control-center-bridge.hpp"
 #include "plugin/runtime-controller.hpp"
+#include "common/win32-handle.hpp"
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 
 #include <Windows.h>
 
+#include <array>
 #include <exception>
+#include <filesystem>
 #include <memory>
+#include <string>
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("chat-view-obs", "en-US")
@@ -20,6 +24,7 @@ namespace {
 constexpr UINT kCaptureRiskPollIntervalMs = 100U;
 constexpr ULONGLONG kOutputStartPendingTimeoutMs = 15000U;
 constexpr ULONGLONG kPostStartConservativeScanMs = 1000U;
+constexpr wchar_t kDiagnosticsExecutableName[] = L"chat-view-diagnostics.exe";
 
 struct CaptureScan {
     bool display_capture_present = false;
@@ -256,11 +261,75 @@ void on_frontend_event(obs_frontend_event event, void *) noexcept
     }
 }
 
+bool launch_sibling_process(const wchar_t *file_name) noexcept
+{
+    try {
+        static int module_anchor = 0;
+        HMODULE module_handle = nullptr;
+        if (!GetModuleHandleExW(
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                reinterpret_cast<LPCWSTR>(&module_anchor),
+                &module_handle)) {
+            return false;
+        }
+
+        std::array<wchar_t, 32768U> module_path{};
+        const DWORD length = GetModuleFileNameW(
+            module_handle,
+            module_path.data(),
+            static_cast<DWORD>(module_path.size()));
+        if (length == 0U || length >= module_path.size()) {
+            return false;
+        }
+
+        const std::filesystem::path path =
+            std::filesystem::path(module_path.data()).parent_path() /
+            file_name;
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES ||
+            (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U) {
+            return false;
+        }
+
+        std::wstring command_line = L"\"" + path.wstring() + L"\"";
+        STARTUPINFOW startup_info{};
+        startup_info.cb = sizeof(startup_info);
+        PROCESS_INFORMATION process_info{};
+        if (!CreateProcessW(
+                path.c_str(),
+                command_line.data(),
+                nullptr,
+                nullptr,
+                FALSE,
+                CREATE_UNICODE_ENVIRONMENT,
+                nullptr,
+                nullptr,
+                &startup_info,
+                &process_info)) {
+            return false;
+        }
+
+        chatview::UniqueHandle process(process_info.hProcess);
+        chatview::UniqueHandle thread(process_info.hThread);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 void open_settings(void *)
 {
     if (control_center_bridge &&
         !control_center_bridge->open_control_center()) {
         blog(LOG_ERROR, "[ChatView OBS] Control Center could not be opened");
+    }
+}
+
+void export_diagnostics(void *)
+{
+    if (!launch_sibling_process(kDiagnosticsExecutableName)) {
+        blog(LOG_ERROR, "[ChatView OBS] Diagnostics exporter could not be opened");
     }
 }
 
@@ -370,6 +439,8 @@ bool obs_module_load(void)
             obs_module_text("ChatView.RestartHud"), restart_hud, nullptr);
         obs_frontend_add_tools_menu_item(
             obs_module_text("ChatView.EditOverlay"), toggle_edit_mode, nullptr);
+        obs_frontend_add_tools_menu_item(
+            obs_module_text("ChatView.Diagnostics"), export_diagnostics, nullptr);
         obs_frontend_add_tools_menu_item(
             obs_module_text("ChatView.Settings"), open_settings, nullptr);
         publish_frontend_state();

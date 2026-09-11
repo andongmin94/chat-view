@@ -43,11 +43,17 @@ function Get-RunningInstalledChatViewProcesses {
         [System.IO.Path]::GetFullPath(
             (Join-Path $ObsRoot 'obs-plugins\64bit\chat-view-hud.exe')),
         [System.IO.Path]::GetFullPath(
-            (Join-Path $ObsRoot 'obs-plugins\64bit\chat-view-config.exe'))
+            (Join-Path $ObsRoot 'obs-plugins\64bit\chat-view-config.exe')),
+        [System.IO.Path]::GetFullPath(
+            (Join-Path $ObsRoot 'obs-plugins\64bit\chat-view-diagnostics.exe'))
     )
 
     $running = @()
-    foreach ($processName in @('chat-view-hud', 'chat-view-config')) {
+    foreach ($processName in @(
+        'chat-view-hud',
+        'chat-view-config',
+        'chat-view-diagnostics'
+    )) {
         foreach ($process in @(
             Get-Process -Name $processName -ErrorAction SilentlyContinue
         )) {
@@ -90,7 +96,7 @@ function Assert-InstalledChatViewProcessesStopped {
 
     $details = $running |
         ForEach-Object { "$($_.Name) PID $($_.Id)" }
-    throw "Close the installed ChatView HUD and settings processes before uninstalling: $($details -join ', ')."
+    throw "Close the installed ChatView HUD, Control Center, and diagnostics processes before uninstalling: $($details -join ', ')."
 }
 
 if (-not (Test-Administrator)) {
@@ -112,6 +118,7 @@ $files = @(
     (Join-Path $obsRoot 'obs-plugins\64bit\chat-view-obs.dll'),
     (Join-Path $obsRoot 'obs-plugins\64bit\chat-view-hud.exe'),
     (Join-Path $obsRoot 'obs-plugins\64bit\chat-view-config.exe'),
+    (Join-Path $obsRoot 'obs-plugins\64bit\chat-view-diagnostics.exe'),
     (Join-Path $obsRoot 'data\obs-plugins\chat-view-obs\locale\en-US.ini'),
     (Join-Path $obsRoot 'data\obs-plugins\chat-view-obs\locale\ko-KR.ini')
 )

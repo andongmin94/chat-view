@@ -34,10 +34,12 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
   const layoutDeadlineMs = 15000;
   const mutationDelayMs = 750;
   const periodicIntervalMs = 2000;
+  const heartbeatIntervalMs = 2000;
   const maximumStatusNodes = 24;
   const maximumStatusTextLength = 12000;
   const maximumNodeTextLength = 2048;
   let lastMessage = '';
+  let lastSentAt = Number.NEGATIVE_INFINITY;
   let scheduled = false;
   let observer = null;
   let observerConnected = false;
@@ -214,8 +216,11 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
 
   const send = (state, detail = 0) => {
     const message = `CVH1|${provider}|${state}|${detail}`;
-    if (message !== lastMessage) {
+    const now = performance.now();
+    if (message !== lastMessage ||
+        now - lastSentAt >= heartbeatIntervalMs) {
       lastMessage = message;
+      lastSentAt = now;
       try { post(message); } catch (_) {}
     }
     if (state === 3) startObserving();

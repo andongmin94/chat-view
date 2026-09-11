@@ -274,16 +274,43 @@ assert.deepEqual(
   'a hidden status banner was incorrectly reported as an active page state',
 );
 
-const deduplicated = runProbe({
+const heartbeats = runProbe({
   hostname: 'www.youtube.com',
   selectors: new Map([['yt-live-chat-renderer #items', new FakeElement()]]),
+  nowValues: [0, 0, 1999, 2000],
 });
-assert.equal(deduplicated.intervals.length, 1, 'the periodic health check was not installed');
-deduplicated.intervals[0]();
+assert.equal(heartbeats.intervals.length, 1, 'the periodic health check was not installed');
+heartbeats.intervals[0]();
 assert.deepEqual(
-  deduplicated.messages,
+  heartbeats.messages,
   ['CVH1|4|4|1'],
-  'unchanged health telemetry was emitted more than once',
+  'unchanged state emitted before the heartbeat interval elapsed',
+);
+heartbeats.intervals[0]();
+assert.deepEqual(
+  heartbeats.messages,
+  ['CVH1|4|4|1', 'CVH1|4|4|1'],
+  'an unchanged ready page did not emit its periodic heartbeat',
+);
+
+const changingSelectors = new Map([
+  ['yt-live-chat-renderer #items', new FakeElement()],
+]);
+const changedState = runProbe({
+  hostname: 'www.youtube.com',
+  selectors: changingSelectors,
+  nowValues: [0, 0, 100],
+});
+changingSelectors.clear();
+changingSelectors.set(
+  'yt-live-chat-message-input-renderer',
+  new FakeElement({ textContent: 'Sign in to chat' }),
+);
+changedState.intervals[0]();
+assert.deepEqual(
+  changedState.messages,
+  ['CVH1|4|4|1', 'CVH1|4|7|5'],
+  'a changed page state waited for the heartbeat interval before reporting',
 );
 
 console.log('Embedded page-health script tests passed.');

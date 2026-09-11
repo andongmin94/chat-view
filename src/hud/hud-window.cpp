@@ -21,6 +21,8 @@ constexpr UINT_PTR kNavigationRetryTimerId = 2U;
 constexpr UINT_PTR kCaptureSafetyTimerId = 3U;
 constexpr int kEditHotkeyId = 1;
 constexpr int kCaptureExclusionLostExitCode = 11;
+constexpr int kPageHealthWatchdogExitCode = 19;
+constexpr std::uint16_t kPageHealthWatchdogDetailBase = 0x7100U;
 constexpr UINT kReadyDurationMs = 2200U;
 constexpr UINT kOfflineDurationMs = 1200U;
 constexpr UINT kNavigationRetryBaseMs = 5000U;
@@ -202,6 +204,7 @@ void HudWindow::destroy() noexcept
         edit_hotkey_registered_ = false;
     }
 
+    page_health_watchdog_.disarm();
     webview_.close();
     ready_event_ = nullptr;
     if (window_ != nullptr) {
@@ -329,10 +332,14 @@ LRESULT HudWindow::handle_message(
             update_host_state();
         }
         return 0L;
-    case kWebViewPageHealthMessage:
-        apply_page_health(decode_hud_health(
-            static_cast<std::uint32_t>(wparam)));
+    case kWebViewPageHealthMessage: {
+        const HudHealthSnapshot health = decode_hud_health(
+            static_cast<std::uint32_t>(wparam));
+        if (apply_page_health(health)) {
+            page_health_watchdog_.heartbeat(GetTickCount64());
+        }
         return 0L;
+    }
     case kWebViewProcessFailedMessage:
         handle_webview_process_failure(
             static_cast<COREWEBVIEW2_PROCESS_FAILED_KIND>(wparam));
@@ -367,7 +374,13 @@ LRESULT HudWindow::handle_message(
             KillTimer(window_, kNavigationRetryTimerId);
             set_page_health(
                 HudPageState::Loading, page_provider_);
+            if (capture_risk_) {
+                page_health_watchdog_.disarm();
+            } else {
+                page_health_watchdog_.arm(GetTickCount64());
+            }
             if (!webview_.reload()) {
+                page_health_watchdog_.disarm();
                 set_page_health(
                     HudPageState::Fatal,
                     page_provider_,
@@ -378,9 +391,12 @@ LRESULT HudWindow::handle_message(
             return 0L;
         }
         if (wparam == kCaptureSafetyTimerId) {
-            if (!capture_risk_ &&
-                !capture_exclusion_intact()) {
-                fail_closed_capture_exclusion();
+            if (!capture_risk_) {
+                if (!capture_exclusion_intact()) {
+                    fail_closed_capture_exclusion();
+                } else {
+                    check_page_health_watchdog();
+                }
             }
             return 0L;
         }
@@ -666,11 +682,18 @@ void HudWindow::reload_chat_config() noexcept
     if (load_chat_config(config)) {
         const HudProvider provider = provider_for_url(config.url);
         set_page_health(HudPageState::Loading, provider);
+        if (capture_risk_) {
+            page_health_watchdog_.disarm();
+        } else {
+            page_health_watchdog_.arm(GetTickCount64());
+        }
         if (!webview_.navigate(config.url)) {
+            page_health_watchdog_.disarm();
             schedule_navigation_retry(
                 COREWEBVIEW2_WEB_ERROR_STATUS_UNEXPECTED_ERROR);
         }
     } else {
+        page_health_watchdog_.disarm();
         set_page_health(
             HudPageState::SetupRequired,
             HudProvider::Unknown);
@@ -678,14 +701,20 @@ void HudWindow::reload_chat_config() noexcept
     }
 }
 
-void HudWindow::apply_page_health(
+bool HudWindow::apply_page_health(
     const HudHealthSnapshot &health) noexcept
 {
     if (!is_valid_hud_health(health) ||
         !is_dom_reportable_page_state(health.state) ||
         health.provider == HudProvider::Unknown ||
         health.provider != page_provider_) {
-        return;
+        return false;
+    }
+
+    if (page_state_ == health.state &&
+        page_provider_ == health.provider &&
+        page_detail_code_ == health.detail_code) {
+        return true;
     }
 
     set_page_health(
@@ -716,9 +745,10 @@ void HudWindow::apply_page_health(
         navigation_tone_ = L"#ff3b30";
         break;
     default:
-        return;
+        return false;
     }
     update_host_state();
+    return true;
 }
 
 void HudWindow::handle_webview_process_failure(
@@ -731,6 +761,7 @@ void HudWindow::handle_webview_process_failure(
         static_cast<unsigned int>(kind));
     OutputDebugStringW(detail);
 
+    page_health_watchdog_.disarm();
     set_page_health(
         HudPageState::Recovering,
         page_provider_,
@@ -742,7 +773,11 @@ void HudWindow::handle_webview_process_failure(
         navigation_status_ = L"CHAT RECOVERING";
         navigation_tone_ = L"#5ac8fa";
         update_host_state();
+        if (!capture_risk_) {
+            page_health_watchdog_.arm(GetTickCount64());
+        }
         if (!webview_.reload()) {
+            page_health_watchdog_.disarm();
             set_page_health(
                 HudPageState::Fatal,
                 page_provider_,
@@ -761,6 +796,9 @@ void HudWindow::handle_webview_process_failure(
         PostQuitMessage(9);
         return;
     default:
+        if (!capture_risk_) {
+            page_health_watchdog_.arm(GetTickCount64());
+        }
         return;
     }
 }
@@ -775,6 +813,7 @@ void HudWindow::schedule_navigation_retry(
         static_cast<unsigned int>(status));
     OutputDebugStringW(detail);
 
+    page_health_watchdog_.disarm();
     set_page_health(
         HudPageState::Retrying,
         page_provider_,
@@ -818,6 +857,65 @@ void HudWindow::cancel_navigation_retry() noexcept
     navigation_tone_ = L"#ffcc00";
 }
 
+void HudWindow::check_page_health_watchdog() noexcept
+{
+    if (window_ == nullptr || !webview_ready_ || capture_risk_ ||
+        capture_exclusion_failed_ || page_provider_ == HudProvider::Unknown) {
+        return;
+    }
+
+    const PageHealthWatchdogAction action =
+        page_health_watchdog_.poll(GetTickCount64());
+    if (action == PageHealthWatchdogAction::None) {
+        return;
+    }
+
+    const unsigned int timeout_count =
+        page_health_watchdog_.consecutive_timeouts();
+    const std::uint16_t detail = static_cast<std::uint16_t>(
+        kPageHealthWatchdogDetailBase +
+        std::min(timeout_count, 0xffU));
+
+    KillTimer(window_, kNavigationRetryTimerId);
+    navigation_retry_attempt_ = 0U;
+
+    if (action == PageHealthWatchdogAction::Reload) {
+        wchar_t message[192]{};
+        swprintf_s(
+            message,
+            L"[ChatView HUD] Page-health heartbeat timed out; "
+            L"reloading chat (%u/%u)\n",
+            timeout_count,
+            PageHealthWatchdog::kMaximumReloadAttempts);
+        OutputDebugStringW(message);
+
+        set_page_health(
+            HudPageState::Recovering, page_provider_, detail);
+        navigation_status_ = L"CHAT RECOVERING";
+        navigation_tone_ = L"#5ac8fa";
+        update_host_state();
+        if (!webview_.reload()) {
+            page_health_watchdog_.disarm();
+            set_page_health(
+                HudPageState::Fatal, page_provider_, detail);
+            ShowWindow(window_, SW_HIDE);
+            PostQuitMessage(kPageHealthWatchdogExitCode);
+        }
+        return;
+    }
+
+    OutputDebugStringW(
+        L"[ChatView HUD] Page-health heartbeat remained stale; "
+        L"restarting the HUD process\n");
+    set_page_health(
+        HudPageState::Fatal, page_provider_, detail);
+    navigation_status_ = L"CHAT UNRESPONSIVE";
+    navigation_tone_ = L"#ff3b30";
+    update_host_state();
+    ShowWindow(window_, SW_HIDE);
+    PostQuitMessage(kPageHealthWatchdogExitCode);
+}
+
 bool HudWindow::capture_exclusion_intact() const noexcept
 {
     if (window_ == nullptr) {
@@ -839,6 +937,7 @@ void HudWindow::fail_closed_capture_exclusion() noexcept
     }
 
     capture_exclusion_failed_ = true;
+    page_health_watchdog_.disarm();
     set_page_health(
         HudPageState::Fatal,
         page_provider_,
@@ -864,6 +963,7 @@ bool HudWindow::apply_capture_policy() noexcept
     }
 
     if (capture_risk_) {
+        page_health_watchdog_.disarm();
         if (edit_mode_) {
             capture_and_persist_bounds();
             edit_mode_ = false;
@@ -908,6 +1008,14 @@ bool HudWindow::apply_capture_policy() noexcept
     if (!capture_exclusion_intact()) {
         fail_closed_capture_exclusion();
         return false;
+    }
+
+    if (!page_health_watchdog_.armed() &&
+        page_provider_ != HudProvider::Unknown &&
+        page_state_ != HudPageState::SetupRequired &&
+        page_state_ != HudPageState::Retrying &&
+        page_state_ != HudPageState::Fatal) {
+        page_health_watchdog_.arm(GetTickCount64());
     }
     return true;
 }

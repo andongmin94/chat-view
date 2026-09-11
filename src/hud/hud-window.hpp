@@ -5,6 +5,7 @@
 #include "common/hud-health.hpp"
 #include "common/shared-state.hpp"
 #include "hud/hud-placement.hpp"
+#include "hud/page-health-watchdog.hpp"
 #include "hud/page-health-message.hpp"
 #include "hud/webview-host.hpp"
 
@@ -39,8 +40,9 @@ private:
     void toggle_edit_mode();
     void apply_window_mode() noexcept;
     void reload_chat_config() noexcept;
-    void apply_page_health(
+    bool apply_page_health(
         const HudHealthSnapshot &health) noexcept;
+    void check_page_health_watchdog() noexcept;
     void handle_webview_process_failure(
         COREWEBVIEW2_PROCESS_FAILED_KIND kind) noexcept;
     void schedule_navigation_retry(
@@ -76,6 +78,7 @@ private:
     std::wstring navigation_tone_ = L"#ffcc00";
     std::uint64_t last_generation_ = 0U;
     unsigned int navigation_retry_attempt_ = 0U;
+    PageHealthWatchdog page_health_watchdog_;
     HudPageState page_state_ = HudPageState::Starting;
     HudProvider page_provider_ = HudProvider::Unknown;
     std::uint16_t page_detail_code_ = 0U;

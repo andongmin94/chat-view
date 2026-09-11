@@ -32,3 +32,5 @@ jobs:
           git add src/diagnostics/diagnostics-exporter.cpp
           git commit -m "fix: preserve diagnostics line breaks in C++ literals"
           git push origin HEAD:OBS
+
+# One-shot workflow; remove after the source fix lands.

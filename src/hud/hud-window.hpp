@@ -5,6 +5,7 @@
 #include "common/hud-health.hpp"
 #include "common/shared-state.hpp"
 #include "hud/hud-placement.hpp"
+#include "hud/page-health-message.hpp"
 #include "hud/webview-host.hpp"
 
 #include <Windows.h>

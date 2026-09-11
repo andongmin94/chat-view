@@ -10,6 +10,7 @@
 #include <array>
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <string>
 #include <system_error>
@@ -80,6 +81,22 @@ void pump_messages() noexcept
     }
 }
 
+bool wait_until(
+    const std::function<bool()> &predicate,
+    DWORD timeout_ms) noexcept
+{
+    const ULONGLONG deadline = GetTickCount64() + timeout_ms;
+    while (GetTickCount64() < deadline) {
+        pump_messages();
+        if (predicate()) {
+            return true;
+        }
+        Sleep(10U);
+    }
+    pump_messages();
+    return predicate();
+}
+
 LRESULT CALLBACK fake_hud_window_proc(
     HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
@@ -134,36 +151,28 @@ ChildProcess start_control_center(
         process_info.dwProcessId};
 }
 
-HWND wait_for_control_center(DWORD process_id)
+HWND find_control_center(DWORD process_id) noexcept
 {
-    const ULONGLONG deadline = GetTickCount64() + kWindowTimeoutMs;
-    while (GetTickCount64() < deadline) {
-        pump_messages();
-        const HWND window = FindWindowW(kControlCenterWindowClass, nullptr);
-        if (window != nullptr) {
-            DWORD owner_process_id = 0U;
-            GetWindowThreadProcessId(window, &owner_process_id);
-            if (owner_process_id == process_id && IsWindowVisible(window)) {
-                return window;
-            }
-        }
-        Sleep(10U);
+    const HWND window = FindWindowW(kControlCenterWindowClass, nullptr);
+    if (window == nullptr) {
+        return nullptr;
     }
-    return nullptr;
+
+    DWORD owner_process_id = 0U;
+    GetWindowThreadProcessId(window, &owner_process_id);
+    return owner_process_id == process_id && IsWindowVisible(window)
+               ? window
+               : nullptr;
 }
 
-bool exited_successfully(HANDLE process, DWORD timeout_ms)
+bool exited_successfully(HANDLE process) noexcept
 {
-    const ULONGLONG deadline = GetTickCount64() + timeout_ms;
-    while (GetTickCount64() < deadline) {
-        pump_messages();
-        if (WaitForSingleObject(process, 0U) == WAIT_OBJECT_0) {
-            DWORD exit_code = 1U;
-            return GetExitCodeProcess(process, &exit_code) && exit_code == 0U;
-        }
-        Sleep(10U);
+    if (WaitForSingleObject(process, 0U) != WAIT_OBJECT_0) {
+        return false;
     }
-    return false;
+
+    DWORD exit_code = 1U;
+    return GetExitCodeProcess(process, &exit_code) && exit_code == 0U;
 }
 
 void publish(
@@ -215,57 +224,32 @@ bool child_text_contains(HWND parent, const wchar_t *needle)
     return context.found;
 }
 
-bool wait_for_child_text(HWND parent, const wchar_t *needle)
+bool post_command(HWND window, int identifier, HWND control) noexcept
 {
-    const ULONGLONG deadline = GetTickCount64() + kWindowTimeoutMs;
-    while (GetTickCount64() < deadline) {
-        pump_messages();
-        if (child_text_contains(parent, needle)) {
-            return true;
-        }
-        Sleep(10U);
-    }
-    return false;
+    return PostMessageW(
+               window,
+               WM_COMMAND,
+               MAKEWPARAM(identifier, BN_CLICKED),
+               reinterpret_cast<LPARAM>(control)) != FALSE;
 }
 
-bool wait_for_edit_message()
-{
-    const ULONGLONG deadline = GetTickCount64() + kWindowTimeoutMs;
-    while (GetTickCount64() < deadline) {
-        pump_messages();
-        if (edit_message_received.load(std::memory_order_acquire)) {
-            return true;
-        }
-        Sleep(10U);
-    }
-    return false;
-}
-
-bool wait_for_saved_url(
+bool saved_url_matches(
     const std::filesystem::path &config_file,
-    const wchar_t *expected)
+    const wchar_t *expected) noexcept
 {
-    const ULONGLONG deadline = GetTickCount64() + kWindowTimeoutMs;
+    WritePrivateProfileStringW(
+        nullptr, nullptr, nullptr, config_file.c_str());
+
     std::array<wchar_t, 256U> value{};
-    while (GetTickCount64() < deadline) {
-        pump_messages();
-        WritePrivateProfileStringW(
-            nullptr, nullptr, nullptr, config_file.c_str());
-        value.fill(L'\0');
-        const DWORD length = GetPrivateProfileStringW(
-            L"chat",
-            L"url",
-            L"",
-            value.data(),
-            static_cast<DWORD>(value.size()),
-            config_file.c_str());
-        if (length > 0U &&
-            std::wstring(value.data(), length) == expected) {
-            return true;
-        }
-        Sleep(10U);
-    }
-    return false;
+    const DWORD length = GetPrivateProfileStringW(
+        L"chat",
+        L"url",
+        L"",
+        value.data(),
+        static_cast<DWORD>(value.size()),
+        config_file.c_str());
+    return length > 0U &&
+           std::wstring(value.data(), length) == expected;
 }
 
 } // namespace
@@ -395,20 +379,29 @@ int wmain(int argument_count, wchar_t **arguments)
         return fail(L"Failed to start the Control Center");
     }
 
-    const HWND control_center = wait_for_control_center(first.process_id);
-    if (control_center == nullptr) {
+    HWND control_center = nullptr;
+    if (!wait_until(
+            [&]() {
+                control_center = find_control_center(first.process_id);
+                return control_center != nullptr;
+            },
+            kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);
         return fail(
             L"The Control Center window did not appear",
             first.process.get());
     }
 
-    if (!wait_for_child_text(
-            control_center, L"Connected to OBS Studio") ||
-        !wait_for_child_text(
-            control_center, L"Private HUD safety active") ||
-        !wait_for_child_text(
-            control_center, L"YouTube chat ready")) {
+    if (!wait_until(
+            [&]() {
+                return child_text_contains(
+                           control_center, L"Connected to OBS Studio") &&
+                       child_text_contains(
+                           control_center, L"Private HUD safety active") &&
+                       child_text_contains(
+                           control_center, L"YouTube chat ready");
+            },
+            kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);
         return fail(
             L"The Control Center did not render live OBS and HUD health",
@@ -430,29 +423,52 @@ int wmain(int argument_count, wchar_t **arguments)
     SetWindowTextW(
         url_edit,
         L"https://www.youtube.com/watch?v=dQw4w9WgXcQ");
-    SendMessageW(save_button, BM_CLICK, 0U, 0L);
-
-    const std::filesystem::path config_file =
-        profile / L"ChatView" / L"config.ini";
-    if (!wait_for_saved_url(
-            config_file,
-            L"https://www.youtube.com/live_chat?is_popout=1&v=dQw4w9WgXcQ")) {
+    if (!post_command(control_center, kSaveButtonId, save_button)) {
         DestroyWindow(fake_hud);
         return fail(
-            L"Save & Apply did not persist the canonical chat URL",
+            L"Save & Apply command could not be queued",
             first.process.get());
     }
 
-    SendMessageW(edit_button, BM_CLICK, 0U, 0L);
-    if (!wait_for_edit_message()) {
+    const std::filesystem::path config_file =
+        profile / L"ChatView" / L"config.ini";
+    if (!wait_until(
+            [&]() {
+                return child_text_contains(
+                           control_center,
+                           L"Saved and applied to the running HUD") &&
+                       saved_url_matches(
+                           config_file,
+                           L"https://www.youtube.com/live_chat?is_popout=1&v=dQw4w9WgXcQ");
+            },
+            kWindowTimeoutMs)) {
+        DestroyWindow(fake_hud);
+        return fail(
+            L"Save & Apply did not persist and acknowledge the canonical URL",
+            first.process.get());
+    }
+
+    if (!post_command(control_center, kEditButtonId, edit_button) ||
+        !wait_until(
+            []() {
+                return edit_message_received.load(
+                    std::memory_order_acquire);
+            },
+            kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);
         return fail(
             L"Move / Resize did not reach the HUD window",
             first.process.get());
     }
 
-    SendMessageW(restart_button, BM_CLICK, 0U, 0L);
-    if (WaitForSingleObject(restart_event.get(), 1000U) != WAIT_OBJECT_0) {
+    if (!post_command(
+            control_center, kRestartButtonId, restart_button) ||
+        !wait_until(
+            [&]() {
+                return WaitForSingleObject(
+                           restart_event.get(), 0U) == WAIT_OBJECT_0;
+            },
+            kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);
         return fail(
             L"Restart HUD did not reach the OBS command event",
@@ -466,8 +482,11 @@ int wmain(int argument_count, wchar_t **arguments)
         restart_event_name,
         process_id);
     if (!second.process ||
-        !exited_successfully(
-            second.process.get(), kProcessExitTimeoutMs)) {
+        !wait_until(
+            [&]() {
+                return exited_successfully(second.process.get());
+            },
+            kProcessExitTimeoutMs)) {
         DestroyWindow(fake_hud);
         if (second.process) {
             TerminateProcess(second.process.get(), 1U);
@@ -486,8 +505,11 @@ int wmain(int argument_count, wchar_t **arguments)
     }
 
     if (!PostMessageW(control_center, WM_CLOSE, 0U, 0L) ||
-        !exited_successfully(
-            first.process.get(), kProcessExitTimeoutMs)) {
+        !wait_until(
+            [&]() {
+                return exited_successfully(first.process.get());
+            },
+            kProcessExitTimeoutMs)) {
         DestroyWindow(fake_hud);
         return fail(
             L"The Control Center did not exit cleanly",
@@ -495,8 +517,7 @@ int wmain(int argument_count, wchar_t **arguments)
     }
 
     DestroyWindow(fake_hud);
-    UnregisterClassW(
-        kFakeHudWindowClass, fake_hud_class.hInstance);
+    UnregisterClassW(kFakeHudWindowClass, fake_hud_class.hInstance);
 
     error.clear();
     std::filesystem::remove_all(profile, error);

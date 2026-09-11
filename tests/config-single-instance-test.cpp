@@ -12,7 +12,6 @@
 #include <iostream>
 #include <string>
 #include <system_error>
-#include <vector>
 
 namespace {
 
@@ -222,6 +221,29 @@ bool wait_for_edit_message()
     return false;
 }
 
+bool wait_for_saved_url(
+    const std::filesystem::path &config_file,
+    const wchar_t *expected)
+{
+    const ULONGLONG deadline = GetTickCount64() + kWindowTimeoutMs;
+    std::array<wchar_t, 256U> value{};
+    while (GetTickCount64() < deadline) {
+        value.fill(L'\0');
+        const DWORD length = GetPrivateProfileStringW(
+            L"chat",
+            L"url",
+            L"",
+            value.data(),
+            static_cast<DWORD>(value.size()),
+            config_file.c_str());
+        if (length > 0U && std::wstring(value.data(), length) == expected) {
+            return true;
+        }
+        Sleep(25U);
+    }
+    return false;
+}
+
 } // namespace
 
 int wmain(int argument_count, wchar_t **arguments)
@@ -378,36 +400,20 @@ int wmain(int argument_count, wchar_t **arguments)
     SetWindowTextW(
         url_edit,
         L"https://www.youtube.com/watch?v=dQw4w9WgXcQ");
-    SendMessageW(
-        control_center,
-        WM_COMMAND,
-        MAKEWPARAM(kSaveButtonId, BN_CLICKED),
-        reinterpret_cast<LPARAM>(save_button));
+    SendMessageW(save_button, BM_CLICK, 0U, 0L);
 
     const std::filesystem::path config_file =
         profile / L"ChatView" / L"config.ini";
-    std::array<wchar_t, 256U> saved_url{};
-    const DWORD saved_length = GetPrivateProfileStringW(
-        L"chat",
-        L"url",
-        L"",
-        saved_url.data(),
-        static_cast<DWORD>(saved_url.size()),
-        config_file.c_str());
-    if (saved_length == 0U ||
-        std::wstring(saved_url.data(), saved_length) !=
-            L"https://www.youtube.com/live_chat?is_popout=1&v=dQw4w9WgXcQ") {
+    if (!wait_for_saved_url(
+            config_file,
+            L"https://www.youtube.com/live_chat?is_popout=1&v=dQw4w9WgXcQ")) {
         DestroyWindow(fake_hud);
         return fail(
             L"Save & Apply did not persist the canonical chat URL",
             first.process.get());
     }
 
-    SendMessageW(
-        control_center,
-        WM_COMMAND,
-        MAKEWPARAM(kEditButtonId, BN_CLICKED),
-        reinterpret_cast<LPARAM>(edit_button));
+    SendMessageW(edit_button, BM_CLICK, 0U, 0L);
     if (!wait_for_edit_message()) {
         DestroyWindow(fake_hud);
         return fail(
@@ -415,11 +421,7 @@ int wmain(int argument_count, wchar_t **arguments)
             first.process.get());
     }
 
-    SendMessageW(
-        control_center,
-        WM_COMMAND,
-        MAKEWPARAM(kRestartButtonId, BN_CLICKED),
-        reinterpret_cast<LPARAM>(restart_button));
+    SendMessageW(restart_button, BM_CLICK, 0U, 0L);
     if (WaitForSingleObject(restart_event.get(), 1000U) != WAIT_OBJECT_0) {
         DestroyWindow(fake_hud);
         return fail(

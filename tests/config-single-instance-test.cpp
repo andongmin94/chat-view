@@ -1,25 +1,57 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/control-status.hpp"
 #include "common/win32-handle.hpp"
+#include "common/window-messages.hpp"
 
 #include <Windows.h>
 
 #include <array>
-#include <cwchar>
+#include <atomic>
 #include <filesystem>
 #include <iostream>
 #include <string>
 #include <system_error>
+#include <vector>
 
 namespace {
 
-constexpr wchar_t kSettingsWindowClass[] = L"ChatViewObsConfigWindow";
-constexpr DWORD kWindowTimeoutMs = 5000U;
+constexpr wchar_t kControlCenterWindowClass[] = L"ChatViewObsConfigWindow";
+constexpr wchar_t kFakeHudWindowClass[] = L"ChatViewObsHudWindow";
+constexpr int kUrlEditId = 1001;
+constexpr int kSaveButtonId = 1002;
+constexpr int kEditButtonId = 1003;
+constexpr int kRestartButtonId = 1004;
+constexpr DWORD kWindowTimeoutMs = 8000U;
 constexpr DWORD kProcessExitTimeoutMs = 5000U;
 
-struct WindowSearch {
-    DWORD process_id = 0U;
-    HWND window = nullptr;
+std::atomic_bool edit_message_received{false};
+UINT edit_message = 0U;
+
+class MappedStatus final {
+public:
+    explicit MappedStatus(chatview::ControlStatus *status) noexcept
+        : status_(status)
+    {
+    }
+
+    ~MappedStatus()
+    {
+        if (status_ != nullptr) {
+            UnmapViewOfFile(status_);
+        }
+    }
+
+    MappedStatus(const MappedStatus &) = delete;
+    MappedStatus &operator=(const MappedStatus &) = delete;
+
+    [[nodiscard]] chatview::ControlStatus *get() const noexcept
+    {
+        return status_;
+    }
+
+private:
+    chatview::ControlStatus *status_ = nullptr;
 };
 
 struct ChildProcess {
@@ -30,39 +62,38 @@ struct ChildProcess {
 int fail(const wchar_t *message, HANDLE process = nullptr)
 {
     std::wcerr << message << L'\n';
-    if (process != nullptr && WaitForSingleObject(process, 0U) == WAIT_TIMEOUT) {
+    if (process != nullptr &&
+        WaitForSingleObject(process, 0U) == WAIT_TIMEOUT) {
         TerminateProcess(process, 1U);
         WaitForSingleObject(process, 2000U);
     }
     return 1;
 }
 
-BOOL CALLBACK find_settings_window(HWND window, LPARAM data)
+LRESULT CALLBACK fake_hud_window_proc(
+    HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
-    auto *search = reinterpret_cast<WindowSearch *>(data);
-    if (search == nullptr) {
-        return FALSE;
+    if (message == edit_message && edit_message != 0U) {
+        edit_message_received.store(true, std::memory_order_release);
+        return 0L;
     }
-
-    DWORD process_id = 0U;
-    GetWindowThreadProcessId(window, &process_id);
-    if (process_id != search->process_id) {
-        return TRUE;
-    }
-
-    std::array<wchar_t, 64U> class_name{};
-    const int length =
-        GetClassNameW(window, class_name.data(), static_cast<int>(class_name.size()));
-    if (length > 0 && wcscmp(class_name.data(), kSettingsWindowClass) == 0) {
-        search->window = window;
-        return FALSE;
-    }
-    return TRUE;
+    return DefWindowProcW(window, message, wparam, lparam);
 }
 
-ChildProcess start_process(const std::filesystem::path &executable)
+ChildProcess start_control_center(
+    const std::filesystem::path &executable,
+    const std::wstring &mapping_name,
+    const std::wstring &status_event_name,
+    const std::wstring &restart_event_name,
+    DWORD parent_process_id)
 {
-    std::wstring command_line = L"\"" + executable.wstring() + L"\"";
+    std::wstring command_line =
+        L"\"" + executable.wstring() +
+        L"\" --status-mapping \"" + mapping_name +
+        L"\" --status-event \"" + status_event_name +
+        L"\" --restart-event \"" + restart_event_name +
+        L"\" --parent " + std::to_wstring(parent_process_id);
+
     STARTUPINFOW startup_info{};
     startup_info.cb = sizeof(startup_info);
     PROCESS_INFORMATION process_info{};
@@ -86,18 +117,17 @@ ChildProcess start_process(const std::filesystem::path &executable)
         process_info.dwProcessId};
 }
 
-HWND wait_for_window(const ChildProcess &process)
+HWND wait_for_control_center(DWORD process_id)
 {
     const ULONGLONG deadline = GetTickCount64() + kWindowTimeoutMs;
     while (GetTickCount64() < deadline) {
-        if (WaitForSingleObject(process.process.get(), 0U) != WAIT_TIMEOUT) {
-            return nullptr;
-        }
-
-        WindowSearch search{process.process_id, nullptr};
-        EnumWindows(&find_settings_window, reinterpret_cast<LPARAM>(&search));
-        if (search.window != nullptr && IsWindowVisible(search.window)) {
-            return search.window;
+        const HWND window = FindWindowW(kControlCenterWindowClass, nullptr);
+        if (window != nullptr) {
+            DWORD owner_process_id = 0U;
+            GetWindowThreadProcessId(window, &owner_process_id);
+            if (owner_process_id == process_id && IsWindowVisible(window)) {
+                return window;
+            }
         }
         Sleep(25U);
     }
@@ -114,76 +144,327 @@ bool exited_successfully(HANDLE process, DWORD timeout_ms)
     return GetExitCodeProcess(process, &exit_code) && exit_code == 0U;
 }
 
+void publish(
+    chatview::ControlStatus *status,
+    std::uint32_t flags,
+    DWORD hud_process_id,
+    std::uint64_t generation) noexcept
+{
+    InterlockedIncrement(&status->sequence);
+    MemoryBarrier();
+    status->flags = flags;
+    status->hud_process_id = hud_process_id;
+    status->generation = generation;
+    status->updated_tick_ms = GetTickCount64();
+    MemoryBarrier();
+    InterlockedIncrement(&status->sequence);
+}
+
+bool child_text_contains(HWND parent, const wchar_t *needle)
+{
+    struct SearchContext {
+        const wchar_t *needle = nullptr;
+        bool found = false;
+    } context{needle, false};
+
+    EnumChildWindows(
+        parent,
+        [](HWND child, LPARAM data) -> BOOL {
+            auto *context = reinterpret_cast<SearchContext *>(data);
+            const int length = GetWindowTextLengthW(child);
+            if (length <= 0) {
+                return TRUE;
+            }
+
+            std::wstring text(
+                static_cast<std::size_t>(length) + 1U, L'\0');
+            const int copied = GetWindowTextW(
+                child, text.data(), length + 1);
+            if (copied > 0) {
+                text.resize(static_cast<std::size_t>(copied));
+                if (text.find(context->needle) != std::wstring::npos) {
+                    context->found = true;
+                    return FALSE;
+                }
+            }
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&context));
+    return context.found;
+}
+
+bool wait_for_child_text(HWND parent, const wchar_t *needle)
+{
+    const ULONGLONG deadline = GetTickCount64() + kWindowTimeoutMs;
+    while (GetTickCount64() < deadline) {
+        if (child_text_contains(parent, needle)) {
+            return true;
+        }
+        Sleep(25U);
+    }
+    return false;
+}
+
+bool wait_for_edit_message()
+{
+    const ULONGLONG deadline = GetTickCount64() + kWindowTimeoutMs;
+    while (GetTickCount64() < deadline) {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0U, 0U, PM_REMOVE)) {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        if (edit_message_received.load(std::memory_order_acquire)) {
+            return true;
+        }
+        Sleep(10U);
+    }
+    return false;
+}
+
 } // namespace
 
 int wmain(int argument_count, wchar_t **arguments)
 {
     if (argument_count != 2) {
-        return fail(L"Expected the settings executable path");
+        return fail(L"Expected the Control Center executable path");
     }
 
     const std::filesystem::path executable =
         std::filesystem::absolute(arguments[1]);
     if (!std::filesystem::is_regular_file(executable)) {
-        return fail(L"The settings executable does not exist");
+        return fail(L"The Control Center executable does not exist");
     }
+
+    const DWORD process_id = GetCurrentProcessId();
+    const std::wstring suffix = std::to_wstring(process_id);
+    const std::wstring mapping_name =
+        L"Local\\ChatViewOBS.Test.ControlCenter.Status." + suffix;
+    const std::wstring status_event_name =
+        L"Local\\ChatViewOBS.Test.ControlCenter.Changed." + suffix;
+    const std::wstring restart_event_name =
+        L"Local\\ChatViewOBS.Test.ControlCenter.Restart." + suffix;
 
     const std::filesystem::path profile =
         std::filesystem::temp_directory_path() /
-        (L"chatview-settings-test-" + std::to_wstring(GetCurrentProcessId()));
+        (L"chatview-control-center-test-" + suffix);
     std::error_code error;
     std::filesystem::remove_all(profile, error);
     error.clear();
     std::filesystem::create_directories(profile, error);
     if (error) {
-        return fail(L"Failed to create the settings test profile");
+        return fail(L"Failed to create the Control Center test profile");
     }
-
     const std::wstring profile_string = profile.wstring();
     if (!SetEnvironmentVariableW(L"LOCALAPPDATA", profile_string.c_str())) {
-        return fail(L"Failed to redirect the settings test profile");
+        return fail(L"Failed to redirect the Control Center profile");
     }
 
-    ChildProcess first = start_process(executable);
+    chatview::UniqueHandle mapping(CreateFileMappingW(
+        INVALID_HANDLE_VALUE,
+        nullptr,
+        PAGE_READWRITE,
+        0U,
+        static_cast<DWORD>(sizeof(chatview::ControlStatus)),
+        mapping_name.c_str()));
+    if (!mapping) {
+        return fail(L"Failed to create the Control Center status mapping");
+    }
+
+    MappedStatus mapped(static_cast<chatview::ControlStatus *>(
+        MapViewOfFile(
+            mapping.get(),
+            FILE_MAP_ALL_ACCESS,
+            0U,
+            0U,
+            sizeof(chatview::ControlStatus))));
+    if (mapped.get() == nullptr) {
+        return fail(L"Failed to map the Control Center status fixture");
+    }
+
+    chatview::UniqueHandle status_event(CreateEventW(
+        nullptr, FALSE, FALSE, status_event_name.c_str()));
+    chatview::UniqueHandle restart_event(CreateEventW(
+        nullptr, FALSE, FALSE, restart_event_name.c_str()));
+    if (!status_event || !restart_event) {
+        return fail(L"Failed to create Control Center command events");
+    }
+
+    ZeroMemory(mapped.get(), sizeof(chatview::ControlStatus));
+    mapped.get()->magic = chatview::kControlStatusMagic;
+    mapped.get()->version = chatview::kControlStatusVersion;
+
+    edit_message = RegisterWindowMessageW(
+        chatview::kToggleEditMessageName);
+    if (edit_message == 0U) {
+        return fail(L"Failed to register the fake HUD edit message");
+    }
+
+    WNDCLASSEXW fake_hud_class{};
+    fake_hud_class.cbSize = sizeof(fake_hud_class);
+    fake_hud_class.lpfnWndProc = &fake_hud_window_proc;
+    fake_hud_class.hInstance = GetModuleHandleW(nullptr);
+    fake_hud_class.lpszClassName = kFakeHudWindowClass;
+    if (RegisterClassExW(&fake_hud_class) == 0U &&
+        GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        return fail(L"Failed to register the fake HUD window class");
+    }
+
+    const HWND fake_hud = CreateWindowExW(
+        WS_EX_TOOLWINDOW,
+        kFakeHudWindowClass,
+        L"ChatView Control Center test HUD",
+        WS_POPUP,
+        10,
+        10,
+        120,
+        80,
+        nullptr,
+        nullptr,
+        fake_hud_class.hInstance,
+        nullptr);
+    if (fake_hud == nullptr) {
+        return fail(L"Failed to create the fake HUD window");
+    }
+    ShowWindow(fake_hud, SW_SHOWNOACTIVATE);
+
+    publish(
+        mapped.get(),
+        chatview::ControlStatusHudRunning |
+            chatview::ControlStatusHudVisible,
+        process_id,
+        1U);
+    SetEvent(status_event.get());
+
+    ChildProcess first = start_control_center(
+        executable,
+        mapping_name,
+        status_event_name,
+        restart_event_name,
+        process_id);
     if (!first.process) {
-        return fail(L"Failed to start the first settings process");
+        DestroyWindow(fake_hud);
+        return fail(L"Failed to start the Control Center");
     }
 
-    const HWND first_window = wait_for_window(first);
-    if (first_window == nullptr) {
-        return fail(L"The first settings window did not appear", first.process.get());
-    }
-
-    ChildProcess second = start_process(executable);
-    if (!second.process) {
-        return fail(L"Failed to start the second settings process", first.process.get());
-    }
-
-    if (!exited_successfully(second.process.get(), kProcessExitTimeoutMs)) {
-        TerminateProcess(second.process.get(), 1U);
+    const HWND control_center = wait_for_control_center(first.process_id);
+    if (control_center == nullptr) {
+        DestroyWindow(fake_hud);
         return fail(
-            L"The second settings process did not delegate to the existing window",
+            L"The Control Center window did not appear",
             first.process.get());
     }
 
-    if (WaitForSingleObject(first.process.get(), 0U) != WAIT_TIMEOUT ||
-        !IsWindow(first_window)) {
+    if (!wait_for_child_text(control_center, L"Connected to OBS Studio") ||
+        !wait_for_child_text(control_center, L"Private HUD safety active")) {
+        DestroyWindow(fake_hud);
         return fail(
-            L"Starting a second settings process closed the first one",
+            L"The Control Center did not render the live OBS status",
             first.process.get());
     }
 
-    if (!PostMessageW(first_window, WM_CLOSE, 0U, 0L)) {
-        return fail(L"Failed to close the first settings window", first.process.get());
+    const HWND url_edit = GetDlgItem(control_center, kUrlEditId);
+    const HWND save_button = GetDlgItem(control_center, kSaveButtonId);
+    const HWND edit_button = GetDlgItem(control_center, kEditButtonId);
+    const HWND restart_button = GetDlgItem(control_center, kRestartButtonId);
+    if (url_edit == nullptr || save_button == nullptr ||
+        edit_button == nullptr || restart_button == nullptr) {
+        DestroyWindow(fake_hud);
+        return fail(
+            L"The Control Center action controls were not created",
+            first.process.get());
     }
-    if (!exited_successfully(first.process.get(), kProcessExitTimeoutMs)) {
-        return fail(L"The first settings process did not exit cleanly", first.process.get());
+
+    SetWindowTextW(
+        url_edit,
+        L"https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+    SendMessageW(
+        control_center,
+        WM_COMMAND,
+        MAKEWPARAM(kSaveButtonId, BN_CLICKED),
+        reinterpret_cast<LPARAM>(save_button));
+
+    const std::filesystem::path config_file =
+        profile / L"ChatView" / L"config.ini";
+    std::array<wchar_t, 256U> saved_url{};
+    const DWORD saved_length = GetPrivateProfileStringW(
+        L"chat",
+        L"url",
+        L"",
+        saved_url.data(),
+        static_cast<DWORD>(saved_url.size()),
+        config_file.c_str());
+    if (saved_length == 0U ||
+        std::wstring(saved_url.data(), saved_length) !=
+            L"https://www.youtube.com/live_chat?is_popout=1&v=dQw4w9WgXcQ") {
+        DestroyWindow(fake_hud);
+        return fail(
+            L"Save & Apply did not persist the canonical chat URL",
+            first.process.get());
     }
+
+    SendMessageW(
+        control_center,
+        WM_COMMAND,
+        MAKEWPARAM(kEditButtonId, BN_CLICKED),
+        reinterpret_cast<LPARAM>(edit_button));
+    if (!wait_for_edit_message()) {
+        DestroyWindow(fake_hud);
+        return fail(
+            L"Move / Resize did not reach the HUD window",
+            first.process.get());
+    }
+
+    SendMessageW(
+        control_center,
+        WM_COMMAND,
+        MAKEWPARAM(kRestartButtonId, BN_CLICKED),
+        reinterpret_cast<LPARAM>(restart_button));
+    if (WaitForSingleObject(restart_event.get(), 1000U) != WAIT_OBJECT_0) {
+        DestroyWindow(fake_hud);
+        return fail(
+            L"Restart HUD did not reach the OBS command event",
+            first.process.get());
+    }
+
+    ChildProcess second = start_control_center(
+        executable,
+        mapping_name,
+        status_event_name,
+        restart_event_name,
+        process_id);
+    if (!second.process ||
+        !exited_successfully(second.process.get(), kProcessExitTimeoutMs)) {
+        DestroyWindow(fake_hud);
+        if (second.process) {
+            TerminateProcess(second.process.get(), 1U);
+        }
+        return fail(
+            L"A second Control Center instance did not delegate",
+            first.process.get());
+    }
+
+    if (!IsWindow(control_center) ||
+        WaitForSingleObject(first.process.get(), 0U) != WAIT_TIMEOUT) {
+        DestroyWindow(fake_hud);
+        return fail(
+            L"Opening a second instance closed the active Control Center",
+            first.process.get());
+    }
+
+    if (!PostMessageW(control_center, WM_CLOSE, 0U, 0L) ||
+        !exited_successfully(first.process.get(), kProcessExitTimeoutMs)) {
+        DestroyWindow(fake_hud);
+        return fail(L"The Control Center did not exit cleanly", first.process.get());
+    }
+
+    DestroyWindow(fake_hud);
+    UnregisterClassW(kFakeHudWindowClass, fake_hud_class.hInstance);
 
     error.clear();
     std::filesystem::remove_all(profile, error);
     if (error) {
-        return fail(L"Failed to remove the settings test profile");
+        return fail(L"Failed to remove the Control Center test profile");
     }
     return 0;
 }

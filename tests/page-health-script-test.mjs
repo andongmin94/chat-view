@@ -157,7 +157,7 @@ assert.deepEqual(
     hostname: 'www.youtube.com',
     bodyText: 'Sign in to chat',
   }).messages,
-  ['CVH1|4|7|1'],
+  ['CVH1|4|7|5'],
   'a YouTube sign-in prompt did not report LoginRequired',
 );
 

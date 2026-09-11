@@ -82,11 +82,17 @@ function Get-RunningInstalledChatViewProcesses {
         [System.IO.Path]::GetFullPath(
             (Join-Path $ObsRoot 'obs-plugins\64bit\chat-view-hud.exe')),
         [System.IO.Path]::GetFullPath(
-            (Join-Path $ObsRoot 'obs-plugins\64bit\chat-view-config.exe'))
+            (Join-Path $ObsRoot 'obs-plugins\64bit\chat-view-config.exe')),
+        [System.IO.Path]::GetFullPath(
+            (Join-Path $ObsRoot 'obs-plugins\64bit\chat-view-diagnostics.exe'))
     )
 
     $running = @()
-    foreach ($processName in @('chat-view-hud', 'chat-view-config')) {
+    foreach ($processName in @(
+        'chat-view-hud',
+        'chat-view-config',
+        'chat-view-diagnostics'
+    )) {
         foreach ($process in @(
             Get-Process -Name $processName -ErrorAction SilentlyContinue
         )) {
@@ -130,7 +136,7 @@ function Assert-InstalledChatViewProcessesStopped {
 
     $details = $running |
         ForEach-Object { "$($_.Name) PID $($_.Id)" }
-    throw "Close the installed ChatView HUD and settings processes before continuing: $($details -join ', ')."
+    throw "Close the installed ChatView HUD, Control Center, and diagnostics processes before continuing: $($details -join ', ')."
 }
 
 function Invoke-NativePreflight {
@@ -344,6 +350,10 @@ $packageFiles = @(
     @{
         Source = Join-Path $PSScriptRoot 'obs-plugins\64bit\chat-view-config.exe'
         RelativeDestination = 'obs-plugins\64bit\chat-view-config.exe'
+    },
+    @{
+        Source = Join-Path $PSScriptRoot 'obs-plugins\64bit\chat-view-diagnostics.exe'
+        RelativeDestination = 'obs-plugins\64bit\chat-view-diagnostics.exe'
     },
     @{
         Source = Join-Path $PSScriptRoot 'data\obs-plugins\chat-view-obs\locale\en-US.ini'

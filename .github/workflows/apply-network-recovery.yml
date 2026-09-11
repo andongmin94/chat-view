@@ -15,46 +15,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Check out ChatView
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Rearm page-health watchdog after reconnect
-        shell: bash
+      - name: Patch source
+        run: python scripts/rearm-page-watchdog.py
+      - name: Commit source
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path('src/hud/hud-window.cpp')
-          text = path.read_text(encoding='utf-8')
-          old = '''            } else {
-                page_health_watchdog_.heartbeat(now);
-                if (health.state == HudPageState::ConnectionLost) {
-                    page_connection_recovery_.begin(now);
-                }
-            }
-'''
-          new = '''            } else {
-                if (page_health_watchdog_.armed()) {
-                    page_health_watchdog_.heartbeat(now);
-                } else {
-                    page_health_watchdog_.arm(now);
-                }
-                if (health.state == HudPageState::ConnectionLost) {
-                    page_connection_recovery_.begin(now);
-                }
-            }
-'''
-          if text.count(old) != 1:
-              raise SystemExit('watchdog rearm anchor was not unique')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8', newline='\n')
-          PY
-
-      - name: Commit watchdog rearm fix
-        shell: bash
-        run: |
-          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/hud/hud-window.cpp

@@ -1,0 +1,54 @@
+name: Apply self-test process-tree cleanup
+
+on:
+  push:
+    branches:
+      - OBS
+    paths:
+      - scripts/apply-self-test-job-cleanup.py
+      - .github/workflows/apply-self-test-job-cleanup.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-self-test-process-tree-cleanup
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    name: Apply self-test process-tree cleanup
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out OBS branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply deterministic patch
+        run: python scripts/apply-self-test-job-cleanup.py
+
+      - name: Validate patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'project(chat-view-obs VERSION 0.2.12 LANGUAGES CXX)' CMakeLists.txt
+          grep -F 'JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE' src/preflight/hud-self-test.cpp
+          grep -F 'CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED' src/preflight/hud-self-test.cpp
+          grep -F 'drain_child_job(child_job.get())' src/preflight/hud-self-test.cpp
+          git diff --check
+
+      - name: Commit source fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add CMakeLists.txt src/preflight/hud-self-test.cpp
+          if git diff --cached --quiet; then
+            echo 'The self-test cleanup patch made no changes.' >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test: own WebView2 descendants during preflight'
+          git push origin HEAD:OBS

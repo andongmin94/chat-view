@@ -18,10 +18,19 @@ constexpr wchar_t kResultEnvironmentVariable[] =
     L"CHATVIEW_OBS_CAPTURE_QUALIFICATION_RESULT";
 constexpr DWORD kQualificationTimeoutMs = 60000U;
 constexpr DWORD kObsExitTimeoutMs = 30000U;
+constexpr DWORD kAttemptBackoffMs = 750U;
+constexpr unsigned int kMaximumAttempts = 3U;
 
 struct ProcessWindowCollection {
     DWORD process_id = 0U;
     std::vector<HWND> windows;
+};
+
+struct AttemptOutcome {
+    bool passed = false;
+    bool retryable = false;
+    std::string report;
+    std::wstring error;
 };
 
 int fail(const std::wstring &message, HANDLE process = nullptr)
@@ -111,33 +120,33 @@ bool has_report_line(
     return false;
 }
 
-} // namespace
-
-int wmain(int argument_count, wchar_t **arguments)
+bool is_retryable_report(const std::string &report)
 {
-    if (argument_count != 2) {
-        return fail(
-            L"Expected the extracted OBS Studio root directory");
-    }
+    return has_report_line(
+               report,
+               "reason=OBS Display Capture did not distinguish the calibrated probe windows") ||
+           has_report_line(
+               report,
+               "reason=Display Capture did not produce a frame before timeout");
+}
 
-    const std::filesystem::path obs_root =
-        std::filesystem::absolute(arguments[1]);
-    const std::filesystem::path obs_executable =
-        obs_root / L"bin" / L"64bit" / L"obs64.exe";
-    if (!std::filesystem::is_regular_file(obs_executable)) {
-        return fail(L"The official OBS Studio executable was not found");
-    }
-
+AttemptOutcome run_attempt(
+    const std::filesystem::path &obs_executable,
+    unsigned int attempt)
+{
+    AttemptOutcome outcome;
     const std::filesystem::path result =
         std::filesystem::temp_directory_path() /
         (L"chatview-obs-capture-qualification-" +
-         std::to_wstring(GetCurrentProcessId()) + L".txt");
+         std::to_wstring(GetCurrentProcessId()) + L"-" +
+         std::to_wstring(attempt) + L".txt");
     DeleteFileW(result.c_str());
 
     const std::wstring result_string = result.wstring();
     if (!SetEnvironmentVariableW(
             kResultEnvironmentVariable, result_string.c_str())) {
-        return fail(L"Failed to configure the qualification result path");
+        outcome.error = L"Failed to configure the qualification result path";
+        return outcome;
     }
 
     std::wstring command_line =
@@ -163,72 +172,122 @@ int wmain(int argument_count, wchar_t **arguments)
         &process_info);
     SetEnvironmentVariableW(kResultEnvironmentVariable, nullptr);
     if (!started) {
-        return fail(
-            L"Failed to start official OBS Studio for capture qualification");
+        outcome.error =
+            L"Failed to start official OBS Studio for capture qualification";
+        return outcome;
     }
 
     chatview::UniqueHandle obs_thread(process_info.hThread);
     chatview::UniqueHandle obs_process(process_info.hProcess);
     obs_thread.reset();
 
-    std::string report;
     const ULONGLONG deadline =
         GetTickCount64() + kQualificationTimeoutMs;
     while (GetTickCount64() < deadline) {
-        if (read_text_file(result, report)) {
+        if (read_text_file(result, outcome.report)) {
             break;
         }
         if (WaitForSingleObject(obs_process.get(), 0U) == WAIT_OBJECT_0) {
             DWORD exit_code = 0U;
             GetExitCodeProcess(obs_process.get(), &exit_code);
-            DeleteFileW(result.c_str());
-            return fail(
+            outcome.error =
                 L"OBS Studio exited before capture qualification completed "
-                L"(exit code " + std::to_wstring(exit_code) + L")");
+                L"(exit code " + std::to_wstring(exit_code) + L")";
+            DeleteFileW(result.c_str());
+            return outcome;
         }
         Sleep(100U);
     }
 
-    if (report.empty()) {
+    if (outcome.report.empty()) {
+        outcome.error = L"OBS compositor capture qualification timed out";
+        TerminateProcess(obs_process.get(), 1U);
+        WaitForSingleObject(obs_process.get(), 3000U);
         DeleteFileW(result.c_str());
-        return fail(
-            L"OBS compositor capture qualification timed out",
-            obs_process.get());
+        return outcome;
     }
 
-    const bool passed =
-        has_report_line(report, "PASS") &&
+    outcome.passed =
+        has_report_line(outcome.report, "PASS") &&
         has_report_line(
-            report,
+            outcome.report,
             "pipeline=monitor_capture>scene>main_texture") &&
-        has_report_line(report, "calibration_visible=1") &&
-        has_report_line(report, "hidden_window_excluded=1");
-    if (!passed) {
-        std::cerr << report;
-        DeleteFileW(result.c_str());
-        return fail(
-            L"OBS compositor capture qualification reported failure",
-            obs_process.get());
-    }
+        has_report_line(outcome.report, "calibration_visible=1") &&
+        has_report_line(outcome.report, "hidden_window_excluded=1");
+    outcome.retryable =
+        !outcome.passed && is_retryable_report(outcome.report);
 
-    std::cout << report;
     if (!request_graceful_obs_shutdown(
             obs_process.get(), process_info.dwProcessId)) {
+        outcome.error =
+            L"OBS Studio did not shut down after capture qualification";
+        TerminateProcess(obs_process.get(), 1U);
+        WaitForSingleObject(obs_process.get(), 3000U);
         DeleteFileW(result.c_str());
-        return fail(
-            L"OBS Studio did not shut down after capture qualification",
-            obs_process.get());
+        outcome.passed = false;
+        outcome.retryable = false;
+        return outcome;
     }
 
     DWORD exit_code = 1U;
     if (!GetExitCodeProcess(obs_process.get(), &exit_code) ||
         exit_code != 0U) {
-        DeleteFileW(result.c_str());
-        return fail(
+        outcome.error =
             L"OBS Studio exited abnormally after capture qualification "
-            L"(exit code " + std::to_wstring(exit_code) + L")");
+            L"(exit code " + std::to_wstring(exit_code) + L")";
+        outcome.passed = false;
+        outcome.retryable = false;
     }
 
     DeleteFileW(result.c_str());
-    return 0;
+    return outcome;
+}
+
+} // namespace
+
+int wmain(int argument_count, wchar_t **arguments)
+{
+    if (argument_count != 2) {
+        return fail(
+            L"Expected the extracted OBS Studio root directory");
+    }
+
+    const std::filesystem::path obs_root =
+        std::filesystem::absolute(arguments[1]);
+    const std::filesystem::path obs_executable =
+        obs_root / L"bin" / L"64bit" / L"obs64.exe";
+    if (!std::filesystem::is_regular_file(obs_executable)) {
+        return fail(L"The official OBS Studio executable was not found");
+    }
+
+    for (unsigned int attempt = 1U;
+         attempt <= kMaximumAttempts;
+         ++attempt) {
+        std::cout << "OBS capture qualification attempt "
+                  << attempt << '/' << kMaximumAttempts << '\n';
+
+        AttemptOutcome outcome = run_attempt(obs_executable, attempt);
+        if (outcome.passed) {
+            std::cout << outcome.report;
+            return 0;
+        }
+
+        if (!outcome.report.empty()) {
+            std::cerr << outcome.report;
+        }
+        if (!outcome.error.empty()) {
+            std::wcerr << outcome.error << L'\n';
+        }
+
+        if (!outcome.retryable || attempt == kMaximumAttempts) {
+            return fail(
+                L"OBS compositor capture qualification reported failure");
+        }
+
+        std::cout
+            << "Retrying after a transient Display Capture calibration failure\n";
+        Sleep(kAttemptBackoffMs);
+    }
+
+    return fail(L"OBS compositor capture qualification exhausted all attempts");
 }

@@ -340,7 +340,10 @@ LRESULT HudWindow::handle_message(
             static_cast<std::uint32_t>(wparam));
         if (apply_page_health(health)) {
             const ULONGLONG now = GetTickCount64();
-            if (health.state == HudPageState::NetworkOffline) {
+            if (capture_risk_) {
+                page_connection_recovery_.reset();
+                page_health_watchdog_.disarm();
+            } else if (health.state == HudPageState::NetworkOffline) {
                 page_connection_recovery_.reset();
                 page_health_watchdog_.disarm();
             } else {

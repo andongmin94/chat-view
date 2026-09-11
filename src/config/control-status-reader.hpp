@@ -36,7 +36,7 @@ private:
     UniqueHandle status_changed_event_;
     UniqueHandle restart_event_;
     UniqueHandle parent_process_;
-    ControlStatus *status_ = nullptr;
+    const ControlStatus *status_ = nullptr;
 };
 
 } // namespace chatview

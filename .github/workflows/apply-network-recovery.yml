@@ -6,6 +6,7 @@ on:
       - OBS
     paths:
       - .github/workflows/apply-network-recovery.yml
+      - scripts/rearm-page-watchdog.py
 
 permissions:
   contents: write

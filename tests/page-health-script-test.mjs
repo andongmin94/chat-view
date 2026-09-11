@@ -179,7 +179,7 @@ const networkOffline = runProbe({
   hostname: 'www.youtube.com',
   navigatorOnline: false,
   selectors: new Map([['yt-live-chat-renderer #items', new FakeElement()]]),
-  nowValues: [0, 0, 100, 101],
+  nowValues: [0, 0, 100, 101, 200],
 });
 assert.deepEqual(
   networkOffline.messages,
@@ -192,6 +192,13 @@ assert.deepEqual(
   networkOffline.messages,
   ['CVH2|4|10|1', 'CVH2|4|11|201', 'CVH2|4|4|1'],
   'returning online did not report recovery and immediately re-evaluate chat',
+);
+networkOffline.navigator.onLine = false;
+networkOffline.events.get('offline')();
+assert.deepEqual(
+  networkOffline.messages,
+  ['CVH2|4|10|1', 'CVH2|4|11|201', 'CVH2|4|4|1', 'CVH2|4|10|200'],
+  'an offline event did not immediately report NetworkOffline',
 );
 
 const loading = runProbe({

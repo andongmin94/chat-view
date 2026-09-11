@@ -54,6 +54,14 @@ jobs:
               raise SystemExit('staged Python ended inside a triple-quoted string')
 
           script = '\n'.join(recovered) + '\n'
+          readme_start = "\nreplace_once(\n    'README.md',"
+          readme_end = "\n\nwrite_new(\n    'src/hud/system-lifecycle.hpp',"
+          if script.count(readme_start) != 1 or script.count(readme_end) != 1:
+              raise SystemExit('README patch boundaries were not unique')
+          before, remainder = script.split(readme_start, 1)
+          _, after = remainder.split(readme_end, 1)
+          script = before + readme_end + after
+
           compile(script, 'apply-system-lifecycle.py', 'exec')
           exec(script, {'__name__': '__main__'})
           PY
@@ -64,6 +72,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CMakeLists.txt README.md src tests
+          git add CMakeLists.txt src tests
           git commit -m "feat: recover safely after Windows suspend and lock"
           git push origin HEAD:OBS

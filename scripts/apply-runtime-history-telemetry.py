@@ -11,10 +11,51 @@ payload_text = "".join(
 payload = json.loads(
     zlib.decompress(base64.b64decode(payload_text)).decode("utf-8"))
 
+# The two Control Center fallback paths use different indentation because one
+# sits inside an if block and the other is a separate method. Keep both
+# replacements explicit instead of treating whitespace-distinct anchors as
+# duplicates.
+for operation in payload["patch_ops"]:
+    if (
+        operation[0] == "replace_count"
+        and operation[1] == "src/config/main.cpp"
+        and "output_value_" in operation[2]
+        and "EnableWindow(edit_button_, FALSE);" in operation[2]
+        and operation[4] == 2
+    ):
+        operation[4] = 1
+        break
+else:
+    raise SystemExit("the nested Control Center fallback patch was not found")
+
+payload["patch_ops"].append([
+    "replace",
+    "src/config/main.cpp",
+    '''        set_colored_text(
+            output_value_,
+            L"●  Unknown",
+            kColorMuted,
+            output_color_);
+        EnableWindow(edit_button_, FALSE);''',
+    '''        set_colored_text(
+            output_value_,
+            L"●  Unknown",
+            kColorMuted,
+            output_color_);
+        set_colored_text(
+            history_value_,
+            L"●  Unknown",
+            kColorMuted,
+            history_color_);
+        EnableWindow(edit_button_, FALSE);''',
+])
+
+
 def write_file(path_text, content):
     path = Path(path_text)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8", newline="\n")
+
 
 def replace_once(path_text, old, new):
     path = Path(path_text)
@@ -27,6 +68,7 @@ def replace_once(path_text, old, new):
     path.write_text(
         text.replace(old, new, 1), encoding="utf-8", newline="\n")
 
+
 def replace_exact_count(path_text, old, new, expected):
     path = Path(path_text)
     text = path.read_text(encoding="utf-8")
@@ -37,6 +79,7 @@ def replace_exact_count(path_text, old, new, expected):
             f"{old[:120]!r}")
     path.write_text(
         text.replace(old, new), encoding="utf-8", newline="\n")
+
 
 def replace_between(
     path_text, start_marker, end_marker, replacement
@@ -61,17 +104,26 @@ def replace_between(
         encoding="utf-8",
         newline="\n")
 
+
 for path, content in payload["write_files"].items():
     write_file(path, content)
 
-for op in payload["patch_ops"]:
-    kind = op[0]
+for operation in payload["patch_ops"]:
+    kind = operation[0]
     if kind == "replace":
-        replace_once(op[1], op[2], op[3])
+        replace_once(operation[1], operation[2], operation[3])
     elif kind == "replace_count":
-        replace_exact_count(op[1], op[2], op[3], op[4])
+        replace_exact_count(
+            operation[1],
+            operation[2],
+            operation[3],
+            operation[4])
     elif kind == "between":
-        replace_between(op[1], op[2], op[3], op[4])
+        replace_between(
+            operation[1],
+            operation[2],
+            operation[3],
+            operation[4])
     else:
         raise SystemExit(f"unknown patch operation: {kind}")
 
@@ -96,6 +148,8 @@ if "runtime-history-v1.bin" not in Path(
     raise SystemExit("runtime-history store was not installed")
 if "RuntimeTelemetryCircuitOpen" not in runtime:
     raise SystemExit("runtime circuit telemetry was not wired")
+if config.count("history_value_") < 10:
+    raise SystemExit("Control Center restart-history row was incomplete")
 if "Restart history" not in config:
     raise SystemExit(
         "Control Center restart-history row was not installed")

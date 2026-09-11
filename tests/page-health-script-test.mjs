@@ -11,25 +11,46 @@ const script = match[1];
 new vm.Script(script, { filename: 'page-health-message.js' });
 
 class FakeElement {
-  constructor({ width = 320, height = 240, display = 'block', visibility = 'visible', opacity = '1' } = {}) {
+  constructor({
+    width = 320,
+    height = 240,
+    display = 'block',
+    visibility = 'visible',
+    opacity = '1',
+    textContent = '',
+    dataState = null,
+  } = {}) {
     this.rect = { width, height };
     this.style = { display, visibility, opacity };
+    this.textContent = textContent;
+    this.dataState = dataState;
   }
 
   getBoundingClientRect() {
     return this.rect;
   }
+
+  getAttribute(name) {
+    return name === 'data-chatview-state' ? this.dataState : null;
+  }
+}
+
+function asElements(value) {
+  if (value == null) return [];
+  return Array.isArray(value) ? value : [value];
 }
 
 function runProbe({
   hostname,
   readyState = 'complete',
   bodyText = '',
+  title = '',
   selectors = new Map(),
   nowValues = [0, 0],
 }) {
   const messages = [];
   const observers = [];
+  const intervals = [];
   let nowIndex = 0;
 
   const body = {
@@ -41,9 +62,13 @@ function runProbe({
     body,
     documentElement,
     readyState,
+    title,
     addEventListener() {},
     querySelector(selector) {
-      return selectors.get(selector) ?? null;
+      return asElements(selectors.get(selector))[0] ?? null;
+    },
+    querySelectorAll(selector) {
+      return asElements(selectors.get(selector));
     },
   };
 
@@ -95,18 +120,20 @@ function runProbe({
         return nowValues[index];
       },
     },
-    setInterval() {
-      return 1;
+    setInterval(callback) {
+      intervals.push(callback);
+      return intervals.length;
     },
     setTimeout(callback) {
       callback();
       return 1;
     },
+    String,
     window,
   });
 
   vm.runInContext(script, context, { filename: 'page-health-message.js' });
-  return { messages, observers };
+  return { messages, observers, intervals };
 }
 
 const providerCases = [
@@ -129,6 +156,11 @@ for (const [hostname, selector, provider] of providerCases) {
     [`CVH1|${provider}|4|1`],
     `${hostname} did not report the expected ready state`,
   );
+  assert.equal(
+    result.observers[0].connected,
+    false,
+    `${hostname} kept observing the continuously mutating chat DOM after becoming ready`,
+  );
 }
 
 assert.deepEqual(
@@ -137,16 +169,28 @@ assert.deepEqual(
   'an unsupported host emitted page-health telemetry',
 );
 
+const loading = runProbe({
+  hostname: 'www.youtube.com',
+  readyState: 'loading',
+});
 assert.deepEqual(
-  runProbe({ hostname: 'www.youtube.com', readyState: 'loading' }).messages,
+  loading.messages,
   ['CVH1|4|3|0'],
   'a loading document did not report Loading',
+);
+assert.equal(
+  loading.observers[0].connected,
+  true,
+  'a loading document stopped observing before its chat surface appeared',
 );
 
 assert.deepEqual(
   runProbe({
     hostname: 'chzzk.naver.com',
-    bodyText: '방송이 종료되었습니다',
+    selectors: new Map([[
+      '[class*="notice"]',
+      new FakeElement({ textContent: '방송이 종료되었습니다' }),
+    ]]),
   }).messages,
   ['CVH1|2|8|1'],
   'an ended CHZZK broadcast did not report Offline',
@@ -155,10 +199,43 @@ assert.deepEqual(
 assert.deepEqual(
   runProbe({
     hostname: 'www.youtube.com',
-    bodyText: 'Sign in to chat',
+    selectors: new Map([[
+      'yt-live-chat-message-input-renderer',
+      new FakeElement({ textContent: 'Sign in to chat' }),
+    ]]),
   }).messages,
   ['CVH1|4|7|5'],
   'a YouTube sign-in prompt did not report LoginRequired',
+);
+
+assert.deepEqual(
+  runProbe({
+    hostname: 'www.youtube.com',
+    bodyText: 'A viewer wrote: sign in to chat',
+    selectors: new Map([['yt-live-chat-renderer #items', new FakeElement()]]),
+  }).messages,
+  ['CVH1|4|4|1'],
+  'ordinary chat message text was incorrectly treated as a login prompt',
+);
+
+const explicitReady = new FakeElement({ dataState: 'ready' });
+assert.deepEqual(
+  runProbe({
+    hostname: 'weflab.com',
+    selectors: new Map([['[data-chatview-state]', explicitReady]]),
+  }).messages,
+  ['CVH1|1|4|101'],
+  'an explicit Weflab ready state was ignored',
+);
+
+const explicitOffline = new FakeElement({ dataState: 'offline' });
+assert.deepEqual(
+  runProbe({
+    hostname: 'weflab.com',
+    selectors: new Map([['[data-chatview-state]', explicitOffline]]),
+  }).messages,
+  ['CVH1|1|8|103'],
+  'an explicit Weflab offline state was ignored',
 );
 
 assert.deepEqual(
@@ -182,12 +259,27 @@ assert.deepEqual(
   'an undersized SOOP element was incorrectly accepted as a ready chat surface',
 );
 
+assert.deepEqual(
+  runProbe({
+    hostname: 'chzzk.naver.com',
+    selectors: new Map([[
+      '[class*="notice"]',
+      new FakeElement({
+        textContent: '방송이 종료되었습니다',
+        display: 'none',
+      }),
+    ]]),
+  }).messages,
+  ['CVH1|2|3|0'],
+  'a hidden status banner was incorrectly reported as an active page state',
+);
+
 const deduplicated = runProbe({
   hostname: 'www.youtube.com',
   selectors: new Map([['yt-live-chat-renderer #items', new FakeElement()]]),
 });
-assert.equal(deduplicated.observers.length, 1, 'the health observer was not installed');
-deduplicated.observers[0].trigger();
+assert.equal(deduplicated.intervals.length, 1, 'the periodic health check was not installed');
+deduplicated.intervals[0]();
 assert.deepEqual(
   deduplicated.messages,
   ['CVH1|4|4|1'],

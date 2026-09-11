@@ -1,0 +1,34 @@
+name: Fix diagnostics string literals
+
+on:
+  push:
+    branches:
+      - OBS
+    paths:
+      - .github/workflows/fix-diagnostics-string-literals.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out ChatView
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fix diagnostics string literals
+        run: python scripts/fix-diagnostics-string-literals.py
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/diagnostics/diagnostics-exporter.cpp
+          git commit -m "fix: preserve diagnostics line breaks in C++ literals"
+          git push origin HEAD:OBS

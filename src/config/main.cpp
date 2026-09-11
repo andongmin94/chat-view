@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/chat-config.hpp"
+#include "common/hud-health.hpp"
 #include "common/win32-handle.hpp"
 #include "common/window-messages.hpp"
 #include "config/control-status-reader.hpp"
@@ -25,6 +26,7 @@ namespace {
 constexpr wchar_t kWindowClassName[] = L"ChatViewObsConfigWindow";
 constexpr UINT_PTR kRefreshTimerId = 1U;
 constexpr UINT kRefreshIntervalMs = 250U;
+constexpr DWORD kHudHealthQueryTimeoutMs = 40U;
 constexpr int kUrlEditId = 1001;
 constexpr int kSaveButtonId = 1002;
 constexpr int kEditButtonId = 1003;
@@ -59,6 +61,11 @@ struct Options {
 struct WindowSearch {
     DWORD process_id = 0U;
     HWND window = nullptr;
+};
+
+struct HealthPresentation {
+    std::wstring text;
+    COLORREF color = kColorMuted;
 };
 
 void enable_per_monitor_dpi_awareness() noexcept
@@ -172,8 +179,10 @@ std::wstring control_text(HWND control)
         return {};
     }
 
-    std::wstring value(static_cast<std::size_t>(length) + 1U, L'\0');
-    const int copied = GetWindowTextW(control, value.data(), length + 1);
+    std::wstring value(
+        static_cast<std::size_t>(length) + 1U, L'\0');
+    const int copied = GetWindowTextW(
+        control, value.data(), length + 1);
     if (copied <= 0) {
         return {};
     }
@@ -186,21 +195,79 @@ std::wstring provider_name(const std::wstring &normalized_url)
     if (normalized_url.starts_with(L"https://weflab.com/")) {
         return L"Weflab";
     }
-    if (normalized_url.starts_with(L"https://chzzk.naver.com/")) {
+    if (normalized_url.starts_with(
+            L"https://chzzk.naver.com/")) {
         return L"CHZZK";
     }
-    if (normalized_url.starts_with(L"https://play.sooplive.com/")) {
+    if (normalized_url.starts_with(
+            L"https://play.sooplive.com/")) {
         return L"SOOP";
     }
-    if (normalized_url.starts_with(L"https://www.youtube.com/")) {
+    if (normalized_url.starts_with(
+            L"https://www.youtube.com/")) {
         return L"YouTube";
     }
     return L"Unknown";
 }
 
+std::wstring provider_name(chatview::HudProvider provider)
+{
+    switch (provider) {
+    case chatview::HudProvider::Weflab:
+        return L"Weflab";
+    case chatview::HudProvider::Chzzk:
+        return L"CHZZK";
+    case chatview::HudProvider::Soop:
+        return L"SOOP";
+    case chatview::HudProvider::YouTube:
+        return L"YouTube";
+    case chatview::HudProvider::Unknown:
+    default:
+        return L"Chat";
+    }
+}
+
+HealthPresentation health_presentation(
+    const chatview::HudHealthSnapshot &health)
+{
+    const std::wstring provider = provider_name(health.provider);
+    switch (health.state) {
+    case chatview::HudPageState::Starting:
+        return {L"Chat engine starting", kColorWarning};
+    case chatview::HudPageState::SetupRequired:
+        return {L"Chat URL not configured", kColorWarning};
+    case chatview::HudPageState::Loading:
+        return {provider + L" chat loading", kColorWarning};
+    case chatview::HudPageState::Ready:
+        return {provider + L" chat ready", kColorGood};
+    case chatview::HudPageState::Retrying:
+        return {
+            provider + L" chat unavailable — retrying",
+            kColorWarning};
+    case chatview::HudPageState::Recovering:
+        return {L"WebView recovering", kColorWarning};
+    case chatview::HudPageState::LoginRequired:
+        return {provider + L" login required", kColorWarning};
+    case chatview::HudPageState::Offline:
+        return {
+            provider + L" broadcast offline or ended",
+            kColorWarning};
+    case chatview::HudPageState::LayoutChanged:
+        return {
+            provider + L" page layout changed",
+            kColorError};
+    case chatview::HudPageState::Fatal:
+        return {L"Chat engine failed", kColorError};
+    case chatview::HudPageState::Unknown:
+    default:
+        return {L"Chat page status unavailable", kColorMuted};
+    }
+}
+
 BOOL CALLBACK find_hud_window(HWND window, LPARAM data)
 {
-    auto *search = reinterpret_cast<WindowSearch *>(data);
+    auto *search = static_cast<WindowSearch *>(
+        reinterpret_cast<void *>(data));
     if (search == nullptr) {
         return FALSE;
     }
@@ -217,7 +284,9 @@ BOOL CALLBACK find_hud_window(HWND window, LPARAM data)
         class_name.data(),
         static_cast<int>(class_name.size()));
     if (length > 0 &&
-        wcscmp(class_name.data(), chatview::kHudWindowClassName) == 0) {
+        wcscmp(
+            class_name.data(),
+            chatview::kHudWindowClassName) == 0) {
         search->window = window;
         return FALSE;
     }
@@ -231,8 +300,47 @@ HWND hud_window_for_process(DWORD process_id) noexcept
     }
 
     WindowSearch search{process_id, nullptr};
-    EnumWindows(&find_hud_window, reinterpret_cast<LPARAM>(&search));
+    EnumWindows(
+        &find_hud_window,
+        reinterpret_cast<LPARAM>(&search));
     return search.window;
+}
+
+bool query_hud_health(
+    HWND hud,
+    chatview::HudHealthSnapshot &health) noexcept
+{
+    if (hud == nullptr) {
+        return false;
+    }
+
+    const UINT message = RegisterWindowMessageW(
+        chatview::kQueryHudHealthMessageName);
+    if (message == 0U) {
+        return false;
+    }
+
+    DWORD_PTR encoded = 0U;
+    if (!SendMessageTimeoutW(
+            hud,
+            message,
+            0U,
+            0L,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK,
+            kHudHealthQueryTimeoutMs,
+            &encoded)) {
+        return false;
+    }
+
+    const chatview::HudHealthSnapshot decoded =
+        chatview::decode_hud_health(
+            static_cast<std::uint32_t>(encoded));
+    if (!chatview::is_valid_hud_health(decoded)) {
+        return false;
+    }
+
+    health = decoded;
+    return true;
 }
 
 std::wstring output_description(
@@ -261,7 +369,9 @@ std::wstring output_description(
     }
 
     std::wstring result;
-    for (std::size_t index = 0U; index < outputs.size(); ++index) {
+    for (std::size_t index = 0U;
+         index < outputs.size();
+         ++index) {
         if (index != 0U) {
             result.append(L"  •  ");
         }
@@ -311,7 +421,8 @@ public:
             WS_EX_DLGMODALFRAME,
             kWindowClassName,
             L"ChatView Control Center",
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
+                WS_MINIMIZEBOX,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             width,
@@ -351,11 +462,13 @@ private:
         }
 
         if (self == nullptr) {
-            return DefWindowProcW(window, message, wparam, lparam);
+            return DefWindowProcW(
+                window, message, wparam, lparam);
         }
 
         try {
-            return self->handle_message(message, wparam, lparam);
+            return self->handle_message(
+                message, wparam, lparam);
         } catch (...) {
             MessageBoxW(
                 window,
@@ -457,7 +570,8 @@ private:
             break;
         }
 
-        return DefWindowProcW(window_, message, wparam, lparam);
+        return DefWindowProcW(
+            window_, message, wparam, lparam);
     }
 
     bool create_controls()
@@ -517,12 +631,28 @@ private:
             L"Close", kCloseButtonId, BS_PUSHBUTTON);
 
         const std::array<HWND, 18U> required{
-            title_, subtitle_, url_label_, url_edit_, provider_value_,
-            status_group_, obs_label_, obs_value_, hud_label_, hud_value_,
-            safety_label_, safety_value_, output_label_, output_value_,
-            feedback_, save_button_, edit_button_, restart_button_};
+            title_,
+            subtitle_,
+            url_label_,
+            url_edit_,
+            provider_value_,
+            status_group_,
+            obs_label_,
+            obs_value_,
+            hud_label_,
+            hud_value_,
+            safety_label_,
+            safety_value_,
+            output_label_,
+            output_value_,
+            feedback_,
+            save_button_,
+            edit_button_,
+            restart_button_};
         if (std::any_of(
-                required.begin(), required.end(), [](HWND control) {
+                required.begin(),
+                required.end(),
+                [](HWND control) {
                     return control == nullptr;
                 }) ||
             close_button_ == nullptr || version_ == nullptr) {
@@ -536,7 +666,8 @@ private:
         if (chatview::load_chat_config(config)) {
             SetWindowTextW(url_edit_, config.url.c_str());
         }
-        SendMessageW(url_edit_, EM_SETLIMITTEXT, kMaximumUrlLength, 0L);
+        SendMessageW(
+            url_edit_, EM_SETLIMITTEXT, kMaximumUrlLength, 0L);
         SetFocus(url_edit_);
         return true;
     }
@@ -559,7 +690,9 @@ private:
     }
 
     HWND create_button(
-        const wchar_t *text, int identifier, DWORD button_style) const
+        const wchar_t *text,
+        int identifier,
+        DWORD button_style) const
     {
         return CreateWindowExW(
             0,
@@ -637,19 +770,30 @@ private:
                 kColorError,
                 obs_color_);
             set_colored_text(
-                hud_value_, L"●  Unknown", kColorMuted, hud_color_);
+                hud_value_,
+                L"●  Unknown",
+                kColorMuted,
+                hud_color_);
             set_colored_text(
-                safety_value_, L"●  Unknown", kColorMuted, safety_color_);
+                safety_value_,
+                L"●  Unknown",
+                kColorMuted,
+                safety_color_);
             set_colored_text(
-                output_value_, L"●  Unknown", kColorMuted, output_color_);
+                output_value_,
+                L"●  Unknown",
+                kColorMuted,
+                output_color_);
             EnableWindow(edit_button_, FALSE);
             EnableWindow(restart_button_, FALSE);
             return;
         }
-        if (!force && snapshot.generation == snapshot_.generation) {
-            return;
+
+        const bool status_changed =
+            force || snapshot.generation != snapshot_.generation;
+        if (status_changed) {
+            snapshot_ = snapshot;
         }
-        snapshot_ = snapshot;
 
         set_colored_text(
             obs_value_,
@@ -667,24 +811,43 @@ private:
             chatview::has_control_status_flag(
                 snapshot, chatview::ControlStatusCaptureRisk);
 
+        chatview::HudHealthSnapshot health;
+        const HWND hud = hud_running
+                             ? hud_window_for_process(
+                                   snapshot.hud_process_id)
+                             : nullptr;
+        const bool health_available =
+            query_hud_health(hud, health);
+        const HealthPresentation health_status =
+            health_available
+                ? health_presentation(health)
+                : HealthPresentation{
+                      L"Chat page status unavailable",
+                      kColorMuted};
+
         if (hud_running && hud_visible) {
             set_colored_text(
                 hud_value_,
                 L"●  Running (PID " +
-                    std::to_wstring(snapshot.hud_process_id) + L")",
-                kColorGood,
+                    std::to_wstring(snapshot.hud_process_id) +
+                    L") — " + health_status.text,
+                health_status.color,
                 hud_color_);
         } else if (hud_running && capture_risk) {
             set_colored_text(
                 hud_value_,
-                L"●  Running, hidden by safety interlock",
+                L"●  Running, hidden by safety interlock — " +
+                    health_status.text,
                 kColorWarning,
                 hud_color_);
         } else if (hud_running) {
             set_colored_text(
                 hud_value_,
-                L"●  Running, window currently hidden",
-                kColorWarning,
+                L"●  Running, window hidden — " +
+                    health_status.text,
+                health_status.color == kColorGood
+                    ? kColorWarning
+                    : health_status.color,
                 hud_color_);
         } else {
             set_colored_text(
@@ -728,11 +891,20 @@ private:
             kColorError,
             obs_color_);
         set_colored_text(
-            hud_value_, L"●  Unknown", kColorMuted, hud_color_);
+            hud_value_,
+            L"●  Unknown",
+            kColorMuted,
+            hud_color_);
         set_colored_text(
-            safety_value_, L"●  Unknown", kColorMuted, safety_color_);
+            safety_value_,
+            L"●  Unknown",
+            kColorMuted,
+            safety_color_);
         set_colored_text(
-            output_value_, L"●  Unknown", kColorMuted, output_color_);
+            output_value_,
+            L"●  Unknown",
+            kColorMuted,
+            output_color_);
         EnableWindow(edit_button_, FALSE);
         EnableWindow(restart_button_, FALSE);
     }
@@ -742,8 +914,7 @@ private:
         std::wstring input = trim(control_text(url_edit_));
         if (static_cast<int>(input.size()) < kMinimumUrlLength ||
             static_cast<int>(input.size()) > kMaximumUrlLength) {
-            set_feedback(
-                L"The URL is too long.", kColorError);
+            set_feedback(L"The URL is too long.", kColorError);
             return;
         }
 
@@ -776,7 +947,8 @@ private:
         const UINT message = RegisterWindowMessageW(
             chatview::kConfigChangedMessageName);
         if (message != 0U) {
-            SendNotifyMessageW(HWND_BROADCAST, message, 0U, 0L);
+            SendNotifyMessageW(
+                HWND_BROADCAST, message, 0U, 0L);
         }
         refresh_provider();
         set_feedback(
@@ -789,8 +961,7 @@ private:
     void toggle_overlay_edit()
     {
         if (!connected_ || !status_reader_.parent_alive()) {
-            set_feedback(
-                L"OBS is not connected.", kColorError);
+            set_feedback(L"OBS is not connected.", kColorError);
             return;
         }
 
@@ -928,10 +1099,24 @@ private:
             L"Segoe UI");
 
         const std::array<HWND, 19U> body_controls{
-            subtitle_, url_edit_, provider_value_, status_group_,
-            obs_value_, hud_value_, safety_value_, output_value_, feedback_,
-            save_button_, edit_button_, restart_button_, close_button_,
-            version_, url_label_, obs_label_, hud_label_, safety_label_,
+            subtitle_,
+            url_edit_,
+            provider_value_,
+            status_group_,
+            obs_value_,
+            hud_value_,
+            safety_value_,
+            output_value_,
+            feedback_,
+            save_button_,
+            edit_button_,
+            restart_button_,
+            close_button_,
+            version_,
+            url_label_,
+            obs_label_,
+            hud_label_,
+            safety_label_,
             output_label_};
         for (HWND control : body_controls) {
             if (control != nullptr) {
@@ -949,7 +1134,11 @@ private:
             reinterpret_cast<WPARAM>(title_font_),
             TRUE);
         const std::array<HWND, 5U> labels{
-            url_label_, obs_label_, hud_label_, safety_label_, output_label_};
+            url_label_,
+            obs_label_,
+            hud_label_,
+            safety_label_,
+            output_label_};
         for (HWND label : labels) {
             SendMessageW(
                 label,
@@ -1029,16 +1218,20 @@ private:
             return;
         }
 
-        const int width = window_rect.right - window_rect.left;
-        const int height = window_rect.bottom - window_rect.top;
-        const int x = monitor_info.rcWork.left +
-                      (monitor_info.rcWork.right -
-                       monitor_info.rcWork.left - width) /
-                          2;
-        const int y = monitor_info.rcWork.top +
-                      (monitor_info.rcWork.bottom -
-                       monitor_info.rcWork.top - height) /
-                          2;
+        const int width =
+            window_rect.right - window_rect.left;
+        const int height =
+            window_rect.bottom - window_rect.top;
+        const int x =
+            monitor_info.rcWork.left +
+            (monitor_info.rcWork.right -
+             monitor_info.rcWork.left - width) /
+                2;
+        const int y =
+            monitor_info.rcWork.top +
+            (monitor_info.rcWork.bottom -
+             monitor_info.rcWork.top - height) /
+                2;
         SetWindowPos(
             window_,
             nullptr,
@@ -1126,7 +1319,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
             return 2;
         }
 
-        const std::wstring mutex_name = instance_mutex_name(options);
+        const std::wstring mutex_name =
+            instance_mutex_name(options);
         chatview::UniqueHandle instance_mutex(
             CreateMutexW(nullptr, TRUE, mutex_name.c_str()));
         if (!instance_mutex) {
@@ -1160,7 +1354,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
-        return result < 0 ? 3 : static_cast<int>(message.wParam);
+        return result < 0
+                   ? 3
+                   : static_cast<int>(message.wParam);
     } catch (...) {
         MessageBoxW(
             nullptr,

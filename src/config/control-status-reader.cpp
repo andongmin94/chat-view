@@ -30,7 +30,7 @@ bool ControlStatusReader::open(
         return false;
     }
 
-    status_ = static_cast<ControlStatus *>(MapViewOfFile(
+    status_ = static_cast<const ControlStatus *>(MapViewOfFile(
         mapping_.get(), FILE_MAP_READ, 0U, 0U, sizeof(ControlStatus)));
     if (status_ == nullptr) {
         close();
@@ -89,8 +89,7 @@ bool ControlStatusReader::read(
     }
 
     for (unsigned int attempt = 0U; attempt < 32U; ++attempt) {
-        const LONG before = InterlockedCompareExchange(
-            &status_->sequence, 0, 0);
+        const LONG before = status_->sequence;
         if ((before & 1L) != 0L) {
             SwitchToThread();
             continue;
@@ -104,8 +103,7 @@ bool ControlStatusReader::read(
         candidate.updated_tick_ms = status_->updated_tick_ms;
         MemoryBarrier();
 
-        const LONG after = InterlockedCompareExchange(
-            &status_->sequence, 0, 0);
+        const LONG after = status_->sequence;
         if (before == after && (after & 1L) == 0L &&
             is_valid_control_status_snapshot(candidate)) {
             snapshot = candidate;

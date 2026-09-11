@@ -3,6 +3,7 @@
 #include "hud/page-health-message.hpp"
 
 #include <iostream>
+#include <string>
 #include <string_view>
 
 namespace {
@@ -81,13 +82,20 @@ int main()
         L"CVH0|4|4|0",
         L"CVH1|0|4|0",
         L"CVH1|5|4|0",
+        L"CVH1|9|4|0",
+        L"CVH1|4294967295|4|0",
         L"CVH1|4|0|0",
         L"CVH1|4|1|0",
         L"CVH1|4|5|0",
         L"CVH1|4|10|0",
+        L"CVH1|4|99|0",
+        L"CVH1|4|4294967295|0",
         L"CVH1|4|4|65536",
+        L"CVH1|4|4|4294967295",
         L"CVH1|4|4|-1",
         L"CVH1|4|4| 1",
+        L"CVH1|4|4|1 ",
+        L"CVH1|4|4|01x",
         L"CVH1|4|4|1|extra",
         L"CVH1|4|4",
         L"CVH1||4|0",
@@ -98,6 +106,11 @@ int main()
         if (!expect_invalid(message)) {
             return fail("An invalid page-health message was accepted");
         }
+    }
+
+    const std::wstring overlong(65U, L'1');
+    if (!expect_invalid(overlong)) {
+        return fail("An overlong page-health message was accepted");
     }
 
     if (chatview::provider_for_chat_document(

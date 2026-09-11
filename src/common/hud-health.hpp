@@ -27,7 +27,9 @@ enum class HudPageState : std::uint8_t {
     LayoutChanged = 9U,
     NetworkOffline = 10U,
     ConnectionLost = 11U,
-    Fatal = 12U,
+    SystemPaused = 12U,
+    SystemResuming = 13U,
+    Fatal = 14U,
 };
 
 struct HudHealthSnapshot {

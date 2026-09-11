@@ -5,6 +5,7 @@
 #include "common/window-messages.hpp"
 
 #include <Windows.h>
+#include <WtsApi32.h>
 #include <dwmapi.h>
 
 #include <algorithm>
@@ -864,6 +865,88 @@ int wmain(int argument_count, wchar_t **arguments)
         }
         return fail(
             L"The HUD did not resume after runtime capture suppression",
+            child_process.get());
+    }
+
+    if (SendMessageW(
+            window, WM_POWERBROADCAST, PBT_APMSUSPEND, 0L) != TRUE ||
+        !wait_for_visibility(window, false)) {
+        return fail(
+            L"The HUD did not hide for Windows suspend",
+            child_process.get());
+    }
+    if (!PostMessageW(window, toggle_edit_message, 0U, 0L)) {
+        return fail(
+            L"Failed to test editing during Windows suspend",
+            child_process.get());
+    }
+    Sleep(150U);
+    if (IsWindowVisible(window) ||
+        !wait_for_style(window, locked_style, 0)) {
+        return fail(
+            L"Windows suspend allowed the HUD to become interactive",
+            child_process.get());
+    }
+    if (SendMessageW(
+            window,
+            WM_POWERBROADCAST,
+            PBT_APMRESUMEAUTOMATIC,
+            0L) != TRUE) {
+        return fail(
+            L"The HUD rejected the Windows resume notification",
+            child_process.get());
+    }
+    Sleep(200U);
+    if (IsWindowVisible(window)) {
+        return fail(
+            L"The HUD became visible before resume revalidation",
+            child_process.get());
+    }
+    if (!wait_for_visibility(window, true)) {
+        return fail(
+            L"The HUD did not return after Windows resume",
+            child_process.get());
+    }
+    affinity = WDA_NONE;
+    if (!GetWindowDisplayAffinity(window, &affinity) ||
+        affinity != WDA_EXCLUDEFROMCAPTURE) {
+        return fail(
+            L"Windows resume did not restore capture exclusion",
+            child_process.get());
+    }
+
+    SendMessageW(
+        window, WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK, 0L);
+    if (!wait_for_visibility(window, false)) {
+        return fail(
+            L"The HUD did not hide for session lock",
+            child_process.get());
+    }
+    SendMessageW(
+        window, WM_POWERBROADCAST, PBT_APMSUSPEND, 0L);
+    SendMessageW(
+        window,
+        WM_POWERBROADCAST,
+        PBT_APMRESUMEAUTOMATIC,
+        0L);
+    Sleep(200U);
+    if (IsWindowVisible(window)) {
+        return fail(
+            L"Power resume bypassed an active session lock",
+            child_process.get());
+    }
+    SendMessageW(
+        window, WM_WTSSESSION_CHANGE, WTS_SESSION_UNLOCK, 0L);
+    if (!wait_for_visibility(window, true)) {
+        return fail(
+            L"The HUD did not return after session unlock",
+            child_process.get());
+    }
+    affinity = WDA_NONE;
+    if (!GetWindowDisplayAffinity(window, &affinity) ||
+        affinity != WDA_EXCLUDEFROMCAPTURE) {
+        return fail(
+            L"Session unlock did not restore capture exclusion",
             child_process.get());
     }
 

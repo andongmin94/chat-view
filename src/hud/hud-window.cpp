@@ -6,6 +6,7 @@
 #include "common/window-messages.hpp"
 
 #include <Windows.h>
+#include <WtsApi32.h>
 #include <windowsx.h>
 
 #include <algorithm>
@@ -19,17 +20,29 @@ namespace {
 constexpr UINT_PTR kStatusTimerId = 1U;
 constexpr UINT_PTR kNavigationRetryTimerId = 2U;
 constexpr UINT_PTR kCaptureSafetyTimerId = 3U;
+constexpr UINT_PTR kSystemResumeTimerId = 4U;
 constexpr int kEditHotkeyId = 1;
 constexpr int kCaptureExclusionLostExitCode = 11;
 constexpr int kPageHealthWatchdogExitCode = 19;
 constexpr int kPageConnectionRecoveryExitCode = 20;
+constexpr int kSystemLifecycleRestartExitCode = 21;
 constexpr std::uint16_t kPageHealthWatchdogDetailBase = 0x7100U;
 constexpr std::uint16_t kPageConnectionRecoveryDetailBase = 0x7200U;
+constexpr std::uint16_t kSystemLifecycleDetailBase = 0x7300U;
+constexpr std::uint16_t kPowerSuspendedDetail =
+    kSystemLifecycleDetailBase + 1U;
+constexpr std::uint16_t kPowerResumedDetail =
+    kSystemLifecycleDetailBase + 2U;
+constexpr std::uint16_t kSessionLockedDetail =
+    kSystemLifecycleDetailBase + 3U;
+constexpr std::uint16_t kSessionUnlockedDetail =
+    kSystemLifecycleDetailBase + 4U;
 constexpr UINT kReadyDurationMs = 2200U;
 constexpr UINT kOfflineDurationMs = 1200U;
 constexpr UINT kNavigationRetryBaseMs = 5000U;
 constexpr UINT kNavigationRetryMaximumMs = 30000U;
 constexpr UINT kCaptureSafetyIntervalMs = 1000U;
+constexpr UINT kSystemResumeDelayMs = 1200U;
 constexpr UINT kEditHotkeyModifiers =
     MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT;
 constexpr UINT kEditHotkeyVirtualKey = 'H';
@@ -139,6 +152,13 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
         return false;
     }
 
+    session_notifications_registered_ =
+        WTSRegisterSessionNotification(
+            window_, NOTIFY_FOR_THIS_SESSION) != FALSE;
+    if (!session_notifications_registered_) {
+        debug_windows_error(L"WTSRegisterSessionNotification");
+    }
+
     if (!SetWindowDisplayAffinity(
             window_, WDA_EXCLUDEFROMCAPTURE)) {
         debug_windows_error(L"SetWindowDisplayAffinity");
@@ -199,6 +219,12 @@ void HudWindow::destroy() noexcept
         KillTimer(window_, kStatusTimerId);
         KillTimer(window_, kNavigationRetryTimerId);
         KillTimer(window_, kCaptureSafetyTimerId);
+        KillTimer(window_, kSystemResumeTimerId);
+    }
+
+    if (window_ != nullptr && session_notifications_registered_) {
+        WTSUnRegisterSessionNotification(window_);
+        session_notifications_registered_ = false;
     }
 
     if (window_ != nullptr && edit_hotkey_registered_) {
@@ -208,6 +234,9 @@ void HudWindow::destroy() noexcept
 
     page_connection_recovery_.reset();
     page_health_watchdog_.disarm();
+    system_lifecycle_.reset();
+    system_resume_pending_ = false;
+    restart_after_system_resume_ = false;
     webview_.close();
     ready_event_ = nullptr;
     if (window_ != nullptr) {
@@ -287,7 +316,9 @@ LRESULT HudWindow::handle_message(
 {
     if (config_changed_message_ != 0U &&
         message == config_changed_message_) {
-        reload_chat_config();
+        if (!system_suppressed()) {
+            reload_chat_config();
+        }
         return 0L;
     }
     if (toggle_edit_message_ != 0U &&
@@ -304,7 +335,9 @@ LRESULT HudWindow::handle_message(
     switch (message) {
     case kWebViewReadyMessage:
         webview_ready_ = true;
-        reload_chat_config();
+        if (!system_suppressed()) {
+            reload_chat_config();
+        }
         update_host_state();
         if (!capture_exclusion_intact()) {
             fail_closed_capture_exclusion();
@@ -325,6 +358,9 @@ LRESULT HudWindow::handle_message(
         }
         return 0L;
     case kWebViewDocumentReadyMessage:
+        if (system_suppressed()) {
+            return 0L;
+        }
         cancel_navigation_retry();
         if (page_state_ != HudPageState::SetupRequired) {
             apply_page_health(HudHealthSnapshot{
@@ -336,6 +372,11 @@ LRESULT HudWindow::handle_message(
         }
         return 0L;
     case kWebViewPageHealthMessage: {
+        if (system_suppressed()) {
+            page_connection_recovery_.reset();
+            page_health_watchdog_.disarm();
+            return 0L;
+        }
         const HudHealthSnapshot health = decode_hud_health(
             static_cast<std::uint32_t>(wparam));
         if (apply_page_health(health)) {
@@ -368,6 +409,13 @@ LRESULT HudWindow::handle_message(
             static_cast<COREWEBVIEW2_WEB_ERROR_STATUS>(wparam));
         return 0L;
     case kWebViewFailedMessage: {
+        if (system_suppressed()) {
+            restart_after_system_resume_ = true;
+            OutputDebugStringW(
+                L"[ChatView HUD] WebView host failed while Windows was "
+                L"paused; deferring restart until resume\n");
+            return 0L;
+        }
         wchar_t detail[192]{};
         swprintf_s(
             detail,
@@ -391,6 +439,9 @@ LRESULT HudWindow::handle_message(
         }
         if (wparam == kNavigationRetryTimerId) {
             KillTimer(window_, kNavigationRetryTimerId);
+            if (system_suppressed()) {
+                return 0L;
+            }
             page_connection_recovery_.reset();
             set_page_health(
                 HudPageState::Loading, page_provider_);
@@ -410,8 +461,12 @@ LRESULT HudWindow::handle_message(
             }
             return 0L;
         }
+        if (wparam == kSystemResumeTimerId) {
+            complete_system_resume();
+            return 0L;
+        }
         if (wparam == kCaptureSafetyTimerId) {
-            if (!capture_risk_) {
+            if (!capture_risk_ && !system_suppressed()) {
                 if (!capture_exclusion_intact()) {
                     fail_closed_capture_exclusion();
                 } else if (!check_page_connection_recovery()) {
@@ -421,6 +476,46 @@ LRESULT HudWindow::handle_message(
             return 0L;
         }
         break;
+    case WM_POWERBROADCAST:
+        switch (static_cast<UINT>(wparam)) {
+        case PBT_APMSUSPEND:
+            handle_system_lifecycle_action(
+                system_lifecycle_.suspend(),
+                kPowerSuspendedDetail);
+            break;
+        case PBT_APMRESUMEAUTOMATIC:
+        case PBT_APMRESUMECRITICAL:
+        case PBT_APMRESUMESUSPEND:
+            handle_system_lifecycle_action(
+                system_lifecycle_.resume(),
+                kPowerResumedDetail);
+            break;
+        default:
+            break;
+        }
+        return TRUE;
+    case WM_WTSSESSION_CHANGE:
+        if (wparam == WTS_SESSION_LOCK) {
+            handle_system_lifecycle_action(
+                system_lifecycle_.lock_session(),
+                kSessionLockedDetail);
+        } else if (wparam == WTS_SESSION_UNLOCK) {
+            handle_system_lifecycle_action(
+                system_lifecycle_.unlock_session(),
+                kSessionUnlockedDetail);
+        }
+        return 0L;
+    case WM_QUERYENDSESSION:
+        ShowWindow(window_, SW_HIDE);
+        return TRUE;
+    case WM_ENDSESSION:
+        if (wparam != FALSE) {
+            page_connection_recovery_.reset();
+            page_health_watchdog_.disarm();
+            ShowWindow(window_, SW_HIDE);
+            PostQuitMessage(0);
+        }
+        return 0L;
     case WM_HOTKEY:
         if (wparam == static_cast<WPARAM>(kEditHotkeyId)) {
             toggle_edit_mode();
@@ -453,7 +548,8 @@ LRESULT HudWindow::handle_message(
         if (edit_mode_) {
             capture_and_persist_bounds();
         }
-        if (!capture_exclusion_intact()) {
+        if (!system_suppressed() &&
+            !capture_exclusion_intact()) {
             fail_closed_capture_exclusion();
         }
         return 0L;
@@ -487,13 +583,16 @@ LRESULT HudWindow::handle_message(
         if (edit_mode_) {
             capture_and_persist_bounds();
         }
-        if (!capture_exclusion_intact()) {
+        if (!system_suppressed() &&
+            !capture_exclusion_intact()) {
             fail_closed_capture_exclusion();
         }
         return 0L;
     }
     case WM_DISPLAYCHANGE:
-        restore_saved_bounds();
+        if (!system_suppressed()) {
+            restore_saved_bounds();
+        }
         return 0L;
     case WM_LBUTTONDOWN:
         if (edit_mode_) {
@@ -597,7 +696,8 @@ LRESULT HudWindow::hit_test(LPARAM lparam) const noexcept
 void HudWindow::toggle_edit_mode()
 {
     if (window_ == nullptr || !webview_ready_ ||
-        capture_exclusion_failed_ || capture_risk_) {
+        capture_exclusion_failed_ || capture_risk_ ||
+        system_suppressed()) {
         return;
     }
 
@@ -692,7 +792,8 @@ void HudWindow::apply_window_mode() noexcept
 
 void HudWindow::reload_chat_config() noexcept
 {
-    if (!webview_ready_ || capture_exclusion_failed_) {
+    if (!webview_ready_ || capture_exclusion_failed_ ||
+        system_suppressed()) {
         return;
     }
 
@@ -791,6 +892,14 @@ bool HudWindow::apply_page_health(
 void HudWindow::handle_webview_process_failure(
     COREWEBVIEW2_PROCESS_FAILED_KIND kind) noexcept
 {
+    if (system_suppressed()) {
+        restart_after_system_resume_ = true;
+        OutputDebugStringW(
+            L"[ChatView HUD] WebView process failed while Windows was "
+            L"paused; deferring restart until resume\n");
+        return;
+    }
+
     wchar_t detail[160]{};
     swprintf_s(
         detail,
@@ -844,6 +953,10 @@ void HudWindow::handle_webview_process_failure(
 void HudWindow::schedule_navigation_retry(
     COREWEBVIEW2_WEB_ERROR_STATUS status) noexcept
 {
+    if (system_suppressed()) {
+        return;
+    }
+
     wchar_t detail[160]{};
     swprintf_s(
         detail,
@@ -896,10 +1009,160 @@ void HudWindow::cancel_navigation_retry() noexcept
     navigation_tone_ = L"#ffcc00";
 }
 
+void HudWindow::handle_system_lifecycle_action(
+    SystemLifecycleAction action,
+    std::uint16_t detail) noexcept
+{
+    switch (action) {
+    case SystemLifecycleAction::Pause:
+        pause_for_system_lifecycle(detail);
+        break;
+    case SystemLifecycleAction::Resume:
+        schedule_system_resume(detail);
+        break;
+    case SystemLifecycleAction::None:
+    default:
+        break;
+    }
+}
+
+void HudWindow::pause_for_system_lifecycle(
+    std::uint16_t detail) noexcept
+{
+    if (window_ == nullptr) {
+        return;
+    }
+
+    KillTimer(window_, kSystemResumeTimerId);
+    KillTimer(window_, kNavigationRetryTimerId);
+    system_resume_pending_ = false;
+    navigation_retry_attempt_ = 0U;
+    page_connection_recovery_.reset();
+    page_health_watchdog_.disarm();
+
+    if (edit_mode_) {
+        capture_and_persist_bounds();
+        edit_mode_ = false;
+    }
+
+    set_page_health(
+        HudPageState::SystemPaused, page_provider_, detail);
+    navigation_status_ = L"WINDOWS PAUSED";
+    navigation_tone_ = L"#aeb0b2";
+    update_host_state();
+    ShowWindow(window_, SW_HIDE);
+}
+
+void HudWindow::schedule_system_resume(
+    std::uint16_t detail) noexcept
+{
+    if (window_ == nullptr) {
+        return;
+    }
+
+    KillTimer(window_, kSystemResumeTimerId);
+    KillTimer(window_, kNavigationRetryTimerId);
+    system_resume_pending_ = true;
+    navigation_retry_attempt_ = 0U;
+    page_connection_recovery_.reset();
+    page_health_watchdog_.disarm();
+    set_page_health(
+        HudPageState::SystemResuming, page_provider_, detail);
+    navigation_status_ = L"WINDOWS RESUMING";
+    navigation_tone_ = L"#5ac8fa";
+    update_host_state();
+    ShowWindow(window_, SW_HIDE);
+
+    if (SetTimer(
+            window_,
+            kSystemResumeTimerId,
+            kSystemResumeDelayMs,
+            nullptr) == 0U) {
+        debug_windows_error(L"SetTimer(system resume)");
+        system_resume_pending_ = false;
+        set_page_health(
+            HudPageState::Fatal,
+            page_provider_,
+            static_cast<std::uint16_t>(
+                kSystemLifecycleRestartExitCode));
+        PostQuitMessage(kSystemLifecycleRestartExitCode);
+    }
+}
+
+void HudWindow::complete_system_resume() noexcept
+{
+    if (window_ == nullptr) {
+        return;
+    }
+
+    KillTimer(window_, kSystemResumeTimerId);
+    if (system_lifecycle_.paused()) {
+        return;
+    }
+
+    system_resume_pending_ = false;
+    page_connection_recovery_.reset();
+    page_health_watchdog_.disarm();
+    cancel_navigation_retry();
+
+    if (restart_after_system_resume_) {
+        restart_after_system_resume_ = false;
+        set_page_health(
+            HudPageState::Fatal,
+            page_provider_,
+            static_cast<std::uint16_t>(
+                kSystemLifecycleRestartExitCode));
+        ShowWindow(window_, SW_HIDE);
+        PostQuitMessage(kSystemLifecycleRestartExitCode);
+        return;
+    }
+
+    if (!webview_ready_) {
+        set_page_health(
+            HudPageState::SystemResuming,
+            page_provider_,
+            kPowerResumedDetail);
+        return;
+    }
+
+    if (!SetWindowDisplayAffinity(
+            window_, WDA_EXCLUDEFROMCAPTURE)) {
+        debug_windows_error(
+            L"SetWindowDisplayAffinity(system resume)");
+        fail_closed_capture_exclusion();
+        return;
+    }
+    if (!capture_exclusion_intact()) {
+        fail_closed_capture_exclusion();
+        return;
+    }
+
+    edit_mode_ = false;
+    apply_window_mode();
+    if (capture_exclusion_failed_) {
+        return;
+    }
+    restore_saved_bounds();
+    if (capture_exclusion_failed_) {
+        return;
+    }
+
+    webview_.notify_parent_position_changed();
+    webview_.resize();
+    reload_chat_config();
+    apply_capture_policy();
+}
+
+bool HudWindow::system_suppressed() const noexcept
+{
+    return system_lifecycle_.paused() || system_resume_pending_;
+}
+
 bool HudWindow::check_page_connection_recovery() noexcept
 {
     if (window_ == nullptr || !webview_ready_ || capture_risk_ ||
-        capture_exclusion_failed_ || page_provider_ == HudProvider::Unknown) {
+        capture_exclusion_failed_ || system_suppressed() ||
+        page_provider_ == HudProvider::Unknown) {
         return false;
     }
 
@@ -955,7 +1218,8 @@ bool HudWindow::check_page_connection_recovery() noexcept
 void HudWindow::check_page_health_watchdog() noexcept
 {
     if (window_ == nullptr || !webview_ready_ || capture_risk_ ||
-        capture_exclusion_failed_ || page_provider_ == HudProvider::Unknown) {
+        capture_exclusion_failed_ || system_suppressed() ||
+        page_provider_ == HudProvider::Unknown) {
         return;
     }
 
@@ -1058,7 +1322,7 @@ bool HudWindow::apply_capture_policy() noexcept
         return !capture_exclusion_failed_;
     }
 
-    if (capture_risk_) {
+    if (capture_risk_ || system_suppressed()) {
         page_connection_recovery_.reset();
         page_health_watchdog_.disarm();
         if (edit_mode_) {

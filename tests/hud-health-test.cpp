@@ -52,6 +52,19 @@ int main()
         return fail("A valid connection-loss state was rejected");
     }
 
+    constexpr HudHealthSnapshot system_paused{
+        HudPageState::SystemPaused,
+        HudProvider::YouTube,
+        0x7301U};
+    constexpr HudHealthSnapshot system_resuming{
+        HudPageState::SystemResuming,
+        HudProvider::YouTube,
+        0x7302U};
+    if (!chatview::is_valid_hud_health(system_paused) ||
+        !chatview::is_valid_hud_health(system_resuming)) {
+        return fail("A valid Windows lifecycle state was rejected");
+    }
+
     constexpr HudHealthSnapshot invalid_state{
         static_cast<HudPageState>(0xffU),
         HudProvider::Unknown,

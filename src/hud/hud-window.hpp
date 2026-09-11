@@ -8,6 +8,7 @@
 #include "hud/page-connection-recovery.hpp"
 #include "hud/page-health-watchdog.hpp"
 #include "hud/page-health-message.hpp"
+#include "hud/system-lifecycle.hpp"
 #include "hud/webview-host.hpp"
 
 #include <Windows.h>
@@ -45,6 +46,15 @@ private:
         const HudHealthSnapshot &health) noexcept;
     bool check_page_connection_recovery() noexcept;
     void check_page_health_watchdog() noexcept;
+    void handle_system_lifecycle_action(
+        SystemLifecycleAction action,
+        std::uint16_t detail_code) noexcept;
+    void pause_for_system_lifecycle(
+        std::uint16_t detail_code) noexcept;
+    void schedule_system_resume(
+        std::uint16_t detail_code) noexcept;
+    void complete_system_resume() noexcept;
+    [[nodiscard]] bool system_suppressed() const noexcept;
     void handle_webview_process_failure(
         COREWEBVIEW2_PROCESS_FAILED_KIND kind) noexcept;
     void schedule_navigation_retry(
@@ -82,6 +92,7 @@ private:
     unsigned int navigation_retry_attempt_ = 0U;
     PageConnectionRecovery page_connection_recovery_;
     PageHealthWatchdog page_health_watchdog_;
+    SystemLifecycle system_lifecycle_;
     HudPageState page_state_ = HudPageState::Starting;
     HudProvider page_provider_ = HudProvider::Unknown;
     std::uint16_t page_detail_code_ = 0U;
@@ -90,7 +101,10 @@ private:
     bool capture_risk_ = false;
     bool edit_mode_ = false;
     bool edit_hotkey_registered_ = false;
+    bool session_notifications_registered_ = false;
     bool webview_ready_ = false;
+    bool system_resume_pending_ = false;
+    bool restart_after_system_resume_ = false;
     bool capture_exclusion_failed_ = false;
 };
 

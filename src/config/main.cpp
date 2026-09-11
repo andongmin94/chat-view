@@ -262,6 +262,10 @@ HealthPresentation health_presentation(
         return {
             provider + L" chat disconnected — reconnecting",
             kColorWarning};
+    case chatview::HudPageState::SystemPaused:
+        return {L"Windows session paused — HUD hidden", kColorMuted};
+    case chatview::HudPageState::SystemResuming:
+        return {L"Windows session resumed — revalidating", kColorWarning};
     case chatview::HudPageState::Fatal:
         return {L"Chat engine failed", kColorError};
     case chatview::HudPageState::Unknown:

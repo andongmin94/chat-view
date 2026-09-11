@@ -915,6 +915,34 @@ int wmain(int argument_count, wchar_t **arguments)
             child_process.get());
     }
 
+    if (SendMessageW(
+            window,
+            WM_POWERBROADCAST,
+            PBT_APMRESUMECRITICAL,
+            0L) != TRUE) {
+        return fail(
+            L"The HUD rejected a critical resume without prior suspend",
+            child_process.get());
+    }
+    Sleep(200U);
+    if (IsWindowVisible(window)) {
+        return fail(
+            L"The HUD skipped critical-resume revalidation",
+            child_process.get());
+    }
+    if (!wait_for_visibility(window, true)) {
+        return fail(
+            L"The HUD did not return after critical-resume revalidation",
+            child_process.get());
+    }
+    affinity = WDA_NONE;
+    if (!GetWindowDisplayAffinity(window, &affinity) ||
+        affinity != WDA_EXCLUDEFROMCAPTURE) {
+        return fail(
+            L"Critical resume did not retain capture exclusion",
+            child_process.get());
+    }
+
     SendMessageW(
         window, WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK, 0L);
     if (!wait_for_visibility(window, false)) {

@@ -343,7 +343,8 @@ LRESULT HudWindow::handle_message(
             reload_chat_config();
         }
         update_host_state();
-        if (!capture_exclusion_intact()) {
+        if (!system_suppressed() &&
+            !capture_exclusion_intact()) {
             fail_closed_capture_exclusion();
             return 0L;
         }
@@ -488,12 +489,22 @@ LRESULT HudWindow::handle_message(
                 kPowerSuspendedDetail);
             break;
         case PBT_APMRESUMEAUTOMATIC:
-        case PBT_APMRESUMECRITICAL:
         case PBT_APMRESUMESUSPEND:
             handle_system_lifecycle_action(
                 system_lifecycle_.resume(),
                 kPowerResumedDetail);
             break;
+        case PBT_APMRESUMECRITICAL: {
+            SystemLifecycleAction action = system_lifecycle_.resume();
+            if (action == SystemLifecycleAction::None &&
+                !system_lifecycle_.paused() &&
+                !system_resume_pending_) {
+                action = SystemLifecycleAction::Resume;
+            }
+            handle_system_lifecycle_action(
+                action, kPowerResumedDetail);
+            break;
+        }
         default:
             break;
         }

@@ -1,0 +1,34 @@
+name: Finalize diagnostics and soak
+
+on:
+  push:
+    branches:
+      - OBS
+    paths:
+      - .github/workflows/finalize-diagnostics-soak.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out ChatView
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply finalization
+        run: python scripts/finalize-diagnostics-soak.py
+
+      - name: Commit finalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CMakeLists.txt README.md .github/workflows/windows-build.yml src tests
+          git commit -m "feat: finish privacy-safe diagnostics and resource soak"
+          git push origin HEAD:OBS

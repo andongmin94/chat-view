@@ -251,6 +251,7 @@ jobs:
             'dist/obs-plugins/64bit/chat-view-obs.dll',
             'dist/obs-plugins/64bit/chat-view-hud.exe',
             'dist/obs-plugins/64bit/chat-view-config.exe',
+            'dist/obs-plugins/64bit/chat-view-diagnostics.exe',
             'dist/chat-view-self-test.exe',
             'dist/chat-view-plugin-preflight.exe'
           )
@@ -273,6 +274,7 @@ jobs:
             'dist/obs-plugins/64bit/chat-view-obs.dll',
             'dist/obs-plugins/64bit/chat-view-hud.exe',
             'dist/obs-plugins/64bit/chat-view-config.exe',
+            'dist/obs-plugins/64bit/chat-view-diagnostics.exe',
             'dist/chat-view-self-test.exe',
             'dist/chat-view-plugin-preflight.exe',
             'dist/data/obs-plugins/chat-view-obs/locale/en-US.ini',
@@ -348,6 +350,7 @@ jobs:
             (Join-Path $obsRoot 'obs-plugins/64bit/chat-view-obs.dll'),
             (Join-Path $obsRoot 'obs-plugins/64bit/chat-view-hud.exe'),
             (Join-Path $obsRoot 'obs-plugins/64bit/chat-view-config.exe'),
+            (Join-Path $obsRoot 'obs-plugins/64bit/chat-view-diagnostics.exe'),
             (Join-Path $obsRoot 'data/obs-plugins/chat-view-obs/locale/en-US.ini'),
             (Join-Path $obsRoot 'data/obs-plugins/chat-view-obs/locale/ko-KR.ini')
           )

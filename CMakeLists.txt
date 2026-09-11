@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.3.6 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.3.7 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -73,6 +73,15 @@ target_include_directories(chat-view-common PUBLIC "${CHATVIEW_SOURCE_DIR}")
 target_link_libraries(chat-view-common PUBLIC winhttp)
 chatview_enable_win32(chat-view-common)
 chatview_enable_warnings(chat-view-common)
+
+add_library(chat-view-diagnostic-redaction STATIC
+    src/common/diagnostic-redaction.cpp
+    src/common/diagnostic-redaction.hpp
+)
+target_include_directories(
+    chat-view-diagnostic-redaction PUBLIC "${CHATVIEW_SOURCE_DIR}")
+chatview_enable_win32(chat-view-diagnostic-redaction)
+chatview_enable_warnings(chat-view-diagnostic-redaction)
 
 add_library(chat-view-obs MODULE
     src/plugin/plugin-main.cpp
@@ -165,6 +174,29 @@ set_target_properties(chat-view-config PROPERTIES OUTPUT_NAME "chat-view-config"
 chatview_enable_warnings(chat-view-config)
 chatview_set_runtime_output(chat-view-config)
 
+add_executable(chat-view-diagnostics WIN32
+    src/diagnostics/main.cpp
+    src/diagnostics/diagnostics-exporter.cpp
+    src/diagnostics/diagnostics-exporter.hpp
+)
+target_include_directories(
+    chat-view-diagnostics PRIVATE "${CHATVIEW_SOURCE_DIR}")
+target_link_libraries(chat-view-diagnostics PRIVATE
+    chat-view-common
+    chat-view-diagnostic-redaction
+    bcrypt
+    shell32
+    user32
+    version
+)
+target_compile_definitions(
+    chat-view-diagnostics PRIVATE CHATVIEW_VERSION="${PROJECT_VERSION}")
+chatview_enable_win32(chat-view-diagnostics)
+set_target_properties(
+    chat-view-diagnostics PROPERTIES OUTPUT_NAME "chat-view-diagnostics")
+chatview_enable_warnings(chat-view-diagnostics)
+chatview_set_runtime_output(chat-view-diagnostics)
+
 add_executable(chat-view-self-test
     src/preflight/hud-self-test.cpp
     src/common/shared-state.hpp
@@ -192,6 +224,18 @@ if(BUILD_TESTING)
     target_link_libraries(chat-view-chat-config-test PRIVATE chat-view-common)
     chatview_enable_warnings(chat-view-chat-config-test)
     add_test(NAME chat-view-chat-config COMMAND chat-view-chat-config-test)
+
+    add_executable(chat-view-diagnostic-redaction-test
+        tests/diagnostic-redaction-test.cpp
+    )
+    target_link_libraries(
+        chat-view-diagnostic-redaction-test PRIVATE
+        chat-view-diagnostic-redaction)
+    chatview_enable_warnings(chat-view-diagnostic-redaction-test)
+    add_test(
+        NAME chat-view-diagnostic-redaction
+        COMMAND chat-view-diagnostic-redaction-test
+    )
 
     add_executable(chat-view-control-status-reader-test
         tests/control-status-reader-test.cpp
@@ -373,6 +417,25 @@ if(BUILD_TESTING)
     )
     set_tests_properties(chat-view-hud-smoke PROPERTIES TIMEOUT 30)
 
+    add_executable(chat-view-hud-resource-soak-test
+        tests/hud-resource-soak-test.cpp
+        src/common/shared-state.hpp
+        src/common/win32-handle.hpp
+        src/common/window-messages.hpp
+    )
+    target_include_directories(
+        chat-view-hud-resource-soak-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    target_link_libraries(
+        chat-view-hud-resource-soak-test PRIVATE psapi user32)
+    chatview_enable_win32(chat-view-hud-resource-soak-test)
+    chatview_enable_warnings(chat-view-hud-resource-soak-test)
+    add_test(
+        NAME chat-view-hud-resource-soak
+        COMMAND chat-view-hud-resource-soak-test "$<TARGET_FILE:chat-view-hud>"
+    )
+    set_tests_properties(
+        chat-view-hud-resource-soak PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+
     set(obs_load_test_arguments
         "$<TARGET_FILE:chat-view-obs>"
         "$<TARGET_FILE_DIR:OBS::libobs>"
@@ -429,7 +492,11 @@ if(BUILD_TESTING)
     chatview_enable_warnings(chat-view-obs-capture-qualification-test)
 endif()
 
-install(TARGETS chat-view-obs chat-view-hud chat-view-config
+install(TARGETS
+    chat-view-obs
+    chat-view-hud
+    chat-view-config
+    chat-view-diagnostics
     RUNTIME DESTINATION "obs-plugins/64bit"
     LIBRARY DESTINATION "obs-plugins/64bit"
 )

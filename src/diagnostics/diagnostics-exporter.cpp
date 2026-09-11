@@ -513,70 +513,50 @@ void append_runtime_summary(
     std::wostringstream &summary,
     const DiagnosticsRuntimeSnapshot &runtime)
 {
-    summary << L"
-Live runtime snapshot
-"
-            << L"---------------------
-"
+    summary << L"\nLive runtime snapshot\n"
+            << L"---------------------\n"
             << L"OBS bridge connected: " << yes_no(runtime.obs_connected)
-            << L"
-";
+            << L"\n";
 
     if (runtime.control_status_available &&
         is_valid_control_status_snapshot(runtime.control_status)) {
         const ControlStatusSnapshot &status = runtime.control_status;
-        summary << L"OBS output: " << output_description(status) << L"
-"
+        summary << L"OBS output: " << output_description(status) << L"\n"
                 << L"Display Capture interlock: "
                 << (has_control_status_flag(status, ControlStatusCaptureRisk)
                         ? L"Active"
                         : L"Inactive")
-                << L"
-"
+                << L"\n"
                 << L"HUD running: "
                 << yes_no(has_control_status_flag(
                        status, ControlStatusHudRunning))
-                << L"
-"
+                << L"\n"
                 << L"HUD visible: "
                 << yes_no(has_control_status_flag(
                        status, ControlStatusHudVisible))
-                << L"
-";
+                << L"\n";
     } else {
-        summary << L"OBS output: Unavailable
-"
-                << L"Display Capture interlock: Unavailable
-"
-                << L"HUD running: Unavailable
-"
-                << L"HUD visible: Unavailable
-";
+        summary << L"OBS output: Unavailable\n"
+                << L"Display Capture interlock: Unavailable\n"
+                << L"HUD running: Unavailable\n"
+                << L"HUD visible: Unavailable\n";
     }
 
     if (runtime.hud_health_available &&
         is_valid_hud_health(runtime.hud_health)) {
         summary << L"HUD provider: "
-                << provider_name(runtime.hud_health.provider) << L"
-"
+                << provider_name(runtime.hud_health.provider) << L"\n"
                 << L"HUD page state: "
-                << page_state_name(runtime.hud_health.state) << L"
-"
+                << page_state_name(runtime.hud_health.state) << L"\n"
                 << L"HUD detail code: "
-                << runtime.hud_health.detail_code << L"
-"
+                << runtime.hud_health.detail_code << L"\n"
                 << L"Current recovery condition: "
-                << recovery_condition(runtime.hud_health.state) << L"
-";
+                << recovery_condition(runtime.hud_health.state) << L"\n";
     } else {
-        summary << L"HUD provider: Unavailable
-"
-                << L"HUD page state: Unavailable
-"
-                << L"HUD detail code: Unavailable
-"
-                << L"Current recovery condition: Unavailable
-";
+        summary << L"HUD provider: Unavailable\n"
+                << L"HUD page state: Unavailable\n"
+                << L"HUD detail code: Unavailable\n"
+                << L"Current recovery condition: Unavailable\n";
     }
 }
 

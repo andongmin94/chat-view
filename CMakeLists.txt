@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.2.12 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.3.0 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -77,11 +77,14 @@ chatview_enable_warnings(chat-view-common)
 add_library(chat-view-obs MODULE
     src/plugin/plugin-main.cpp
     src/plugin/capture-risk-policy.hpp
+    src/plugin/control-center-bridge.cpp
+    src/plugin/control-center-bridge.hpp
     src/plugin/runtime-controller.cpp
     src/plugin/runtime-controller.hpp
     src/plugin/restart-policy.hpp
     src/plugin/transport-token.cpp
     src/plugin/transport-token.hpp
+    src/common/control-status.hpp
     src/common/shared-state.hpp
     src/common/srw-lock.hpp
     src/common/win32-handle.hpp
@@ -139,10 +142,15 @@ chatview_set_runtime_output(chat-view-hud)
 
 add_executable(chat-view-config WIN32
     src/config/main.cpp
+    src/config/control-status-reader.cpp
+    src/config/control-status-reader.hpp
+    src/common/control-status.hpp
+    src/common/win32-handle.hpp
     src/common/window-messages.hpp
 )
 target_include_directories(chat-view-config PRIVATE "${CHATVIEW_SOURCE_DIR}")
-target_link_libraries(chat-view-config PRIVATE chat-view-common user32 gdi32)
+target_link_libraries(
+    chat-view-config PRIVATE chat-view-common user32 gdi32 shell32)
 target_compile_definitions(chat-view-config PRIVATE CHATVIEW_VERSION="${PROJECT_VERSION}")
 chatview_enable_win32(chat-view-config)
 set_target_properties(chat-view-config PROPERTIES OUTPUT_NAME "chat-view-config")
@@ -176,6 +184,22 @@ if(BUILD_TESTING)
     target_link_libraries(chat-view-chat-config-test PRIVATE chat-view-common)
     chatview_enable_warnings(chat-view-chat-config-test)
     add_test(NAME chat-view-chat-config COMMAND chat-view-chat-config-test)
+
+    add_executable(chat-view-control-status-reader-test
+        tests/control-status-reader-test.cpp
+        src/config/control-status-reader.cpp
+        src/config/control-status-reader.hpp
+        src/common/control-status.hpp
+        src/common/win32-handle.hpp
+    )
+    target_include_directories(
+        chat-view-control-status-reader-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_win32(chat-view-control-status-reader-test)
+    chatview_enable_warnings(chat-view-control-status-reader-test)
+    add_test(
+        NAME chat-view-control-status-reader
+        COMMAND chat-view-control-status-reader-test
+    )
 
     add_executable(chat-view-config-single-instance-test
         tests/config-single-instance-test.cpp

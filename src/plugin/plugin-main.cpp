@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "plugin/capture-risk-policy.hpp"
+#include "plugin/control-center-bridge.hpp"
 #include "plugin/runtime-controller.hpp"
 
 #include <obs-frontend-api.h>
@@ -26,6 +27,7 @@ struct CaptureScan {
 };
 
 std::unique_ptr<chatview::RuntimeController> runtime_controller;
+std::unique_ptr<chatview::ControlCenterBridge> control_center_bridge;
 UINT_PTR capture_risk_timer_id = 0U;
 bool frontend_callback_registered = false;
 bool scene_graph_stable = false;
@@ -157,11 +159,26 @@ void publish_frontend_state() noexcept
     }
 
     runtime_controller->update(streaming, recording, suppress);
+    if (control_center_bridge) {
+        control_center_bridge->update(
+            streaming,
+            recording,
+            replay_buffer,
+            virtual_camera,
+            suppress);
+    }
 }
 
 void CALLBACK capture_risk_timer(
     HWND, UINT, UINT_PTR, DWORD) noexcept
 {
+    if (control_center_bridge && runtime_controller &&
+        control_center_bridge->consume_restart_request() &&
+        !runtime_controller->restart_hud()) {
+        blog(
+            LOG_ERROR,
+            "[ChatView OBS] Control Center HUD restart could not be requested");
+    }
     publish_frontend_state();
 }
 
@@ -241,8 +258,9 @@ void on_frontend_event(obs_frontend_event event, void *) noexcept
 
 void open_settings(void *)
 {
-    if (runtime_controller && !runtime_controller->open_settings()) {
-        blog(LOG_ERROR, "[ChatView OBS] Settings could not be opened");
+    if (control_center_bridge &&
+        !control_center_bridge->open_control_center()) {
+        blog(LOG_ERROR, "[ChatView OBS] Control Center could not be opened");
     }
 }
 
@@ -283,6 +301,18 @@ void disconnect_frontend_callbacks() noexcept
     }
 }
 
+void destroy_runtime_components() noexcept
+{
+    if (control_center_bridge) {
+        control_center_bridge->stop();
+        control_center_bridge.reset();
+    }
+    if (runtime_controller) {
+        runtime_controller->stop();
+        runtime_controller.reset();
+    }
+}
+
 } // namespace
 
 MODULE_EXPORT const char *obs_module_name(void)
@@ -300,10 +330,21 @@ bool obs_module_load(void)
     try {
         reset_frontend_tracking();
 
-        runtime_controller = std::make_unique<chatview::RuntimeController>();
+        runtime_controller =
+            std::make_unique<chatview::RuntimeController>();
         if (!runtime_controller->start()) {
             blog(LOG_ERROR, "[ChatView OBS] Failed to initialize HUD runtime");
             runtime_controller.reset();
+            return false;
+        }
+
+        control_center_bridge =
+            std::make_unique<chatview::ControlCenterBridge>();
+        if (!control_center_bridge->start()) {
+            blog(
+                LOG_ERROR,
+                "[ChatView OBS] Failed to initialize Control Center bridge");
+            destroy_runtime_components();
             return false;
         }
 
@@ -321,8 +362,7 @@ bool obs_module_load(void)
                 LOG_ERROR,
                 "[ChatView OBS] Failed to start Display Capture safety monitor");
             disconnect_frontend_callbacks();
-            runtime_controller->stop();
-            runtime_controller.reset();
+            destroy_runtime_components();
             return false;
         }
 
@@ -343,10 +383,7 @@ bool obs_module_load(void)
     }
 
     disconnect_frontend_callbacks();
-    if (runtime_controller) {
-        runtime_controller->stop();
-        runtime_controller.reset();
-    }
+    destroy_runtime_components();
     reset_frontend_tracking();
     return false;
 }
@@ -354,12 +391,7 @@ bool obs_module_load(void)
 void obs_module_unload(void)
 {
     disconnect_frontend_callbacks();
-
-    if (runtime_controller) {
-        runtime_controller->stop();
-        runtime_controller.reset();
-    }
-
+    destroy_runtime_components();
     reset_frontend_tracking();
     blog(LOG_INFO, "[ChatView OBS] Plugin unloaded");
 }

@@ -4,6 +4,7 @@
 
 #include "common/chat-config.hpp"
 #include "hud/host-state-message.hpp"
+#include "hud/page-health-message.hpp"
 
 #include <Windows.h>
 #include <d3d11.h>
@@ -371,6 +372,10 @@ void WebViewHost::close() noexcept
         if (process_failed_token_.value != 0) {
             webview_->remove_ProcessFailed(process_failed_token_);
         }
+        if (web_message_received_token_.value != 0) {
+            webview_->remove_WebMessageReceived(
+                web_message_received_token_);
+        }
     }
 
     navigation_starting_token_ = {};
@@ -378,6 +383,7 @@ void WebViewHost::close() noexcept
     new_window_requested_token_ = {};
     permission_requested_token_ = {};
     process_failed_token_ = {};
+    web_message_received_token_ = {};
     download_starting_token_ = {};
 
     if (controller_) {
@@ -843,13 +849,30 @@ HRESULT WebViewHost::on_controller_created(
         return S_OK;
     }
 
+    result = webview_->add_WebMessageReceived(
+        Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+            [state](
+                ICoreWebView2 *,
+                ICoreWebView2WebMessageReceivedEventArgs *args) -> HRESULT {
+                if (state->owner != nullptr && args != nullptr) {
+                    state->owner->handle_page_health_message(args);
+                }
+                return S_OK;
+            })
+            .Get(),
+        &web_message_received_token_);
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
+
     result = webview_->AddScriptToExecuteOnDocumentCreated(
         kOverlayBootstrapScript,
         Callback<
             ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
             [state](HRESULT callback_result, LPCWSTR) -> HRESULT {
                 return state->owner != nullptr
-                           ? state->owner->on_bootstrap_registered(
+                           ? state->owner->on_overlay_bootstrap_registered(
                                  callback_result)
                            : S_OK;
             })
@@ -860,7 +883,34 @@ HRESULT WebViewHost::on_controller_created(
     return S_OK;
 }
 
-HRESULT WebViewHost::on_bootstrap_registered(HRESULT result) noexcept
+HRESULT WebViewHost::on_overlay_bootstrap_registered(
+    HRESULT result) noexcept
+{
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
+
+    const std::shared_ptr<CallbackState> state = callback_state_;
+    result = webview_->AddScriptToExecuteOnDocumentCreated(
+        page_health_bootstrap_script(),
+        Callback<
+            ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
+            [state](HRESULT callback_result, LPCWSTR) -> HRESULT {
+                return state->owner != nullptr
+                           ? state->owner->on_page_health_bootstrap_registered(
+                                 callback_result)
+                           : S_OK;
+            })
+            .Get());
+    if (FAILED(result)) {
+        post_failure(result);
+    }
+    return S_OK;
+}
+
+HRESULT WebViewHost::on_page_health_bootstrap_registered(
+    HRESULT result) noexcept
 {
     if (FAILED(result)) {
         post_failure(result);
@@ -911,6 +961,48 @@ bool WebViewHost::is_navigation_allowed(
     }
 
     return is_matching_chat_document_url(url, current_url_);
+}
+
+void WebViewHost::handle_page_health_message(
+    ICoreWebView2WebMessageReceivedEventArgs *args) noexcept
+{
+    if (args == nullptr || window_ == nullptr || current_url_.empty()) {
+        return;
+    }
+
+    LPWSTR source = nullptr;
+    if (FAILED(args->get_Source(&source)) || source == nullptr) {
+        CoTaskMemFree(source);
+        return;
+    }
+    const bool source_allowed = is_navigation_allowed(source);
+    CoTaskMemFree(source);
+    if (!source_allowed) {
+        return;
+    }
+
+    LPWSTR message = nullptr;
+    if (FAILED(args->TryGetWebMessageAsString(&message)) ||
+        message == nullptr) {
+        CoTaskMemFree(message);
+        return;
+    }
+
+    HudHealthSnapshot snapshot;
+    const bool parsed = parse_page_health_message(message, snapshot);
+    CoTaskMemFree(message);
+    if (!parsed ||
+        snapshot.provider != provider_for_chat_document(current_url_)) {
+        return;
+    }
+
+    if (!PostMessageW(
+            window_,
+            kWebViewPageHealthMessage,
+            static_cast<WPARAM>(encode_hud_health(snapshot)),
+            0L)) {
+        post_failure(HRESULT_FROM_WIN32(GetLastError()));
+    }
 }
 
 void WebViewHost::post_failure(HRESULT result) const noexcept

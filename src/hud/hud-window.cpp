@@ -321,10 +321,17 @@ LRESULT HudWindow::handle_message(
     case kWebViewDocumentReadyMessage:
         cancel_navigation_retry();
         if (page_state_ != HudPageState::SetupRequired) {
-            set_page_health(
-                HudPageState::Ready, page_provider_);
+            apply_page_health(HudHealthSnapshot{
+                HudPageState::Loading,
+                page_provider_,
+                0U});
+        } else {
+            update_host_state();
         }
-        update_host_state();
+        return 0L;
+    case kWebViewPageHealthMessage:
+        apply_page_health(decode_hud_health(
+            static_cast<std::uint32_t>(wparam)));
         return 0L;
     case kWebViewProcessFailedMessage:
         handle_webview_process_failure(
@@ -669,6 +676,49 @@ void HudWindow::reload_chat_config() noexcept
             HudProvider::Unknown);
         webview_.show_setup_page();
     }
+}
+
+void HudWindow::apply_page_health(
+    const HudHealthSnapshot &health) noexcept
+{
+    if (!is_valid_hud_health(health) ||
+        !is_dom_reportable_page_state(health.state) ||
+        health.provider == HudProvider::Unknown ||
+        health.provider != page_provider_) {
+        return;
+    }
+
+    set_page_health(
+        health.state, health.provider, health.detail_code);
+    switch (health.state) {
+    case HudPageState::Loading:
+        navigation_status_ = L"CHAT LOADING";
+        navigation_tone_ = L"#ffcc00";
+        break;
+    case HudPageState::Ready:
+        cancel_navigation_retry();
+        navigation_status_.clear();
+        navigation_tone_ = L"#ffcc00";
+        break;
+    case HudPageState::LoginRequired:
+        cancel_navigation_retry();
+        navigation_status_ = L"LOGIN REQUIRED";
+        navigation_tone_ = L"#ffcc00";
+        break;
+    case HudPageState::Offline:
+        cancel_navigation_retry();
+        navigation_status_ = L"BROADCAST OFFLINE";
+        navigation_tone_ = L"#aeb0b2";
+        break;
+    case HudPageState::LayoutChanged:
+        cancel_navigation_retry();
+        navigation_status_ = L"CHAT PAGE CHANGED";
+        navigation_tone_ = L"#ff3b30";
+        break;
+    default:
+        return;
+    }
+    update_host_state();
 }
 
 void HudWindow::handle_webview_process_failure(

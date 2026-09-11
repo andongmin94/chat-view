@@ -38,6 +38,8 @@ private:
     void toggle_edit_mode();
     void apply_window_mode() noexcept;
     void reload_chat_config() noexcept;
+    void apply_page_health(
+        const HudHealthSnapshot &health) noexcept;
     void handle_webview_process_failure(
         COREWEBVIEW2_PROCESS_FAILED_KIND kind) noexcept;
     void schedule_navigation_retry(

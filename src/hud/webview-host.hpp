@@ -19,6 +19,7 @@ inline constexpr UINT kWebViewFailedMessage = WM_APP + 41U;
 inline constexpr UINT kWebViewDocumentReadyMessage = WM_APP + 42U;
 inline constexpr UINT kWebViewProcessFailedMessage = WM_APP + 43U;
 inline constexpr UINT kWebViewNavigationFailedMessage = WM_APP + 44U;
+inline constexpr UINT kWebViewPageHealthMessage = WM_APP + 45U;
 
 class WebViewHost final {
 public:
@@ -56,8 +57,11 @@ private:
     HRESULT on_controller_created(
         HRESULT result,
         ICoreWebView2CompositionController *controller) noexcept;
-    HRESULT on_bootstrap_registered(HRESULT result) noexcept;
+    HRESULT on_overlay_bootstrap_registered(HRESULT result) noexcept;
+    HRESULT on_page_health_bootstrap_registered(HRESULT result) noexcept;
     [[nodiscard]] HRESULT finish_controller_initialization() noexcept;
+    void handle_page_health_message(
+        ICoreWebView2WebMessageReceivedEventArgs *args) noexcept;
     [[nodiscard]] bool is_navigation_allowed(
         const wchar_t *url) const noexcept;
     void post_failure(HRESULT result) const noexcept;
@@ -90,6 +94,7 @@ private:
     EventRegistrationToken new_window_requested_token_{};
     EventRegistrationToken permission_requested_token_{};
     EventRegistrationToken process_failed_token_{};
+    EventRegistrationToken web_message_received_token_{};
     EventRegistrationToken download_starting_token_{};
 };
 

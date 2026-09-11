@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.3.2 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.3.3 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -103,6 +103,8 @@ add_executable(chat-view-hud WIN32
     src/hud/main.cpp
     src/hud/host-state-message.cpp
     src/hud/host-state-message.hpp
+    src/hud/page-health-message.cpp
+    src/hud/page-health-message.hpp
     src/hud/hud-placement.cpp
     src/hud/hud-placement.hpp
     src/hud/hud-window.cpp
@@ -230,6 +232,20 @@ if(BUILD_TESTING)
     add_test(
         NAME chat-view-hud-health
         COMMAND chat-view-hud-health-test
+    )
+
+    add_executable(chat-view-page-health-message-test
+        tests/page-health-message-test.cpp
+        src/hud/page-health-message.cpp
+        src/hud/page-health-message.hpp
+        src/common/hud-health.hpp
+    )
+    target_include_directories(
+        chat-view-page-health-message-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_warnings(chat-view-page-health-message-test)
+    add_test(
+        NAME chat-view-page-health-message
+        COMMAND chat-view-page-health-message-test
     )
 
     add_executable(chat-view-hud-placement-test

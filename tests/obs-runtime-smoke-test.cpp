@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/runtime-history-store.hpp"
 #include "common/win32-handle.hpp"
 #include "common/window-messages.hpp"
 
@@ -26,6 +27,7 @@ constexpr DWORD kHudExitTimeoutMs = 10000U;
 constexpr DWORD kHudDescendantStartupTimeoutMs = 15000U;
 constexpr DWORD kHudDescendantExitTimeoutMs = 15000U;
 constexpr DWORD kObsExitTimeoutMs = 30000U;
+constexpr DWORD kRuntimeHistoryTimeoutMs = 10000U;
 constexpr unsigned int kCrashRecoveryCycles = 3U;
 
 #ifndef WDA_EXCLUDEFROMCAPTURE
@@ -381,6 +383,49 @@ bool validate_hud(
     return true;
 }
 
+bool wait_for_runtime_history(
+    std::uint32_t expected_exit_code,
+    std::uint32_t expected_failure_count) noexcept
+{
+    chatview::RuntimeHistoryStore store;
+    const ULONGLONG deadline =
+        GetTickCount64() + kRuntimeHistoryTimeoutMs;
+    while (GetTickCount64() < deadline) {
+        chatview::RuntimeTelemetrySnapshot telemetry;
+        if (store.load(telemetry) &&
+            chatview::has_runtime_telemetry_flag(
+                telemetry,
+                chatview::RuntimeTelemetryHistoryValid) &&
+            chatview::has_runtime_telemetry_flag(
+                telemetry,
+                chatview::RuntimeTelemetryAutomatic) &&
+            !chatview::has_runtime_telemetry_flag(
+                telemetry,
+                chatview::RuntimeTelemetryCircuitOpen) &&
+            telemetry.last_exit_code == expected_exit_code &&
+            telemetry.restart_reason ==
+                chatview::RuntimeRestartReason::UnexpectedExit &&
+            telemetry.consecutive_failures == expected_failure_count &&
+            telemetry.event_filetime_utc != 0U) {
+            return true;
+        }
+        Sleep(50U);
+    }
+    return false;
+}
+
+bool clear_runtime_history() noexcept
+{
+    chatview::RuntimeHistoryStore store;
+    if (store.file_path().empty()) {
+        return false;
+    }
+    if (DeleteFileW(store.file_path().c_str())) {
+        return true;
+    }
+    return GetLastError() == ERROR_FILE_NOT_FOUND;
+}
+
 bool terminate_hud(
     HudInstance &instance,
     unsigned int cycle) noexcept
@@ -521,6 +566,16 @@ int wmain(int argument_count, wchar_t **arguments)
                 obs_process.get());
         }
 
+        const std::uint32_t expected_exit_code = 77U + cycle;
+        if (!wait_for_runtime_history(
+                expected_exit_code,
+                cycle + 1U)) {
+            return fail(
+                L"The ChatView plugin did not persist HUD recovery telemetry in cycle " +
+                    std::to_wstring(cycle + 1U),
+                obs_process.get());
+        }
+
         if (!wait_for_hud(
                 obs_process.get(),
                 process_info.dwProcessId,
@@ -543,6 +598,12 @@ int wmain(int argument_count, wchar_t **arguments)
                     std::to_wstring(cycle + 1U),
                 obs_process.get());
         }
+    }
+
+    if (!clear_runtime_history()) {
+        return fail(
+            L"The OBS integration test could not reset its runtime-history fixture",
+            obs_process.get());
     }
 
     std::vector<TrackedProcess> final_descendants;

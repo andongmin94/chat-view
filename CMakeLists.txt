@@ -518,6 +518,8 @@ if(BUILD_TESTING)
         src/common/win32-handle.hpp
     )
     target_include_directories(chat-view-obs-runtime-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    target_link_libraries(
+        chat-view-obs-runtime-test PRIVATE chat-view-runtime-history)
     chatview_enable_win32(chat-view-obs-runtime-test)
     chatview_enable_warnings(chat-view-obs-runtime-test)
 

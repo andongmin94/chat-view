@@ -5,6 +5,9 @@
 #include <filesystem>
 #include <string>
 
+#define CHATVIEW_WIDEN_INNER(value) L##value
+#define CHATVIEW_WIDEN(value) CHATVIEW_WIDEN_INNER(value)
+
 namespace chatview {
 
 struct DiagnosticsExportResult {

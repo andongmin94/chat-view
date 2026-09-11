@@ -34,6 +34,16 @@ enum class StreamReadinessBlocker : std::uint8_t {
     HudHidden,
 };
 
+enum class StreamRecoveryAction : std::uint8_t {
+    None = 0U,
+    FocusChatUrl,
+    RestartHud,
+    OpenHudInteraction,
+    ActivateObs,
+    OpenNetworkSettings,
+    ExportDiagnostics,
+};
+
 struct StreamReadinessInput {
     bool obs_connected = false;
     bool status_available = false;
@@ -48,6 +58,49 @@ struct StreamReadinessResult {
     StreamReadinessBlocker blocker =
         StreamReadinessBlocker::StatusUnavailable;
 };
+
+[[nodiscard]] constexpr StreamRecoveryAction recovery_action_for(
+    StreamReadinessBlocker blocker) noexcept
+{
+    switch (blocker) {
+    case StreamReadinessBlocker::ChatNotConfigured:
+    case StreamReadinessBlocker::BroadcastOffline:
+        return StreamRecoveryAction::FocusChatUrl;
+
+    case StreamReadinessBlocker::RestartCircuitOpen:
+    case StreamReadinessBlocker::HudNotRunning:
+    case StreamReadinessBlocker::HudHealthUnavailable:
+    case StreamReadinessBlocker::ChatRetrying:
+    case StreamReadinessBlocker::ChatRecovering:
+    case StreamReadinessBlocker::ConnectionLost:
+    case StreamReadinessBlocker::ChatFatal:
+        return StreamRecoveryAction::RestartHud;
+
+    case StreamReadinessBlocker::LoginRequired:
+    case StreamReadinessBlocker::HudHidden:
+        return StreamRecoveryAction::OpenHudInteraction;
+
+    case StreamReadinessBlocker::StatusUnavailable:
+    case StreamReadinessBlocker::SceneGraphUnavailable:
+    case StreamReadinessBlocker::DisplayCaptureActive:
+        return StreamRecoveryAction::ActivateObs;
+
+    case StreamReadinessBlocker::NetworkOffline:
+        return StreamRecoveryAction::OpenNetworkSettings;
+
+    case StreamReadinessBlocker::LayoutChanged:
+        return StreamRecoveryAction::ExportDiagnostics;
+
+    case StreamReadinessBlocker::None:
+    case StreamReadinessBlocker::ObsDisconnected:
+    case StreamReadinessBlocker::ChatStarting:
+    case StreamReadinessBlocker::ChatLoading:
+    case StreamReadinessBlocker::SystemPaused:
+    case StreamReadinessBlocker::SystemResuming:
+    default:
+        return StreamRecoveryAction::None;
+    }
+}
 
 [[nodiscard]] constexpr StreamReadinessResult evaluate_stream_readiness(
     const StreamReadinessInput &input) noexcept
@@ -129,5 +182,11 @@ struct StreamReadinessResult {
 static_assert(
     evaluate_stream_readiness(StreamReadinessInput{}).blocker ==
     StreamReadinessBlocker::ObsDisconnected);
+static_assert(
+    recovery_action_for(StreamReadinessBlocker::DisplayCaptureActive) ==
+    StreamRecoveryAction::ActivateObs);
+static_assert(
+    recovery_action_for(StreamReadinessBlocker::ChatFatal) ==
+    StreamRecoveryAction::RestartHud);
 
 } // namespace chatview

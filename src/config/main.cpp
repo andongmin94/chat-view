@@ -29,14 +29,16 @@ constexpr wchar_t kWindowClassName[] = L"ChatViewObsConfigWindow";
 constexpr UINT_PTR kRefreshTimerId = 1U;
 constexpr UINT kRefreshIntervalMs = 250U;
 constexpr DWORD kHudHealthQueryTimeoutMs = 40U;
+constexpr DWORD kHudControlTimeoutMs = 1500U;
 constexpr int kUrlEditId = 1001;
 constexpr int kSaveButtonId = 1002;
 constexpr int kEditButtonId = 1003;
 constexpr int kRestartButtonId = 1004;
 constexpr int kCloseButtonId = 1005;
 constexpr int kDiagnosticsButtonId = 1006;
+constexpr int kRecoveryButtonId = 1007;
 constexpr int kWindowWidthDip = 960;
-constexpr int kWindowHeightDip = 570;
+constexpr int kWindowHeightDip = 620;
 constexpr int kMinimumUrlLength = 0;
 constexpr int kMaximumUrlLength = 2048;
 
@@ -445,6 +447,28 @@ ReadinessPresentation readiness_presentation(
     }
 }
 
+const wchar_t *recovery_action_label(
+    chatview::StreamRecoveryAction action) noexcept
+{
+    switch (action) {
+    case chatview::StreamRecoveryAction::FocusChatUrl:
+        return L"Enter chat URL";
+    case chatview::StreamRecoveryAction::RestartHud:
+        return L"Restart HUD";
+    case chatview::StreamRecoveryAction::OpenHudInteraction:
+        return L"Open private HUD";
+    case chatview::StreamRecoveryAction::ActivateObs:
+        return L"Open OBS";
+    case chatview::StreamRecoveryAction::OpenNetworkSettings:
+        return L"Open network settings";
+    case chatview::StreamRecoveryAction::ExportDiagnostics:
+        return L"Export diagnostics";
+    case chatview::StreamRecoveryAction::None:
+    default:
+        return L"";
+    }
+}
+
 BOOL CALLBACK find_hud_window(HWND window, LPARAM data)
 {
     auto *search = static_cast<WindowSearch *>(
@@ -472,6 +496,40 @@ BOOL CALLBACK find_hud_window(HWND window, LPARAM data)
         return FALSE;
     }
     return TRUE;
+}
+
+BOOL CALLBACK find_application_window(HWND window, LPARAM data)
+{
+    auto *search = static_cast<WindowSearch *>(
+        reinterpret_cast<void *>(data));
+    if (search == nullptr || !IsWindowVisible(window) ||
+        GetWindow(window, GW_OWNER) != nullptr) {
+        return TRUE;
+    }
+
+    DWORD process_id = 0U;
+    GetWindowThreadProcessId(window, &process_id);
+    const LONG_PTR extended_style =
+        GetWindowLongPtrW(window, GWL_EXSTYLE);
+    if (process_id == search->process_id &&
+        (extended_style & WS_EX_TOOLWINDOW) == 0) {
+        search->window = window;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+HWND application_window_for_process(DWORD process_id) noexcept
+{
+    if (process_id == 0U) {
+        return nullptr;
+    }
+
+    WindowSearch search{process_id, nullptr};
+    EnumWindows(
+        &find_application_window,
+        reinterpret_cast<LPARAM>(&search));
+    return search.window;
 }
 
 HWND hud_window_for_process(DWORD process_id) noexcept
@@ -522,6 +580,23 @@ bool query_hud_health(
 
     health = decoded;
     return true;
+}
+
+bool send_hud_control_message(HWND hud, UINT message) noexcept
+{
+    if (hud == nullptr || message == 0U) {
+        return false;
+    }
+
+    DWORD_PTR ignored = 0U;
+    return SendMessageTimeoutW(
+               hud,
+               message,
+               0U,
+               0L,
+               SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT,
+               kHudControlTimeoutMs,
+               &ignored) != FALSE;
 }
 
 std::wstring output_description(
@@ -709,6 +784,9 @@ private:
             case kDiagnosticsButtonId:
                 export_diagnostics();
                 return 0L;
+            case kRecoveryButtonId:
+                perform_recovery_action();
+                return 0L;
             case kCloseButtonId:
                 DestroyWindow(window_);
                 return 0L;
@@ -807,6 +885,8 @@ private:
         version_ = create_static(
             L"ChatView " CHATVIEW_WIDEN(CHATVIEW_VERSION));
 
+        recovery_button_ = create_button(
+            L"Fix now", kRecoveryButtonId, BS_DEFPUSHBUTTON);
         save_button_ = create_button(
             L"Save & Apply", kSaveButtonId, BS_DEFPUSHBUTTON);
         edit_button_ = create_button(
@@ -818,7 +898,7 @@ private:
         close_button_ = create_button(
             L"Close", kCloseButtonId, BS_PUSHBUTTON);
 
-        const std::array<HWND, 21U> required{
+        const std::array<HWND, 22U> required{
             title_,
             subtitle_,
             url_label_,
@@ -836,6 +916,7 @@ private:
             recovery_label_,
             recovery_value_,
             feedback_,
+            recovery_button_,
             save_button_,
             edit_button_,
             restart_button_,
@@ -1132,6 +1213,156 @@ private:
             presentation.text,
             presentation.color,
             readiness_color_);
+        set_recovery_action(
+            chatview::recovery_action_for(result.blocker));
+    }
+
+    void set_recovery_action(chatview::StreamRecoveryAction action)
+    {
+        recovery_action_ = action;
+        if (recovery_button_ == nullptr) {
+            return;
+        }
+
+        if (action == chatview::StreamRecoveryAction::None) {
+            EnableWindow(recovery_button_, FALSE);
+            ShowWindow(recovery_button_, SW_HIDE);
+            return;
+        }
+
+        SetWindowTextW(
+            recovery_button_, recovery_action_label(action));
+        EnableWindow(recovery_button_, TRUE);
+        ShowWindow(recovery_button_, SW_SHOWNOACTIVATE);
+    }
+
+    void perform_recovery_action()
+    {
+        switch (recovery_action_) {
+        case chatview::StreamRecoveryAction::FocusChatUrl:
+            focus_chat_url();
+            return;
+        case chatview::StreamRecoveryAction::RestartHud:
+            restart_hud();
+            return;
+        case chatview::StreamRecoveryAction::OpenHudInteraction:
+            open_hud_interaction();
+            return;
+        case chatview::StreamRecoveryAction::ActivateObs:
+            activate_obs();
+            return;
+        case chatview::StreamRecoveryAction::OpenNetworkSettings:
+            open_network_settings();
+            return;
+        case chatview::StreamRecoveryAction::ExportDiagnostics:
+            export_diagnostics();
+            return;
+        case chatview::StreamRecoveryAction::None:
+        default:
+            return;
+        }
+    }
+
+    void focus_chat_url()
+    {
+        ShowWindow(window_, SW_RESTORE);
+        SetForegroundWindow(window_);
+        SetFocus(url_edit_);
+        SendMessageW(url_edit_, EM_SETSEL, 0U, -1L);
+        set_feedback(
+            L"Paste the current broadcast or chat URL, then choose Save & Apply.",
+            kColorWarning);
+    }
+
+    void activate_obs()
+    {
+        const HWND obs = application_window_for_process(
+            options_.parent_process_id);
+        if (obs == nullptr) {
+            set_feedback(
+                L"The OBS window could not be brought forward.",
+                kColorError);
+            return;
+        }
+
+        ShowWindow(obs, SW_RESTORE);
+        SetForegroundWindow(obs);
+        set_feedback(
+            L"OBS was brought forward. Resolve the scene or Display Capture warning.",
+            kColorWarning);
+    }
+
+    void open_hud_interaction()
+    {
+        if (!connected_ || !status_reader_.parent_alive()) {
+            set_feedback(L"OBS is not connected.", kColorError);
+            return;
+        }
+
+        chatview::ControlStatusSnapshot snapshot;
+        if (!status_reader_.read(snapshot) ||
+            !chatview::has_control_status_flag(
+                snapshot, chatview::ControlStatusHudRunning) ||
+            chatview::has_control_status_flag(
+                snapshot, chatview::ControlStatusCaptureRisk) ||
+            chatview::has_control_status_flag(
+                snapshot,
+                chatview::ControlStatusDisplayCaptureActive)) {
+            set_feedback(
+                L"The private HUD cannot be opened while capture safety is active.",
+                kColorWarning);
+            return;
+        }
+
+        const HWND hud = hud_window_for_process(snapshot.hud_process_id);
+        if (hud == nullptr) {
+            set_feedback(
+                L"The private HUD window could not be found.",
+                kColorError);
+            return;
+        }
+
+        const LONG_PTR extended_style =
+            GetWindowLongPtrW(hud, GWL_EXSTYLE);
+        const bool interactive =
+            (extended_style &
+             static_cast<LONG_PTR>(
+                 WS_EX_TRANSPARENT | WS_EX_NOACTIVATE)) == 0;
+        if (!interactive) {
+            const UINT message = RegisterWindowMessageW(
+                chatview::kToggleEditMessageName);
+            if (!send_hud_control_message(hud, message)) {
+                set_feedback(
+                    L"ChatView could not open the private HUD for interaction.",
+                    kColorError);
+                return;
+            }
+        }
+
+        ShowWindow(hud, SW_SHOW);
+        SetForegroundWindow(hud);
+        set_feedback(
+            L"Private HUD interaction opened. Sign in or reposition it, then lock it again.",
+            kColorGood);
+    }
+
+    void open_network_settings()
+    {
+        const HINSTANCE opened = ShellExecuteW(
+            window_,
+            L"open",
+            L"ms-settings:network-status",
+            nullptr,
+            nullptr,
+            SW_SHOWNORMAL);
+        if (reinterpret_cast<INT_PTR>(opened) <= 32) {
+            set_feedback(
+                L"Windows network settings could not be opened.",
+                kColorError);
+            return;
+        }
+        set_feedback(
+            L"Windows network settings opened.", kColorGood);
     }
 
     void set_disconnected_status()
@@ -1238,8 +1469,7 @@ private:
             snapshot.hud_process_id);
         const UINT message = RegisterWindowMessageW(
             chatview::kToggleEditMessageName);
-        if (hud == nullptr || message == 0U ||
-            !PostMessageW(hud, message, 0U, 0L)) {
+        if (!send_hud_control_message(hud, message)) {
             set_feedback(
                 L"ChatView could not enter overlay edit mode.",
                 kColorError);
@@ -1400,7 +1630,7 @@ private:
             DEFAULT_PITCH | FF_DONTCARE,
             L"Segoe UI");
 
-        const std::array<HWND, 22U> body_controls{
+        const std::array<HWND, 23U> body_controls{
             subtitle_,
             url_edit_,
             provider_value_,
@@ -1411,6 +1641,7 @@ private:
             output_value_,
             recovery_value_,
             feedback_,
+            recovery_button_,
             save_button_,
             edit_button_,
             restart_button_,
@@ -1494,27 +1725,28 @@ private:
 
         move(title_, 32, 24, 896, 38);
         move(subtitle_, 34, 61, 892, 24);
-        move(url_label_, 34, 105, 300, 22);
-        move(url_edit_, 34, 132, 892, 32);
-        move(provider_value_, 36, 170, 888, 24);
-        move(status_group_, 28, 207, 904, 226);
-        move(obs_label_, 52, 239, 190, 24);
-        move(obs_value_, 248, 239, 650, 24);
-        move(hud_label_, 52, 275, 190, 24);
-        move(hud_value_, 248, 275, 650, 24);
-        move(safety_label_, 52, 311, 190, 24);
-        move(safety_value_, 248, 311, 650, 24);
-        move(output_label_, 52, 347, 190, 24);
-        move(output_value_, 248, 347, 650, 24);
-        move(recovery_label_, 52, 383, 190, 24);
-        move(recovery_value_, 248, 383, 650, 24);
-        move(feedback_, 34, 443, 570, 24);
-        move(save_button_, 34, 479, 142, 38);
-        move(edit_button_, 186, 479, 142, 38);
-        move(restart_button_, 338, 479, 142, 38);
-        move(diagnostics_button_, 490, 479, 198, 38);
-        move(close_button_, 806, 479, 120, 38);
-        move(version_, 680, 445, 246, 22);
+        move(recovery_button_, 34, 92, 240, 38);
+        move(url_label_, 34, 145, 300, 22);
+        move(url_edit_, 34, 172, 892, 32);
+        move(provider_value_, 36, 210, 888, 24);
+        move(status_group_, 28, 247, 904, 226);
+        move(obs_label_, 52, 279, 190, 24);
+        move(obs_value_, 248, 279, 650, 24);
+        move(hud_label_, 52, 315, 190, 24);
+        move(hud_value_, 248, 315, 650, 24);
+        move(safety_label_, 52, 351, 190, 24);
+        move(safety_value_, 248, 351, 650, 24);
+        move(output_label_, 52, 387, 190, 24);
+        move(output_value_, 248, 387, 650, 24);
+        move(recovery_label_, 52, 423, 190, 24);
+        move(recovery_value_, 248, 423, 650, 24);
+        move(feedback_, 34, 483, 570, 24);
+        move(save_button_, 34, 529, 142, 38);
+        move(edit_button_, 186, 529, 142, 38);
+        move(restart_button_, 338, 529, 142, 38);
+        move(diagnostics_button_, 490, 529, 198, 38);
+        move(close_button_, 806, 529, 120, 38);
+        move(version_, 680, 485, 246, 22);
     }
 
     void center_on_primary_monitor()
@@ -1580,6 +1812,7 @@ private:
     HWND recovery_value_ = nullptr;
     HWND feedback_ = nullptr;
     HWND version_ = nullptr;
+    HWND recovery_button_ = nullptr;
     HWND save_button_ = nullptr;
     HWND edit_button_ = nullptr;
     HWND restart_button_ = nullptr;
@@ -1593,6 +1826,8 @@ private:
     bool connected_ = false;
     bool snapshot_available_ = false;
     bool latest_health_available_ = false;
+    chatview::StreamRecoveryAction recovery_action_ =
+        chatview::StreamRecoveryAction::None;
     COLORREF readiness_color_ = kColorWarning;
     COLORREF provider_color_ = kColorMuted;
     COLORREF obs_color_ = kColorMuted;

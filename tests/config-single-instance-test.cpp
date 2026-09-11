@@ -23,6 +23,7 @@ constexpr int kUrlEditId = 1001;
 constexpr int kSaveButtonId = 1002;
 constexpr int kEditButtonId = 1003;
 constexpr int kRestartButtonId = 1004;
+constexpr int kRecoveryButtonId = 1007;
 constexpr DWORD kWindowTimeoutMs = 8000U;
 constexpr DWORD kProcessExitTimeoutMs = 5000U;
 
@@ -405,7 +406,9 @@ int wmain(int argument_count, wchar_t **arguments)
                            control_center, L"YouTube chat ready") &&
                        child_text_contains(
                            control_center,
-                           L"BLOCKED — Save a supported chat URL");
+                           L"BLOCKED — Save a supported chat URL") &&
+                       child_text_contains(
+                           control_center, L"Enter chat URL");
             },
             kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);
@@ -418,8 +421,10 @@ int wmain(int argument_count, wchar_t **arguments)
     const HWND save_button = GetDlgItem(control_center, kSaveButtonId);
     const HWND edit_button = GetDlgItem(control_center, kEditButtonId);
     const HWND restart_button = GetDlgItem(control_center, kRestartButtonId);
+    const HWND recovery_button = GetDlgItem(control_center, kRecoveryButtonId);
     if (url_edit == nullptr || save_button == nullptr ||
-        edit_button == nullptr || restart_button == nullptr) {
+        edit_button == nullptr || restart_button == nullptr ||
+        recovery_button == nullptr || !IsWindowVisible(recovery_button)) {
         DestroyWindow(fake_hud);
         return fail(
             L"The Control Center action controls were not created",
@@ -456,7 +461,8 @@ int wmain(int argument_count, wchar_t **arguments)
                            config_file,
                            L"https://www.youtube.com/live_chat?is_popout=1&v=dQw4w9WgXcQ") &&
                        child_text_contains(
-                           control_center, L"READY TO STREAM");
+                           control_center, L"READY TO STREAM") &&
+                       !IsWindowVisible(recovery_button);
             },
             kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);
@@ -477,8 +483,11 @@ int wmain(int argument_count, wchar_t **arguments)
     if (!wait_until(
             [&]() {
                 return child_text_contains(
-                    control_center,
-                    L"BLOCKED — Active Display Capture");
+                           control_center,
+                           L"BLOCKED — Active Display Capture") &&
+                       child_text_contains(
+                           control_center, L"Open OBS") &&
+                       IsWindowVisible(recovery_button);
             },
             kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);
@@ -498,7 +507,8 @@ int wmain(int argument_count, wchar_t **arguments)
     if (!wait_until(
             [&]() {
                 return child_text_contains(
-                    control_center, L"READY TO STREAM");
+                           control_center, L"READY TO STREAM") &&
+                       !IsWindowVisible(recovery_button);
             },
             kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);

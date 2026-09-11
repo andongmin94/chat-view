@@ -177,5 +177,62 @@ int main()
         return fail("A hidden HUD was not blocked");
     }
 
+    struct RecoveryCase {
+        chatview::StreamReadinessBlocker blocker;
+        chatview::StreamRecoveryAction action;
+    };
+    constexpr std::array<RecoveryCase, 22U> recovery_cases{{
+        {chatview::StreamReadinessBlocker::None,
+         chatview::StreamRecoveryAction::None},
+        {chatview::StreamReadinessBlocker::ObsDisconnected,
+         chatview::StreamRecoveryAction::None},
+        {chatview::StreamReadinessBlocker::StatusUnavailable,
+         chatview::StreamRecoveryAction::ActivateObs},
+        {chatview::StreamReadinessBlocker::ChatNotConfigured,
+         chatview::StreamRecoveryAction::FocusChatUrl},
+        {chatview::StreamReadinessBlocker::RestartCircuitOpen,
+         chatview::StreamRecoveryAction::RestartHud},
+        {chatview::StreamReadinessBlocker::SceneGraphUnavailable,
+         chatview::StreamRecoveryAction::ActivateObs},
+        {chatview::StreamReadinessBlocker::DisplayCaptureActive,
+         chatview::StreamRecoveryAction::ActivateObs},
+        {chatview::StreamReadinessBlocker::HudNotRunning,
+         chatview::StreamRecoveryAction::RestartHud},
+        {chatview::StreamReadinessBlocker::HudHealthUnavailable,
+         chatview::StreamRecoveryAction::RestartHud},
+        {chatview::StreamReadinessBlocker::ChatStarting,
+         chatview::StreamRecoveryAction::None},
+        {chatview::StreamReadinessBlocker::ChatLoading,
+         chatview::StreamRecoveryAction::None},
+        {chatview::StreamReadinessBlocker::ChatRetrying,
+         chatview::StreamRecoveryAction::RestartHud},
+        {chatview::StreamReadinessBlocker::ChatRecovering,
+         chatview::StreamRecoveryAction::RestartHud},
+        {chatview::StreamReadinessBlocker::LoginRequired,
+         chatview::StreamRecoveryAction::OpenHudInteraction},
+        {chatview::StreamReadinessBlocker::BroadcastOffline,
+         chatview::StreamRecoveryAction::FocusChatUrl},
+        {chatview::StreamReadinessBlocker::LayoutChanged,
+         chatview::StreamRecoveryAction::ExportDiagnostics},
+        {chatview::StreamReadinessBlocker::NetworkOffline,
+         chatview::StreamRecoveryAction::OpenNetworkSettings},
+        {chatview::StreamReadinessBlocker::ConnectionLost,
+         chatview::StreamRecoveryAction::RestartHud},
+        {chatview::StreamReadinessBlocker::SystemPaused,
+         chatview::StreamRecoveryAction::None},
+        {chatview::StreamReadinessBlocker::SystemResuming,
+         chatview::StreamRecoveryAction::None},
+        {chatview::StreamReadinessBlocker::ChatFatal,
+         chatview::StreamRecoveryAction::RestartHud},
+        {chatview::StreamReadinessBlocker::HudHidden,
+         chatview::StreamRecoveryAction::OpenHudInteraction},
+    }};
+    for (const RecoveryCase &recovery_case : recovery_cases) {
+        if (chatview::recovery_action_for(recovery_case.blocker) !=
+            recovery_case.action) {
+            return fail("A readiness blocker selected the wrong recovery action");
+        }
+    }
+
     return 0;
 }

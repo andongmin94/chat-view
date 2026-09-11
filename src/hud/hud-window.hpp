@@ -55,6 +55,7 @@ private:
         std::uint16_t detail_code) noexcept;
     void complete_system_resume() noexcept;
     [[nodiscard]] bool system_suppressed() const noexcept;
+    [[nodiscard]] bool signal_runtime_ready() noexcept;
     void handle_webview_process_failure(
         COREWEBVIEW2_PROCESS_FAILED_KIND kind) noexcept;
     void schedule_navigation_retry(

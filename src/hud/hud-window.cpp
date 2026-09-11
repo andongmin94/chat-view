@@ -351,15 +351,8 @@ LRESULT HudWindow::handle_message(
         if (!apply_capture_policy()) {
             return 0L;
         }
-        if (ready_event_ != nullptr &&
-            !SetEvent(ready_event_)) {
-            debug_windows_error(L"SetEvent(ready)");
-            set_page_health(
-                HudPageState::Fatal,
-                page_provider_,
-                static_cast<std::uint16_t>(13U));
-            ShowWindow(window_, SW_HIDE);
-            PostQuitMessage(13);
+        if (!signal_runtime_ready()) {
+            return 0L;
         }
         return 0L;
     case kWebViewDocumentReadyMessage:
@@ -1065,6 +1058,13 @@ void HudWindow::pause_for_system_lifecycle(
     page_connection_recovery_.reset();
     page_health_watchdog_.disarm();
 
+    if (!webview_ready_) {
+        restart_after_system_resume_ = true;
+        if (!signal_runtime_ready()) {
+            return;
+        }
+    }
+
     if (edit_mode_) {
         capture_and_persist_bounds();
         edit_mode_ = false;
@@ -1181,6 +1181,28 @@ void HudWindow::complete_system_resume() noexcept
 bool HudWindow::system_suppressed() const noexcept
 {
     return system_lifecycle_.paused() || system_resume_pending_;
+}
+
+bool HudWindow::signal_runtime_ready() noexcept
+{
+    if (ready_event_ == nullptr) {
+        return true;
+    }
+
+    const HANDLE ready_event = ready_event_;
+    ready_event_ = nullptr;
+    if (SetEvent(ready_event)) {
+        return true;
+    }
+
+    debug_windows_error(L"SetEvent(ready)");
+    set_page_health(
+        HudPageState::Fatal,
+        page_provider_,
+        static_cast<std::uint16_t>(13U));
+    ShowWindow(window_, SW_HIDE);
+    PostQuitMessage(13);
+    return false;
 }
 
 bool HudWindow::check_page_connection_recovery() noexcept

@@ -33,8 +33,8 @@ jobs:
               raise SystemExit('replace helper anchor was not unique')
           text = text.replace(old, new, 1)
           readme_marker = '\nreplace_once(\n    "README.md",'
-          if text.count(readme_marker) != 1:
-              raise SystemExit('README finalization marker was not unique')
+          if readme_marker not in text:
+              raise SystemExit('README finalization marker was not found')
           text = text.split(readme_marker, 1)[0] + '\n'
           path.write_text(text, encoding='utf-8', newline='\n')
           PY

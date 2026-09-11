@@ -9,6 +9,8 @@ inline constexpr wchar_t kConfigChangedMessageName[] =
     L"ChatViewOBS.ConfigChanged.v1";
 inline constexpr wchar_t kToggleEditMessageName[] =
     L"ChatViewOBS.ToggleEdit.v1";
+inline constexpr wchar_t kQueryHudHealthMessageName[] =
+    L"ChatViewOBS.QueryHudHealth.v1";
 inline constexpr wchar_t kControlCenterActivateMessageName[] =
     L"ChatViewOBS.ControlCenter.Activate.v1";
 

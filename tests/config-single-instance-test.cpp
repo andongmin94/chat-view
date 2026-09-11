@@ -323,6 +323,8 @@ int wmain(int argument_count, wchar_t **arguments)
     ZeroMemory(mapped.get(), sizeof(chatview::ControlStatus));
     mapped.get()->magic = chatview::kControlStatusMagic;
     mapped.get()->version = chatview::kControlStatusVersion;
+    mapped.get()->last_hud_exit_code =
+        chatview::kRuntimeExitCodeUnavailable;
 
     edit_message = RegisterWindowMessageW(
         chatview::kToggleEditMessageName);
@@ -363,7 +365,8 @@ int wmain(int argument_count, wchar_t **arguments)
     publish(
         mapped.get(),
         chatview::ControlStatusHudRunning |
-            chatview::ControlStatusHudVisible,
+            chatview::ControlStatusHudVisible |
+            chatview::ControlStatusSceneGraphReady,
         process_id,
         1U);
     SetEvent(status_event.get());
@@ -400,6 +403,9 @@ int wmain(int argument_count, wchar_t **arguments)
                            control_center, L"Private HUD safety active") &&
                        child_text_contains(
                            control_center, L"YouTube chat ready");
+                       child_text_contains(
+                           control_center,
+                           L"BLOCKED — Save a supported chat URL");
             },
             kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);
@@ -449,11 +455,59 @@ int wmain(int argument_count, wchar_t **arguments)
                        saved_url_matches(
                            config_file,
                            L"https://www.youtube.com/live_chat?is_popout=1&v=dQw4w9WgXcQ");
+                       child_text_contains(
+                           control_center, L"READY TO STREAM");
             },
             kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);
         return fail(
             L"Save & Apply did not persist and acknowledge the canonical URL",
+            first.process.get());
+    }
+
+    if (!post_command(control_center, kEditButtonId, edit_button) ||
+            first.process.get());
+    }
+
+    publish(
+        mapped.get(),
+        chatview::ControlStatusHudRunning |
+            chatview::ControlStatusHudVisible |
+            chatview::ControlStatusSceneGraphReady |
+            chatview::ControlStatusDisplayCaptureActive,
+        process_id,
+        2U);
+    SetEvent(status_event.get());
+    if (!wait_until(
+            [&]() {
+                return child_text_contains(
+                    control_center,
+                    L"BLOCKED — Active Display Capture");
+            },
+            kWindowTimeoutMs)) {
+        DestroyWindow(fake_hud);
+        return fail(
+            L"The readiness gate did not block active Display Capture",
+            first.process.get());
+    }
+
+    publish(
+        mapped.get(),
+        chatview::ControlStatusHudRunning |
+            chatview::ControlStatusHudVisible |
+            chatview::ControlStatusSceneGraphReady,
+        process_id,
+        3U);
+    SetEvent(status_event.get());
+    if (!wait_until(
+            [&]() {
+                return child_text_contains(
+                    control_center, L"READY TO STREAM");
+            },
+            kWindowTimeoutMs)) {
+        DestroyWindow(fake_hud);
+        return fail(
+            L"The readiness gate did not recover after Display Capture cleared",
             first.process.get());
     }
 

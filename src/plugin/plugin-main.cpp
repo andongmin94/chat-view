@@ -126,7 +126,7 @@ void publish_frontend_state() noexcept
         effective_replay_buffer || virtual_camera;
 
     CaptureScan scan;
-    if (output_active && scene_graph_stable) {
+    if (scene_graph_stable) {
         scan = scan_display_capture_sources();
     }
 
@@ -171,6 +171,8 @@ void publish_frontend_state() noexcept
             replay_buffer,
             virtual_camera,
             suppress,
+            scene_graph_stable,
+            scan.display_capture_active_or_showing,
             runtime_controller->runtime_telemetry());
     }
 }

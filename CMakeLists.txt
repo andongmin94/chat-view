@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.3.9 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.4.0 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -271,6 +271,19 @@ if(BUILD_TESTING)
     add_test(
         NAME chat-view-runtime-telemetry
         COMMAND chat-view-runtime-telemetry-test
+    )
+
+    add_executable(chat-view-stream-readiness-test
+        tests/stream-readiness-test.cpp
+        src/common/stream-readiness.hpp
+    )
+    target_include_directories(
+        chat-view-stream-readiness-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_win32(chat-view-stream-readiness-test)
+    chatview_enable_warnings(chat-view-stream-readiness-test)
+    add_test(
+        NAME chat-view-stream-readiness
+        COMMAND chat-view-stream-readiness-test
     )
 
     add_executable(chat-view-runtime-history-store-test

@@ -128,7 +128,9 @@ int main()
     const std::uint32_t flags =
         chatview::ControlStatusStreaming |
         chatview::ControlStatusCaptureRisk |
-        chatview::ControlStatusHudRunning;
+        chatview::ControlStatusHudRunning |
+        chatview::ControlStatusSceneGraphReady |
+        chatview::ControlStatusDisplayCaptureActive;
     const chatview::RuntimeTelemetrySnapshot telemetry{
         19U,
         chatview::RuntimeRestartReason::PageHealthTimeout,

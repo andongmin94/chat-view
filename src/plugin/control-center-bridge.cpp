@@ -304,6 +304,8 @@ void ControlCenterBridge::update(
     bool replay_buffer,
     bool virtual_camera,
     bool capture_risk,
+    bool scene_graph_ready,
+    bool display_capture_active,
     const RuntimeTelemetrySnapshot &runtime_telemetry) noexcept
 {
     const HudWindowSearch hud = current_hud_window();
@@ -323,6 +325,12 @@ void ControlCenterBridge::update(
     }
     if (capture_risk) {
         flags |= ControlStatusCaptureRisk;
+    }
+    if (scene_graph_ready) {
+        flags |= ControlStatusSceneGraphReady;
+    }
+    if (display_capture_active) {
+        flags |= ControlStatusDisplayCaptureActive;
     }
     if (hud.window != nullptr && hud.process_id != 0U) {
         flags |= ControlStatusHudRunning;

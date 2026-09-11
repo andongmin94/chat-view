@@ -30,6 +30,8 @@ public:
         bool replay_buffer,
         bool virtual_camera,
         bool capture_risk,
+        bool scene_graph_ready,
+        bool display_capture_active,
         const RuntimeTelemetrySnapshot &runtime_telemetry) noexcept;
 
     [[nodiscard]] bool open_control_center() noexcept;

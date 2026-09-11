@@ -11,7 +11,7 @@
 namespace chatview {
 
 inline constexpr std::uint32_t kControlStatusMagic = 0x43565354U; // "CVST"
-inline constexpr std::uint32_t kControlStatusVersion = 2U;
+inline constexpr std::uint32_t kControlStatusVersion = 3U;
 
 enum ControlStatusFlag : std::uint32_t {
     ControlStatusNone = 0U,
@@ -22,13 +22,16 @@ enum ControlStatusFlag : std::uint32_t {
     ControlStatusCaptureRisk = 1U << 4U,
     ControlStatusHudRunning = 1U << 5U,
     ControlStatusHudVisible = 1U << 6U,
+    ControlStatusSceneGraphReady = 1U << 7U,
+    ControlStatusDisplayCaptureActive = 1U << 8U,
 };
 
 inline constexpr std::uint32_t kKnownControlStatusFlags =
     ControlStatusStreaming | ControlStatusRecording |
     ControlStatusReplayBuffer | ControlStatusVirtualCamera |
     ControlStatusCaptureRisk | ControlStatusHudRunning |
-    ControlStatusHudVisible;
+    ControlStatusHudVisible | ControlStatusSceneGraphReady |
+    ControlStatusDisplayCaptureActive;
 
 [[nodiscard]] constexpr bool are_valid_control_status_flags(
     std::uint32_t flags) noexcept
@@ -89,6 +92,6 @@ static_assert(sizeof(LONG) == sizeof(std::int32_t));
 static_assert(sizeof(ControlStatus) == 64U);
 static_assert(are_valid_control_status_flags(ControlStatusNone));
 static_assert(are_valid_control_status_flags(kKnownControlStatusFlags));
-static_assert(!are_valid_control_status_flags(1U << 7U));
+static_assert(!are_valid_control_status_flags(1U << 9U));
 
 } // namespace chatview

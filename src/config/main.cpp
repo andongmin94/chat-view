@@ -2,6 +2,7 @@
 
 #include "common/chat-config.hpp"
 #include "common/hud-health.hpp"
+#include "common/stream-readiness.hpp"
 #include "common/win32-handle.hpp"
 #include "common/window-messages.hpp"
 #include "config/control-status-reader.hpp"
@@ -73,6 +74,11 @@ struct HealthPresentation {
 struct RuntimePresentation {
     std::wstring text;
     COLORREF color = kColorMuted;
+};
+
+struct ReadinessPresentation {
+    std::wstring text;
+    COLORREF color = kColorError;
 };
 
 void enable_per_monitor_dpi_awareness() noexcept
@@ -368,6 +374,75 @@ RuntimePresentation runtime_presentation(
         L"Last automatic recovery: " + reason +
             L" — failure counter cleared" + exit,
         kColorGood};
+}
+
+ReadinessPresentation readiness_presentation(
+    const chatview::StreamReadinessResult &result)
+{
+    if (result.ready) {
+        return {
+            L"●  READY TO STREAM — Chat, private HUD, and capture safety are ready.",
+            kColorGood};
+    }
+
+    using Blocker = chatview::StreamReadinessBlocker;
+    switch (result.blocker) {
+    case Blocker::ObsDisconnected:
+        return {
+            L"●  BLOCKED — Open this Control Center from the OBS Tools menu.",
+            kColorError};
+    case Blocker::StatusUnavailable:
+        return {L"●  BLOCKED — OBS status is unavailable.", kColorError};
+    case Blocker::ChatNotConfigured:
+        return {
+            L"●  BLOCKED — Save a supported chat URL.",
+            kColorError};
+    case Blocker::RestartCircuitOpen:
+        return {
+            L"●  BLOCKED — Automatic HUD restart is disabled after repeated failures.",
+            kColorError};
+    case Blocker::SceneGraphUnavailable:
+        return {
+            L"●  BLOCKED — OBS scene safety cannot be verified yet.",
+            kColorError};
+    case Blocker::DisplayCaptureActive:
+        return {
+            L"●  BLOCKED — Active Display Capture would hide the private HUD.",
+            kColorError};
+    case Blocker::HudNotRunning:
+        return {L"●  BLOCKED — The private HUD is not running.", kColorError};
+    case Blocker::HudHealthUnavailable:
+        return {L"●  BLOCKED — HUD health cannot be verified.", kColorError};
+    case Blocker::ChatStarting:
+        return {L"●  BLOCKED — Chat engine is starting.", kColorWarning};
+    case Blocker::ChatLoading:
+        return {L"●  BLOCKED — Chat is still loading.", kColorWarning};
+    case Blocker::ChatRetrying:
+        return {L"●  BLOCKED — Chat navigation is retrying.", kColorWarning};
+    case Blocker::ChatRecovering:
+        return {L"●  BLOCKED — WebView is recovering.", kColorWarning};
+    case Blocker::LoginRequired:
+        return {L"●  BLOCKED — Sign in to the chat platform.", kColorError};
+    case Blocker::BroadcastOffline:
+        return {L"●  BLOCKED — The broadcast is offline or ended.", kColorError};
+    case Blocker::LayoutChanged:
+        return {L"●  BLOCKED — The platform page layout changed.", kColorError};
+    case Blocker::NetworkOffline:
+        return {L"●  BLOCKED — This PC is offline.", kColorError};
+    case Blocker::ConnectionLost:
+        return {L"●  BLOCKED — Chat connection is being restored.", kColorWarning};
+    case Blocker::SystemPaused:
+        return {L"●  BLOCKED — Windows session is paused.", kColorError};
+    case Blocker::SystemResuming:
+        return {L"●  BLOCKED — Windows session is being revalidated.", kColorWarning};
+    case Blocker::ChatFatal:
+        return {L"●  BLOCKED — Chat engine failed.", kColorError};
+    case Blocker::HudHidden:
+        return {L"●  BLOCKED — The private HUD window is hidden.", kColorError};
+    case Blocker::None:
+    default:
+        return {L"●  BLOCKED — Stream readiness is unknown.", kColorError};
+    }
 }
 
 BOOL CALLBACK find_hud_window(HWND window, LPARAM data)
@@ -687,7 +762,7 @@ private:
     {
         title_ = create_static(L"ChatView Control Center");
         subtitle_ = create_static(
-            L"Configure chat and verify the private HUD before going live.");
+            L"●  CHECKING STREAM READINESS");
         url_label_ = create_static(L"Broadcast or chat URL");
         url_edit_ = CreateWindowExW(
             WS_EX_CLIENTEDGE,
@@ -877,6 +952,7 @@ private:
             snapshot_available_ = false;
             latest_health_available_ = false;
             set_disconnected_status();
+            refresh_stream_readiness(false, false, {}, false, {});
             return;
         }
 
@@ -911,6 +987,7 @@ private:
                 recovery_color_);
             EnableWindow(edit_button_, FALSE);
             EnableWindow(restart_button_, FALSE);
+            refresh_stream_readiness(false, false, {}, false, {});
             return;
         }
 
@@ -1026,6 +1103,35 @@ private:
             edit_button_,
             hud_running && !capture_risk ? TRUE : FALSE);
         EnableWindow(restart_button_, TRUE);
+        refresh_stream_readiness(
+            true, true, snapshot, health_available, health);
+    }
+
+    void refresh_stream_readiness(
+        bool obs_connected,
+        bool status_available,
+        const chatview::ControlStatusSnapshot &status,
+        bool health_available,
+        const chatview::HudHealthSnapshot &health)
+    {
+        chatview::ChatConfig config;
+        const bool chat_configured =
+            chatview::load_chat_config(config);
+        const chatview::StreamReadinessResult result =
+            chatview::evaluate_stream_readiness({
+                obs_connected,
+                status_available,
+                chat_configured,
+                health_available,
+                status,
+                health});
+        const ReadinessPresentation presentation =
+            readiness_presentation(result);
+        set_colored_text(
+            subtitle_,
+            presentation.text,
+            presentation.color,
+            readiness_color_);
     }
 
     void set_disconnected_status()
@@ -1101,6 +1207,7 @@ private:
                 HWND_BROADCAST, message, 0U, 0L);
         }
         refresh_provider();
+        refresh_runtime_status(true);
         set_feedback(
             connected_
                 ? L"Saved and applied to the running HUD."
@@ -1218,7 +1325,9 @@ private:
     LRESULT color_static(HDC device, HWND control) const
     {
         COLORREF color = kColorText;
-        if (control == subtitle_ || control == version_) {
+        if (control == subtitle_) {
+            color = readiness_color_;
+        } else if (control == version_) {
             color = kColorMuted;
         } else if (control == provider_value_) {
             color = provider_color_;
@@ -1343,6 +1452,11 @@ private:
                 reinterpret_cast<WPARAM>(label_font_),
                 TRUE);
         }
+        SendMessageW(
+            subtitle_,
+            WM_SETFONT,
+            reinterpret_cast<WPARAM>(label_font_),
+            TRUE);
     }
 
     void destroy_fonts() noexcept
@@ -1479,6 +1593,7 @@ private:
     bool connected_ = false;
     bool snapshot_available_ = false;
     bool latest_health_available_ = false;
+    COLORREF readiness_color_ = kColorWarning;
     COLORREF provider_color_ = kColorMuted;
     COLORREF obs_color_ = kColorMuted;
     COLORREF hud_color_ = kColorMuted;

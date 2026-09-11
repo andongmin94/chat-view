@@ -1,0 +1,88 @@
+name: Repair stream readiness integration test
+
+on:
+  push:
+    branches:
+      - obs-preflight-work
+    paths:
+      - .github/workflows/fix-stream-readiness-test.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Repair integration test
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/config-single-instance-test.cpp')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+                  '''                       child_text_contains(
+                           control_center, L"YouTube chat ready");
+                       child_text_contains(
+                           control_center,
+                           L"BLOCKED — Save a supported chat URL");''',
+                  '''                       child_text_contains(
+                           control_center, L"YouTube chat ready") &&
+                       child_text_contains(
+                           control_center,
+                           L"BLOCKED — Save a supported chat URL");'''
+              ),
+              (
+                  '''                       saved_url_matches(
+                           config_file,
+                           L"https://www.youtube.com/live_chat?is_popout=1&v=dQw4w9WgXcQ");
+                       child_text_contains(
+                           control_center, L"READY TO STREAM");''',
+                  '''                       saved_url_matches(
+                           config_file,
+                           L"https://www.youtube.com/live_chat?is_popout=1&v=dQw4w9WgXcQ") &&
+                       child_text_contains(
+                           control_center, L"READY TO STREAM");'''
+              ),
+              (
+                  '''    if (!post_command(control_center, kEditButtonId, edit_button) ||
+            first.process.get());
+    }
+
+    publish(''',
+                  '''    publish('''
+              ),
+          ]
+
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f'Expected one repair anchor, found {text.count(old)}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding='utf-8', newline='\n')
+          PY
+
+      - name: Commit repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/config-single-instance-test.cpp
+          git commit -m "test: validate stream readiness transitions"
+          git push origin HEAD:obs-preflight-work
+
+      - name: Dispatch Windows validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh workflow run windows-build.yml --ref obs-preflight-work

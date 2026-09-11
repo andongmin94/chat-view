@@ -1,0 +1,38 @@
+name: Page health script
+
+on:
+  push:
+    branches:
+      - OBS
+    paths:
+      - src/hud/page-health-message.cpp
+      - tests/page-health-script-test.mjs
+      - .github/workflows/page-health-script.yml
+  pull_request:
+    branches:
+      - OBS
+    paths:
+      - src/hud/page-health-message.cpp
+      - tests/page-health-script-test.mjs
+      - .github/workflows/page-health-script.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: page-health-script-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node.js behavior test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out ChatView
+        uses: actions/checkout@v4
+
+      - name: Validate embedded page-health script
+        run: node tests/page-health-script-test.mjs

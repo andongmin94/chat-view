@@ -21,168 +21,31 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Polish and extend recovery integration coverage
+      - name: Keep Save and Apply as the only default button
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          def replace_once(path_text: str, old: str, new: str) -> None:
-              path = Path(path_text)
-              text = path.read_text(encoding="utf-8")
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(
-                      f"{path_text}: expected one anchor, found {count}")
-              path.write_text(
-                  text.replace(old, new, 1),
-                  encoding="utf-8",
-                  newline="\n")
-
-          replace_once(
-              "src/config/main.cpp",
-              'L"Fix now", kRecoveryButtonId, BS_DEFPUSHBUTTON);',
-              'L"Fix now", kRecoveryButtonId, BS_PUSHBUTTON);')
-
-          replace_once(
-              "tests/config-single-instance-test.cpp",
-              '''constexpr DWORD kWindowTimeoutMs = 8000U;
-          constexpr DWORD kProcessExitTimeoutMs = 5000U;
-
-          std::atomic_bool edit_message_received{false};''',
-              '''constexpr DWORD kWindowTimeoutMs = 8000U;
-          constexpr DWORD kProcessExitTimeoutMs = 5000U;
-          constexpr LONG_PTR kFakeHudLockedStyles =
-              WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
-
-          std::atomic_bool edit_message_received{false};
-          std::atomic<chatview::HudPageState> hud_page_state{
-              chatview::HudPageState::Ready};''')
-
-          replace_once(
-              "tests/config-single-instance-test.cpp",
-              '''    if (message == edit_message && edit_message != 0U) {
-              edit_message_received.store(true, std::memory_order_release);
-              return 0L;
-          }''',
-              '''    if (message == edit_message && edit_message != 0U) {
-              LONG_PTR styles = GetWindowLongPtrW(window, GWL_EXSTYLE);
-              if ((styles & kFakeHudLockedStyles) != 0) {
-                  styles &= ~kFakeHudLockedStyles;
-              } else {
-                  styles |= kFakeHudLockedStyles;
-              }
-              SetWindowLongPtrW(window, GWL_EXSTYLE, styles);
-              SetWindowPos(
-                  window,
-                  nullptr,
-                  0,
-                  0,
-                  0,
-                  0,
-                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
-                      SWP_NOACTIVATE | SWP_FRAMECHANGED);
-              edit_message_received.store(true, std::memory_order_release);
-              return 0L;
-          }''')
-
-          replace_once(
-              "tests/config-single-instance-test.cpp",
-              '''            chatview::HudHealthSnapshot{
-                          chatview::HudPageState::Ready,
-                          chatview::HudProvider::YouTube,
-                          0U}));''',
-              '''            chatview::HudHealthSnapshot{
-                          hud_page_state.load(std::memory_order_acquire),
-                          chatview::HudProvider::YouTube,
-                          0U}));''')
-
-          replace_once(
-              "tests/config-single-instance-test.cpp",
-              '''    const HWND fake_hud = CreateWindowExW(
-              WS_EX_TOOLWINDOW,
-              kFakeHudWindowClass,''',
-              '''    const HWND fake_hud = CreateWindowExW(
-              WS_EX_TOOLWINDOW | WS_EX_TOPMOST |
-                  kFakeHudLockedStyles,
-              kFakeHudWindowClass,''')
-
-          replace_once(
-              "tests/config-single-instance-test.cpp",
-              '''        return fail(
-                  L"The readiness gate did not recover after Display Capture cleared",
-                  first.process.get());
-          }
-
-          if (!post_command(control_center, kEditButtonId, edit_button) ||''',
-              '''        return fail(
-                  L"The readiness gate did not recover after Display Capture cleared",
-                  first.process.get());
-          }
-
-          hud_page_state.store(
-              chatview::HudPageState::LoginRequired,
-              std::memory_order_release);
-          edit_message_received.store(false, std::memory_order_release);
-          if (!wait_until(
-                  [&]() {
-                      return child_text_contains(
-                                 control_center,
-                                 L"BLOCKED — Sign in to the chat platform") &&
-                             child_text_contains(
-                                 control_center, L"Open private HUD") &&
-                             IsWindowVisible(recovery_button);
-                  },
-                  kWindowTimeoutMs)) {
-              DestroyWindow(fake_hud);
-              return fail(
-                  L"Login-required health did not expose the HUD recovery action",
-                  first.process.get());
-          }
-          if (!post_command(
-                  control_center,
-                  kRecoveryButtonId,
-                  recovery_button) ||
-              !wait_until(
-                  [&]() {
-                      return edit_message_received.load(
-                                 std::memory_order_acquire) &&
-                             (GetWindowLongPtrW(
-                                  fake_hud, GWL_EXSTYLE) &
-                              kFakeHudLockedStyles) == 0;
-                  },
-                  kWindowTimeoutMs)) {
-              DestroyWindow(fake_hud);
-              return fail(
-                  L"The one-click login action did not open HUD interaction",
-                  first.process.get());
-          }
-
-          hud_page_state.store(
-              chatview::HudPageState::Ready,
-              std::memory_order_release);
-          if (!wait_until(
-                  [&]() {
-                      return child_text_contains(
-                                 control_center, L"READY TO STREAM") &&
-                             !IsWindowVisible(recovery_button);
-                  },
-                  kWindowTimeoutMs)) {
-              DestroyWindow(fake_hud);
-              return fail(
-                  L"The readiness gate did not recover after login health cleared",
-                  first.process.get());
-          }
-
-          edit_message_received.store(false, std::memory_order_release);
-          if (!post_command(control_center, kEditButtonId, edit_button) ||''')
+          path = Path("src/config/main.cpp")
+          text = path.read_text(encoding="utf-8")
+          old = 'L"Fix now", kRecoveryButtonId, BS_DEFPUSHBUTTON);'
+          new = 'L"Fix now", kRecoveryButtonId, BS_PUSHBUTTON);'
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(
+                  f"expected one recovery-button style anchor, found {count}")
+          path.write_text(
+              text.replace(old, new, 1),
+              encoding="utf-8",
+              newline="\n")
           PY
 
       - name: Remove obsolete development scaffolding
         shell: bash
         run: |
           set -euo pipefail
-          git rm -f --ignore-unmatch \
+          git rm -f --ignore-unmatch -- \
             '.github/workflows/apply-*.yml' \
             '.github/workflows/dispatch-runtime-telemetry-windows.yml' \
             '.github/workflows/enable-runtime-telemetry-windows.yml' \
@@ -200,11 +63,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git add src/config/main.cpp tests/config-single-instance-test.cpp
+          git add src/config/main.cpp
           git diff --cached --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "test: exercise one-click HUD login recovery"
+          git commit -m "chore: finalize one-click recovery source tree"
           git push origin HEAD:obs-preflight-work
 
       - name: Dispatch clean Windows validation

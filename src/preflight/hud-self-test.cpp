@@ -33,6 +33,8 @@ constexpr int kCaptureProbeHeight = 180;
 constexpr int kMinimumProbeColorDistance = 120;
 constexpr int kMaximumProtectedColorDistance = 36;
 constexpr auto kProfileCleanupTimeout = std::chrono::seconds(10);
+constexpr DWORD kJobGracefulDrainTimeoutMs = 2000U;
+constexpr DWORD kJobForcedDrainTimeoutMs = 5000U;
 
 #ifndef WDA_EXCLUDEFROMCAPTURE
 constexpr DWORD WDA_EXCLUDEFROMCAPTURE = 0x00000011;
@@ -499,6 +501,50 @@ bool remove_tree_with_retry(const std::filesystem::path &path) noexcept
     return false;
 }
 
+bool configure_child_job(HANDLE job) noexcept
+{
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags =
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    return SetInformationJobObject(
+               job,
+               JobObjectExtendedLimitInformation,
+               &limits,
+               static_cast<DWORD>(sizeof(limits))) != FALSE;
+}
+
+bool wait_for_job_empty(HANDLE job, DWORD timeout_ms) noexcept
+{
+    const ULONGLONG deadline = GetTickCount64() + timeout_ms;
+    do {
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
+        if (!QueryInformationJobObject(
+                job,
+                JobObjectBasicAccountingInformation,
+                &accounting,
+                static_cast<DWORD>(sizeof(accounting)),
+                nullptr)) {
+            return false;
+        }
+        if (accounting.ActiveProcesses == 0U) {
+            return true;
+        }
+        Sleep(50U);
+    } while (GetTickCount64() < deadline);
+    return false;
+}
+
+bool drain_child_job(HANDLE job) noexcept
+{
+    if (wait_for_job_empty(job, kJobGracefulDrainTimeoutMs)) {
+        return true;
+    }
+    if (!TerminateJobObject(job, 0U)) {
+        return false;
+    }
+    return wait_for_job_empty(job, kJobForcedDrainTimeoutMs);
+}
+
 void publish(
     chatview::SharedState *state,
     HANDLE event,
@@ -629,6 +675,12 @@ int wmain(int argument_count, wchar_t **arguments)
         L"\" --event \"" + event_name + L"\" --ready-event \"" +
         ready_event_name + L"\" --parent " + suffix;
 
+    chatview::UniqueHandle child_job(
+        CreateJobObjectW(nullptr, nullptr));
+    if (!child_job || !configure_child_job(child_job.get())) {
+        return fail(L"Failed to create the HUD process job");
+    }
+
     STARTUPINFOW startup_info{};
     startup_info.cb = sizeof(startup_info);
     PROCESS_INFORMATION child_info{};
@@ -638,7 +690,7 @@ int wmain(int argument_count, wchar_t **arguments)
             nullptr,
             nullptr,
             FALSE,
-            CREATE_UNICODE_ENVIRONMENT,
+            CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
             nullptr,
             nullptr,
             &startup_info,
@@ -648,6 +700,17 @@ int wmain(int argument_count, wchar_t **arguments)
 
     chatview::UniqueHandle child_thread(child_info.hThread);
     chatview::UniqueHandle child_process(child_info.hProcess);
+    if (!AssignProcessToJobObject(
+            child_job.get(), child_process.get())) {
+        TerminateProcess(child_process.get(), 1U);
+        WaitForSingleObject(child_process.get(), 2000U);
+        return fail(L"Failed to assign the HUD to its process job");
+    }
+    if (ResumeThread(child_thread.get()) == static_cast<DWORD>(-1)) {
+        TerminateJobObject(child_job.get(), 1U);
+        WaitForSingleObject(child_process.get(), 2000U);
+        return fail(L"Failed to resume the HUD process");
+    }
     child_thread.reset();
 
     HANDLE startup_handles[2] = {ready_event.get(), child_process.get()};
@@ -837,6 +900,12 @@ int wmain(int argument_count, wchar_t **arguments)
         exit_code != 0U) {
         return fail(L"The HUD exited with an error");
     }
+
+    if (!drain_child_job(child_job.get())) {
+        return fail(L"Failed to drain the HUD process tree");
+    }
+    child_process.reset();
+    child_job.reset();
 
     if (!remove_tree_with_retry(local_app_data)) {
         return fail(L"Failed to remove the smoke-test profile directory");

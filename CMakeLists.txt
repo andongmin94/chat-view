@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.2.11 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.2.12 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")

@@ -950,6 +950,33 @@ int wmain(int argument_count, wchar_t **arguments)
             child_process.get());
     }
 
+    if (SendMessageW(
+            window, WM_QUERYENDSESSION, 0U, 0L) != TRUE ||
+        !wait_for_visibility(window, false)) {
+        return fail(
+            L"The HUD did not hide for the Windows end-session query",
+            child_process.get());
+    }
+    SendMessageW(window, WM_ENDSESSION, FALSE, 0L);
+    Sleep(200U);
+    if (IsWindowVisible(window)) {
+        return fail(
+            L"The HUD became visible before cancelled-shutdown revalidation",
+            child_process.get());
+    }
+    if (!wait_for_visibility(window, true)) {
+        return fail(
+            L"The HUD did not return after shutdown was cancelled",
+            child_process.get());
+    }
+    affinity = WDA_NONE;
+    if (!GetWindowDisplayAffinity(window, &affinity) ||
+        affinity != WDA_EXCLUDEFROMCAPTURE) {
+        return fail(
+            L"Cancelled shutdown did not restore capture exclusion",
+            child_process.get());
+    }
+
     const std::filesystem::path placement_file =
         local_app_data / L"ChatView" / L"hud.ini";
     if (!std::filesystem::is_regular_file(placement_file)) {

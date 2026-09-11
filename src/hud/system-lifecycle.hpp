@@ -34,15 +34,26 @@ public:
         return update(session_locked_, false);
     }
 
+    [[nodiscard]] SystemLifecycleAction begin_end_session() noexcept
+    {
+        return update(end_session_pending_, true);
+    }
+
+    [[nodiscard]] SystemLifecycleAction cancel_end_session() noexcept
+    {
+        return update(end_session_pending_, false);
+    }
+
     void reset() noexcept
     {
         power_suspended_ = false;
         session_locked_ = false;
+        end_session_pending_ = false;
     }
 
     [[nodiscard]] bool paused() const noexcept
     {
-        return power_suspended_ || session_locked_;
+        return power_suspended_ || session_locked_ || end_session_pending_;
     }
 
     [[nodiscard]] bool power_suspended() const noexcept
@@ -53,6 +64,11 @@ public:
     [[nodiscard]] bool session_locked() const noexcept
     {
         return session_locked_;
+    }
+
+    [[nodiscard]] bool end_session_pending() const noexcept
+    {
+        return end_session_pending_;
     }
 
 private:
@@ -74,6 +90,7 @@ private:
 
     bool power_suspended_ = false;
     bool session_locked_ = false;
+    bool end_session_pending_ = false;
 };
 
 } // namespace chatview

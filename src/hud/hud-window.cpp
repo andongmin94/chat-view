@@ -37,6 +37,10 @@ constexpr std::uint16_t kSessionLockedDetail =
     kSystemLifecycleDetailBase + 3U;
 constexpr std::uint16_t kSessionUnlockedDetail =
     kSystemLifecycleDetailBase + 4U;
+constexpr std::uint16_t kSessionEndingDetail =
+    kSystemLifecycleDetailBase + 5U;
+constexpr std::uint16_t kSessionEndCancelledDetail =
+    kSystemLifecycleDetailBase + 6U;
 constexpr UINT kReadyDurationMs = 2200U;
 constexpr UINT kOfflineDurationMs = 1200U;
 constexpr UINT kNavigationRetryBaseMs = 5000U;
@@ -506,14 +510,24 @@ LRESULT HudWindow::handle_message(
         }
         return 0L;
     case WM_QUERYENDSESSION:
-        ShowWindow(window_, SW_HIDE);
+        handle_system_lifecycle_action(
+            system_lifecycle_.begin_end_session(),
+            kSessionEndingDetail);
         return TRUE;
     case WM_ENDSESSION:
         if (wparam != FALSE) {
+            KillTimer(window_, kSystemResumeTimerId);
             page_connection_recovery_.reset();
             page_health_watchdog_.disarm();
+            system_lifecycle_.reset();
+            system_resume_pending_ = false;
+            restart_after_system_resume_ = false;
             ShowWindow(window_, SW_HIDE);
             PostQuitMessage(0);
+        } else {
+            handle_system_lifecycle_action(
+                system_lifecycle_.cancel_end_session(),
+                kSessionEndCancelledDetail);
         }
         return 0L;
     case WM_HOTKEY:

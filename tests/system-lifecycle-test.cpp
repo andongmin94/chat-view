@@ -58,11 +58,29 @@ int main()
         return fail("Session lock transitions were not idempotent");
     }
 
+    if (lifecycle.begin_end_session() != SystemLifecycleAction::Pause ||
+        !lifecycle.end_session_pending() ||
+        lifecycle.begin_end_session() != SystemLifecycleAction::None ||
+        lifecycle.cancel_end_session() != SystemLifecycleAction::Resume ||
+        lifecycle.end_session_pending()) {
+        return fail("Cancelled shutdown transitions were not idempotent");
+    }
+
+    if (lifecycle.lock_session() != SystemLifecycleAction::Pause ||
+        lifecycle.begin_end_session() != SystemLifecycleAction::None ||
+        lifecycle.unlock_session() != SystemLifecycleAction::None ||
+        !lifecycle.paused() || !lifecycle.end_session_pending() ||
+        lifecycle.cancel_end_session() != SystemLifecycleAction::Resume ||
+        lifecycle.paused()) {
+        return fail("Shutdown and session-lock pause reasons were not combined");
+    }
+
     lifecycle.suspend();
     lifecycle.lock_session();
+    lifecycle.begin_end_session();
     lifecycle.reset();
     if (lifecycle.paused() || lifecycle.power_suspended() ||
-        lifecycle.session_locked()) {
+        lifecycle.session_locked() || lifecycle.end_session_pending()) {
         return fail("Reset left a stale Windows pause reason");
     }
 

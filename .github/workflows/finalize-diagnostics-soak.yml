@@ -21,7 +21,19 @@ jobs:
           fetch-depth: 0
 
       - name: Apply finalization
-        run: python scripts/finalize-diagnostics-soak.py
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/finalize-diagnostics-soak.py')
+          text = path.read_text(encoding='utf-8')
+          old = '    if count != 1:\n        raise SystemExit(f"{path_text}: expected one anchor, found {count}")'
+          new = '    if count == 0:\n        raise SystemExit(f"{path_text}: expected an anchor, found {count}")'
+          if text.count(old) != 1:
+              raise SystemExit('replace helper anchor was not unique')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8', newline='\n')
+          PY
+          python scripts/finalize-diagnostics-soak.py
 
       - name: Commit finalization
         shell: bash

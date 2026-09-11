@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply runtime history telemetry
+      - name: Apply runtime history telemetry with explicit fallback anchors
         run: python scripts/apply-runtime-history-telemetry.py
 
       - name: Validate and commit source changes

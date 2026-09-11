@@ -1,0 +1,34 @@
+name: Apply system resume edge cases
+
+on:
+  push:
+    branches:
+      - OBS
+    paths:
+      - .github/workflows/apply-system-resume-edge-cases.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out ChatView
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply resume edge-case hardening
+        run: python scripts/fix-system-resume-edge-cases.py
+
+      - name: Commit resume edge-case hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src tests
+          git commit -m "fix: revalidate critical Windows resume events"
+          git push origin HEAD:OBS

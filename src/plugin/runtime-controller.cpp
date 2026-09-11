@@ -22,7 +22,6 @@ namespace chatview {
 namespace {
 
 constexpr wchar_t kRuntimeExecutableName[] = L"chat-view-hud.exe";
-constexpr wchar_t kSettingsExecutableName[] = L"chat-view-config.exe";
 constexpr DWORD kRuntimeReadyWaitMs = 12000U;
 constexpr DWORD kRuntimeExitWaitMs = 2000U;
 constexpr DWORD kRuntimeTerminateWaitMs = 2000U;
@@ -249,48 +248,6 @@ bool RuntimeController::restart_hud() noexcept
         return false;
     }
     return true;
-}
-
-bool RuntimeController::open_settings() const noexcept
-{
-    try {
-        const std::wstring path = find_sibling_path(kSettingsExecutableName);
-        if (path.empty() || !is_regular_file(path)) {
-            blog(
-                LOG_ERROR,
-                "[ChatView OBS] Settings application was not found: %ls",
-                path.c_str());
-            return false;
-        }
-
-        std::wstring command_line = L"\"" + path + L"\"";
-        STARTUPINFOW startup_info{};
-        startup_info.cb = sizeof(startup_info);
-        PROCESS_INFORMATION process_info{};
-        if (!CreateProcessW(
-                path.c_str(),
-                command_line.data(),
-                nullptr,
-                nullptr,
-                FALSE,
-                CREATE_UNICODE_ENVIRONMENT,
-                nullptr,
-                nullptr,
-                &startup_info,
-                &process_info)) {
-            log_windows_error("CreateProcessW(settings)", GetLastError());
-            return false;
-        }
-
-        UniqueHandle process(process_info.hProcess);
-        UniqueHandle thread(process_info.hThread);
-        return true;
-    } catch (const std::exception &error) {
-        blog(LOG_ERROR, "[ChatView OBS] Failed to open settings: %s", error.what());
-    } catch (...) {
-        blog(LOG_ERROR, "[ChatView OBS] Failed to open settings");
-    }
-    return false;
 }
 
 bool RuntimeController::toggle_edit_mode() noexcept

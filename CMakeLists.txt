@@ -174,23 +174,30 @@ set_target_properties(chat-view-config PROPERTIES OUTPUT_NAME "chat-view-config"
 chatview_enable_warnings(chat-view-config)
 chatview_set_runtime_output(chat-view-config)
 
-add_executable(chat-view-diagnostics WIN32
-    src/diagnostics/main.cpp
+add_library(chat-view-diagnostics-core STATIC
     src/diagnostics/diagnostics-exporter.cpp
     src/diagnostics/diagnostics-exporter.hpp
 )
 target_include_directories(
-    chat-view-diagnostics PRIVATE "${CHATVIEW_SOURCE_DIR}")
-target_link_libraries(chat-view-diagnostics PRIVATE
+    chat-view-diagnostics-core PUBLIC "${CHATVIEW_SOURCE_DIR}")
+target_link_libraries(chat-view-diagnostics-core PUBLIC
     chat-view-common
     chat-view-diagnostic-redaction
     bcrypt
+    ole32
     shell32
-    user32
     version
 )
 target_compile_definitions(
-    chat-view-diagnostics PRIVATE CHATVIEW_VERSION="${PROJECT_VERSION}")
+    chat-view-diagnostics-core PRIVATE CHATVIEW_VERSION="${PROJECT_VERSION}")
+chatview_enable_win32(chat-view-diagnostics-core)
+chatview_enable_warnings(chat-view-diagnostics-core)
+
+add_executable(chat-view-diagnostics WIN32
+    src/diagnostics/main.cpp
+)
+target_link_libraries(
+    chat-view-diagnostics PRIVATE chat-view-diagnostics-core shell32 user32)
 chatview_enable_win32(chat-view-diagnostics)
 set_target_properties(
     chat-view-diagnostics PROPERTIES OUTPUT_NAME "chat-view-diagnostics")
@@ -235,6 +242,19 @@ if(BUILD_TESTING)
     add_test(
         NAME chat-view-diagnostic-redaction
         COMMAND chat-view-diagnostic-redaction-test
+    )
+
+    add_executable(chat-view-diagnostics-exporter-test
+        tests/diagnostics-exporter-test.cpp
+    )
+    target_link_libraries(
+        chat-view-diagnostics-exporter-test PRIVATE
+        chat-view-diagnostics-core)
+    chatview_enable_win32(chat-view-diagnostics-exporter-test)
+    chatview_enable_warnings(chat-view-diagnostics-exporter-test)
+    add_test(
+        NAME chat-view-diagnostics-exporter
+        COMMAND chat-view-diagnostics-exporter-test
     )
 
     add_executable(chat-view-control-status-reader-test

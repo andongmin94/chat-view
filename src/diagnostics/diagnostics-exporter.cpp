@@ -13,7 +13,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -21,7 +23,11 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
+
+#define CHATVIEW_WIDEN_INNER(value) L##value
+#define CHATVIEW_WIDEN(value) CHATVIEW_WIDEN_INNER(value)
 
 namespace chatview {
 namespace {
@@ -160,10 +166,10 @@ std::filesystem::path desktop_directory()
     return path;
 }
 
-std::filesystem::path create_export_directory()
+std::filesystem::path create_export_directory(
+    const std::filesystem::path &output_root)
 {
-    const std::filesystem::path desktop = desktop_directory();
-    if (desktop.empty()) {
+    if (output_root.empty()) {
         return {};
     }
 
@@ -187,7 +193,7 @@ std::filesystem::path create_export_directory()
             candidate_name.append(std::to_wstring(suffix + 1U));
         }
 
-        const std::filesystem::path candidate = desktop / candidate_name;
+        const std::filesystem::path candidate = output_root / candidate_name;
         std::error_code error;
         if (std::filesystem::create_directory(candidate, error)) {
             return candidate;
@@ -573,11 +579,12 @@ void append_file_summary(
 
 } // namespace
 
-DiagnosticsExportResult export_diagnostics_bundle() noexcept
+DiagnosticsExportResult export_diagnostics_bundle_to(
+    const std::filesystem::path &output_root) noexcept
 {
     DiagnosticsExportResult result;
     try {
-        result.directory = create_export_directory();
+        result.directory = create_export_directory(output_root);
         if (result.directory.empty()) {
             result.error = L"The Desktop diagnostics folder could not be created.";
             return result;
@@ -685,6 +692,17 @@ DiagnosticsExportResult export_diagnostics_bundle() noexcept
         result.directory.clear();
     }
     return result;
+}
+
+DiagnosticsExportResult export_diagnostics_bundle() noexcept
+{
+    const std::filesystem::path desktop = desktop_directory();
+    if (desktop.empty()) {
+        DiagnosticsExportResult result;
+        result.error = L"The Desktop diagnostics location could not be resolved.";
+        return result;
+    }
+    return export_diagnostics_bundle_to(desktop);
 }
 
 } // namespace chatview

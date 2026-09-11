@@ -29,7 +29,6 @@ public:
     void update(
         bool streaming, bool recording, bool capture_risk) noexcept;
     [[nodiscard]] bool restart_hud() noexcept;
-    [[nodiscard]] bool open_settings() const noexcept;
     [[nodiscard]] bool toggle_edit_mode() noexcept;
 
 private:

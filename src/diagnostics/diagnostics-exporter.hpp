@@ -5,9 +5,6 @@
 #include <filesystem>
 #include <string>
 
-#define CHATVIEW_WIDEN_INNER(value) L##value
-#define CHATVIEW_WIDEN(value) CHATVIEW_WIDEN_INNER(value)
-
 namespace chatview {
 
 struct DiagnosticsExportResult {
@@ -17,5 +14,7 @@ struct DiagnosticsExportResult {
 };
 
 [[nodiscard]] DiagnosticsExportResult export_diagnostics_bundle() noexcept;
+[[nodiscard]] DiagnosticsExportResult export_diagnostics_bundle_to(
+    const std::filesystem::path &output_root) noexcept;
 
 } // namespace chatview

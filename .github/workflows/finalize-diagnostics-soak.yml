@@ -31,7 +31,12 @@ jobs:
           new = '    if count == 0:\n        raise SystemExit(f"{path_text}: expected an anchor, found {count}")'
           if text.count(old) != 1:
               raise SystemExit('replace helper anchor was not unique')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8', newline='\n')
+          text = text.replace(old, new, 1)
+          readme_marker = '\nreplace_once(\n    "README.md",'
+          if text.count(readme_marker) != 1:
+              raise SystemExit('README finalization marker was not unique')
+          text = text.split(readme_marker, 1)[0] + '\n'
+          path.write_text(text, encoding='utf-8', newline='\n')
           PY
           python scripts/finalize-diagnostics-soak.py
 
@@ -41,6 +46,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CMakeLists.txt README.md .github/workflows/windows-build.yml src tests
+          git add CMakeLists.txt .github/workflows/windows-build.yml src tests
           git commit -m "feat: finish privacy-safe diagnostics and resource soak"
           git push origin HEAD:OBS

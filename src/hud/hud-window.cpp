@@ -26,7 +26,8 @@ constexpr UINT kOfflineDurationMs = 1200U;
 constexpr UINT kNavigationRetryBaseMs = 5000U;
 constexpr UINT kNavigationRetryMaximumMs = 30000U;
 constexpr UINT kCaptureSafetyIntervalMs = 1000U;
-constexpr UINT kEditHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT;
+constexpr UINT kEditHotkeyModifiers =
+    MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT;
 constexpr UINT kEditHotkeyVirtualKey = 'H';
 constexpr int kDefaultMarginDip = 24;
 constexpr int kResizeBorderDip = 10;
@@ -48,11 +49,37 @@ void debug_windows_error(const wchar_t *operation)
     OutputDebugStringW(message);
 }
 
-bool set_window_long_checked(HWND window, int index, LONG_PTR value) noexcept
+bool set_window_long_checked(
+    HWND window, int index, LONG_PTR value) noexcept
 {
     SetLastError(ERROR_SUCCESS);
     const LONG_PTR previous = SetWindowLongPtrW(window, index, value);
     return previous != 0 || GetLastError() == ERROR_SUCCESS;
+}
+
+HudProvider provider_for_url(const std::wstring &url) noexcept
+{
+    if (url.starts_with(L"https://weflab.com/")) {
+        return HudProvider::Weflab;
+    }
+    if (url.starts_with(L"https://chzzk.naver.com/")) {
+        return HudProvider::Chzzk;
+    }
+    if (url.starts_with(L"https://play.sooplive.com/")) {
+        return HudProvider::Soop;
+    }
+    if (url.starts_with(L"https://www.youtube.com/")) {
+        return HudProvider::YouTube;
+    }
+    return HudProvider::Unknown;
+}
+
+template<typename Enum>
+std::uint16_t detail_code(Enum value) noexcept
+{
+    const auto numeric = static_cast<unsigned int>(value);
+    return static_cast<std::uint16_t>(
+        std::min(numeric, static_cast<unsigned int>(0xffffU)));
 }
 
 } // namespace
@@ -84,7 +111,8 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
     if (load_hud_placement(loaded)) {
         placement_ = std::move(loaded);
     }
-    const RECT bounds = resolve_hud_bounds(placement_, kDefaultMarginDip);
+    const RECT bounds = resolve_hud_bounds(
+        placement_, kDefaultMarginDip);
 
     constexpr DWORD extended_style =
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT |
@@ -107,19 +135,27 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
         return false;
     }
 
-    if (!SetWindowDisplayAffinity(window_, WDA_EXCLUDEFROMCAPTURE)) {
+    if (!SetWindowDisplayAffinity(
+            window_, WDA_EXCLUDEFROMCAPTURE)) {
         debug_windows_error(L"SetWindowDisplayAffinity");
         return false;
     }
     if (!capture_exclusion_intact()) {
         OutputDebugStringW(
-            L"[ChatView HUD] Capture exclusion was not retained; refusing to initialize the HUD\n");
+            L"[ChatView HUD] Capture exclusion was not retained; "
+            L"refusing to initialize the HUD\n");
         return false;
     }
 
-    config_changed_message_ = RegisterWindowMessageW(kConfigChangedMessageName);
-    toggle_edit_message_ = RegisterWindowMessageW(kToggleEditMessageName);
-    if (config_changed_message_ == 0U || toggle_edit_message_ == 0U) {
+    config_changed_message_ = RegisterWindowMessageW(
+        kConfigChangedMessageName);
+    toggle_edit_message_ = RegisterWindowMessageW(
+        kToggleEditMessageName);
+    query_health_message_ = RegisterWindowMessageW(
+        kQueryHudHealthMessageName);
+    if (config_changed_message_ == 0U ||
+        toggle_edit_message_ == 0U ||
+        query_health_message_ == 0U) {
         debug_windows_error(L"RegisterWindowMessageW");
         return false;
     }
@@ -147,6 +183,8 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
         return false;
     }
 
+    set_page_health(
+        HudPageState::Starting, HudProvider::Unknown);
     ShowWindow(window_, SW_HIDE);
     return true;
 }
@@ -167,6 +205,7 @@ void HudWindow::destroy() noexcept
     webview_.close();
     ready_event_ = nullptr;
     if (window_ != nullptr) {
+        SetWindowLongPtrW(window_, GWLP_USERDATA, 0L);
         DestroyWindow(window_);
         window_ = nullptr;
     }
@@ -179,7 +218,8 @@ void HudWindow::destroy() noexcept
 
 void HudWindow::show_ready()
 {
-    set_transient_status(L"READY", L"#5ac8fa", kReadyDurationMs);
+    set_transient_status(
+        L"READY", L"#5ac8fa", kReadyDurationMs);
 }
 
 void HudWindow::apply_state(const SharedSnapshot &snapshot)
@@ -203,7 +243,8 @@ void HudWindow::apply_state(const SharedSnapshot &snapshot)
     if (active) {
         clear_transient_status();
     } else if (was_active) {
-        set_transient_status(L"OFFLINE", L"#aeb0b2", kOfflineDurationMs);
+        set_transient_status(
+            L"OFFLINE", L"#aeb0b2", kOfflineDurationMs);
     } else {
         update_host_state();
     }
@@ -215,30 +256,43 @@ LRESULT CALLBACK HudWindow::window_proc(
     HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
     HudWindow *self =
-        reinterpret_cast<HudWindow *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+        reinterpret_cast<HudWindow *>(
+            GetWindowLongPtrW(window, GWLP_USERDATA));
 
     if (message == WM_NCCREATE) {
-        const auto *create = reinterpret_cast<const CREATESTRUCTW *>(lparam);
+        const auto *create =
+            reinterpret_cast<const CREATESTRUCTW *>(lparam);
         self = static_cast<HudWindow *>(create->lpCreateParams);
-        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+        SetWindowLongPtrW(
+            window,
+            GWLP_USERDATA,
+            reinterpret_cast<LONG_PTR>(self));
         self->window_ = window;
     }
 
     return self != nullptr
-               ? self->handle_message(window, message, wparam, lparam)
+               ? self->handle_message(
+                     window, message, wparam, lparam)
                : DefWindowProcW(window, message, wparam, lparam);
 }
 
 LRESULT HudWindow::handle_message(
     HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
-    if (config_changed_message_ != 0U && message == config_changed_message_) {
+    if (config_changed_message_ != 0U &&
+        message == config_changed_message_) {
         reload_chat_config();
         return 0L;
     }
-    if (toggle_edit_message_ != 0U && message == toggle_edit_message_) {
+    if (toggle_edit_message_ != 0U &&
+        message == toggle_edit_message_) {
         toggle_edit_mode();
         return 0L;
+    }
+    if (query_health_message_ != 0U &&
+        message == query_health_message_) {
+        return static_cast<LRESULT>(
+            encode_hud_health(page_health()));
     }
 
     switch (message) {
@@ -253,14 +307,23 @@ LRESULT HudWindow::handle_message(
         if (!apply_capture_policy()) {
             return 0L;
         }
-        if (ready_event_ != nullptr && !SetEvent(ready_event_)) {
+        if (ready_event_ != nullptr &&
+            !SetEvent(ready_event_)) {
             debug_windows_error(L"SetEvent(ready)");
+            set_page_health(
+                HudPageState::Fatal,
+                page_provider_,
+                static_cast<std::uint16_t>(13U));
             ShowWindow(window_, SW_HIDE);
             PostQuitMessage(13);
         }
         return 0L;
     case kWebViewDocumentReadyMessage:
         cancel_navigation_retry();
+        if (page_state_ != HudPageState::SetupRequired) {
+            set_page_health(
+                HudPageState::Ready, page_provider_);
+        }
         update_host_state();
         return 0L;
     case kWebViewProcessFailedMessage:
@@ -276,8 +339,14 @@ LRESULT HudWindow::handle_message(
         swprintf_s(
             detail,
             L"[ChatView HUD] WebView2 host failed (0x%08lX)\n",
-            static_cast<unsigned long>(static_cast<std::uint32_t>(wparam)));
+            static_cast<unsigned long>(
+                static_cast<std::uint32_t>(wparam)));
         OutputDebugStringW(detail);
+        set_page_health(
+            HudPageState::Fatal,
+            page_provider_,
+            static_cast<std::uint16_t>(
+                static_cast<std::uint32_t>(wparam) & 0xffffU));
         ShowWindow(window_, SW_HIDE);
         PostQuitMessage(2);
         return 0L;
@@ -289,14 +358,21 @@ LRESULT HudWindow::handle_message(
         }
         if (wparam == kNavigationRetryTimerId) {
             KillTimer(window_, kNavigationRetryTimerId);
+            set_page_health(
+                HudPageState::Loading, page_provider_);
             if (!webview_.reload()) {
+                set_page_health(
+                    HudPageState::Fatal,
+                    page_provider_,
+                    static_cast<std::uint16_t>(10U));
                 ShowWindow(window_, SW_HIDE);
                 PostQuitMessage(10);
             }
             return 0L;
         }
         if (wparam == kCaptureSafetyTimerId) {
-            if (!capture_risk_ && !capture_exclusion_intact()) {
+            if (!capture_risk_ &&
+                !capture_exclusion_intact()) {
                 fail_closed_capture_exclusion();
             }
             return 0L;
@@ -318,10 +394,14 @@ LRESULT HudWindow::handle_message(
         const UINT current_dpi = dpi();
         minmax->ptMinTrackSize.x = minimum.cx;
         minmax->ptMinTrackSize.y = minimum.cy;
-        minmax->ptMaxTrackSize.x =
-            MulDiv(kMaximumHudWidthDip, static_cast<int>(current_dpi), 96);
-        minmax->ptMaxTrackSize.y =
-            MulDiv(kMaximumHudHeightDip, static_cast<int>(current_dpi), 96);
+        minmax->ptMaxTrackSize.x = MulDiv(
+            kMaximumHudWidthDip,
+            static_cast<int>(current_dpi),
+            96);
+        minmax->ptMaxTrackSize.y = MulDiv(
+            kMaximumHudHeightDip,
+            static_cast<int>(current_dpi),
+            96);
         return 0L;
     }
     case WM_ENTERSIZEMOVE:
@@ -341,7 +421,8 @@ LRESULT HudWindow::handle_message(
         webview_.resize();
         return 0L;
     case WM_DPICHANGED: {
-        const RECT *suggested = reinterpret_cast<const RECT *>(lparam);
+        const RECT *suggested =
+            reinterpret_cast<const RECT *>(lparam);
         if (!SetWindowPos(
                 window_,
                 nullptr,
@@ -351,6 +432,10 @@ LRESULT HudWindow::handle_message(
                 suggested->bottom - suggested->top,
                 SWP_NOZORDER | SWP_NOACTIVATE)) {
             debug_windows_error(L"SetWindowPos(DPI change)");
+            set_page_health(
+                HudPageState::Fatal,
+                page_provider_,
+                static_cast<std::uint16_t>(14U));
             ShowWindow(window_, SW_HIDE);
             PostQuitMessage(14);
             return 0L;
@@ -386,7 +471,9 @@ LRESULT HudWindow::handle_message(
     case WM_XBUTTONDBLCLK:
     case WM_MOUSEWHEEL:
     case WM_MOUSEHWHEEL:
-        if (edit_mode_ && webview_.forward_mouse_message(message, wparam, lparam)) {
+        if (edit_mode_ &&
+            webview_.forward_mouse_message(
+                message, wparam, lparam)) {
             return 0L;
         }
         break;
@@ -415,11 +502,20 @@ LRESULT HudWindow::hit_test(LPARAM lparam) const noexcept
         return HTCLIENT;
     }
 
-    const int border =
-        std::max(6, MulDiv(kResizeBorderDip, static_cast<int>(dpi()), 96));
-    const int header =
-        std::max(28, MulDiv(kDragHeaderDip, static_cast<int>(dpi()), 96));
-    const POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+    const int border = std::max(
+        6,
+        MulDiv(
+            kResizeBorderDip,
+            static_cast<int>(dpi()),
+            96));
+    const int header = std::max(
+        28,
+        MulDiv(
+            kDragHeaderDip,
+            static_cast<int>(dpi()),
+            96));
+    const POINT point{
+        GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
     const bool left = point.x < bounds.left + border;
     const bool right = point.x >= bounds.right - border;
     const bool top = point.y < bounds.top + border;
@@ -490,24 +586,37 @@ void HudWindow::apply_window_mode() noexcept
     }
 
     LONG_PTR style = GetWindowLongPtrW(window_, GWL_STYLE);
-    LONG_PTR extended_style = GetWindowLongPtrW(window_, GWL_EXSTYLE);
+    LONG_PTR extended_style =
+        GetWindowLongPtrW(window_, GWL_EXSTYLE);
     if (edit_mode_) {
         style |= WS_THICKFRAME;
-        extended_style &=
-            ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
+        extended_style &= ~static_cast<LONG_PTR>(
+            WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
     } else {
         style &= ~static_cast<LONG_PTR>(WS_THICKFRAME);
-        extended_style |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
+        extended_style |=
+            WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
     }
 
-    if (!set_window_long_checked(window_, GWL_STYLE, style)) {
+    if (!set_window_long_checked(
+            window_, GWL_STYLE, style)) {
         debug_windows_error(L"SetWindowLongPtrW(style)");
+        set_page_health(
+            HudPageState::Fatal,
+            page_provider_,
+            static_cast<std::uint16_t>(15U));
         ShowWindow(window_, SW_HIDE);
         PostQuitMessage(15);
         return;
     }
-    if (!set_window_long_checked(window_, GWL_EXSTYLE, extended_style)) {
-        debug_windows_error(L"SetWindowLongPtrW(extended style)");
+    if (!set_window_long_checked(
+            window_, GWL_EXSTYLE, extended_style)) {
+        debug_windows_error(
+            L"SetWindowLongPtrW(extended style)");
+        set_page_health(
+            HudPageState::Fatal,
+            page_provider_,
+            static_cast<std::uint16_t>(16U));
         ShowWindow(window_, SW_HIDE);
         PostQuitMessage(16);
         return;
@@ -519,8 +628,13 @@ void HudWindow::apply_window_mode() noexcept
             0,
             0,
             0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED)) {
+            SWP_NOMOVE | SWP_NOSIZE |
+                SWP_NOACTIVATE | SWP_FRAMECHANGED)) {
         debug_windows_error(L"SetWindowPos(window mode)");
+        set_page_health(
+            HudPageState::Fatal,
+            page_provider_,
+            static_cast<std::uint16_t>(17U));
         ShowWindow(window_, SW_HIDE);
         PostQuitMessage(17);
         return;
@@ -543,10 +657,16 @@ void HudWindow::reload_chat_config() noexcept
 
     ChatConfig config;
     if (load_chat_config(config)) {
+        const HudProvider provider = provider_for_url(config.url);
+        set_page_health(HudPageState::Loading, provider);
         if (!webview_.navigate(config.url)) {
-            schedule_navigation_retry(COREWEBVIEW2_WEB_ERROR_STATUS_UNEXPECTED_ERROR);
+            schedule_navigation_retry(
+                COREWEBVIEW2_WEB_ERROR_STATUS_UNEXPECTED_ERROR);
         }
     } else {
+        set_page_health(
+            HudPageState::SetupRequired,
+            HudProvider::Unknown);
         webview_.show_setup_page();
     }
 }
@@ -561,6 +681,11 @@ void HudWindow::handle_webview_process_failure(
         static_cast<unsigned int>(kind));
     OutputDebugStringW(detail);
 
+    set_page_health(
+        HudPageState::Recovering,
+        page_provider_,
+        detail_code(kind));
+
     switch (kind) {
     case COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED:
     case COREWEBVIEW2_PROCESS_FAILED_KIND_FRAME_RENDER_PROCESS_EXITED:
@@ -568,12 +693,20 @@ void HudWindow::handle_webview_process_failure(
         navigation_tone_ = L"#5ac8fa";
         update_host_state();
         if (!webview_.reload()) {
+            set_page_health(
+                HudPageState::Fatal,
+                page_provider_,
+                detail_code(kind));
             ShowWindow(window_, SW_HIDE);
             PostQuitMessage(9);
         }
         return;
     case COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED:
     case COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE:
+        set_page_health(
+            HudPageState::Fatal,
+            page_provider_,
+            detail_code(kind));
         ShowWindow(window_, SW_HIDE);
         PostQuitMessage(9);
         return;
@@ -592,20 +725,32 @@ void HudWindow::schedule_navigation_retry(
         static_cast<unsigned int>(status));
     OutputDebugStringW(detail);
 
+    set_page_health(
+        HudPageState::Retrying,
+        page_provider_,
+        detail_code(status));
     navigation_status_ = L"CHAT RETRYING";
     navigation_tone_ = L"#ffcc00";
-    navigation_retry_attempt_ =
-        std::min(navigation_retry_attempt_ + 1U, 4U);
+    navigation_retry_attempt_ = std::min(
+        navigation_retry_attempt_ + 1U, 4U);
 
-    const unsigned int shift =
-        std::min(navigation_retry_attempt_ - 1U, 3U);
+    const unsigned int shift = std::min(
+        navigation_retry_attempt_ - 1U, 3U);
     const UINT delay = std::min(
         kNavigationRetryBaseMs << shift,
         kNavigationRetryMaximumMs);
 
     KillTimer(window_, kNavigationRetryTimerId);
-    if (SetTimer(window_, kNavigationRetryTimerId, delay, nullptr) == 0U) {
+    if (SetTimer(
+            window_,
+            kNavigationRetryTimerId,
+            delay,
+            nullptr) == 0U) {
         debug_windows_error(L"SetTimer(navigation retry)");
+        set_page_health(
+            HudPageState::Fatal,
+            page_provider_,
+            detail_code(status));
         ShowWindow(window_, SW_HIDE);
         PostQuitMessage(10);
         return;
@@ -644,8 +789,14 @@ void HudWindow::fail_closed_capture_exclusion() noexcept
     }
 
     capture_exclusion_failed_ = true;
+    set_page_health(
+        HudPageState::Fatal,
+        page_provider_,
+        static_cast<std::uint16_t>(
+            kCaptureExclusionLostExitCode));
     OutputDebugStringW(
-        L"[ChatView HUD] Capture exclusion was lost; hiding and terminating the HUD\n");
+        L"[ChatView HUD] Capture exclusion was lost; "
+        L"hiding and terminating the HUD\n");
     if (window_ != nullptr) {
         ShowWindow(window_, SW_HIDE);
         KillTimer(window_, kStatusTimerId);
@@ -695,6 +846,10 @@ bool HudWindow::apply_capture_policy() noexcept
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
                 SWP_SHOWWINDOW)) {
         debug_windows_error(L"SetWindowPos(show HUD)");
+        set_page_health(
+            HudPageState::Fatal,
+            page_provider_,
+            static_cast<std::uint16_t>(12U));
         ShowWindow(window_, SW_HIDE);
         PostQuitMessage(12);
         return false;
@@ -736,13 +891,19 @@ void HudWindow::update_host_state() noexcept
 }
 
 void HudWindow::set_transient_status(
-    std::wstring text, std::wstring tone, UINT duration_ms)
+    std::wstring text,
+    std::wstring tone,
+    UINT duration_ms)
 {
     transient_status_ = std::move(text);
     transient_tone_ = std::move(tone);
     if (window_ != nullptr) {
         KillTimer(window_, kStatusTimerId);
-        if (SetTimer(window_, kStatusTimerId, duration_ms, nullptr) == 0U) {
+        if (SetTimer(
+                window_,
+                kStatusTimerId,
+                duration_ms,
+                nullptr) == 0U) {
             debug_windows_error(L"SetTimer(status)");
         }
     }
@@ -768,7 +929,8 @@ void HudWindow::capture_and_persist_bounds() noexcept
 
     placement_ = std::move(captured);
     if (!save_hud_placement(placement_)) {
-        OutputDebugStringW(L"[ChatView HUD] Failed to persist HUD bounds\n");
+        OutputDebugStringW(
+            L"[ChatView HUD] Failed to persist HUD bounds\n");
     }
 }
 
@@ -778,7 +940,8 @@ void HudWindow::restore_saved_bounds() noexcept
         return;
     }
 
-    const RECT bounds = resolve_hud_bounds(placement_, kDefaultMarginDip);
+    const RECT bounds = resolve_hud_bounds(
+        placement_, kDefaultMarginDip);
     if (!SetWindowPos(
             window_,
             HWND_TOPMOST,
@@ -788,6 +951,10 @@ void HudWindow::restore_saved_bounds() noexcept
             bounds.bottom - bounds.top,
             SWP_NOACTIVATE)) {
         debug_windows_error(L"SetWindowPos(restore bounds)");
+        set_page_health(
+            HudPageState::Fatal,
+            page_provider_,
+            static_cast<std::uint16_t>(18U));
         ShowWindow(window_, SW_HIDE);
         PostQuitMessage(18);
         return;
@@ -797,6 +964,22 @@ void HudWindow::restore_saved_bounds() noexcept
         return;
     }
     webview_.resize();
+}
+
+void HudWindow::set_page_health(
+    HudPageState state,
+    HudProvider provider,
+    std::uint16_t detail_code_value) noexcept
+{
+    page_state_ = state;
+    page_provider_ = provider;
+    page_detail_code_ = detail_code_value;
+}
+
+HudHealthSnapshot HudWindow::page_health() const noexcept
+{
+    return HudHealthSnapshot{
+        page_state_, page_provider_, page_detail_code_};
 }
 
 UINT HudWindow::dpi() const noexcept

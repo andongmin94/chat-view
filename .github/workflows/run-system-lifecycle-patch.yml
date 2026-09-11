@@ -41,6 +41,8 @@ jobs:
           for line in body.splitlines():
               if in_triple:
                   restored = line
+              elif not line:
+                  restored = ''
               else:
                   if not line.startswith('          '):
                       raise SystemExit(f'outside-string line lost YAML indentation: {line!r}')

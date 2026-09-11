@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "common/hud-health.hpp"
 #include "common/shared-state.hpp"
 #include "hud/hud-placement.hpp"
 #include "hud/webview-host.hpp"
@@ -51,6 +52,11 @@ private:
     void clear_transient_status() noexcept;
     void capture_and_persist_bounds() noexcept;
     void restore_saved_bounds() noexcept;
+    void set_page_health(
+        HudPageState state,
+        HudProvider provider,
+        std::uint16_t detail_code = 0U) noexcept;
+    [[nodiscard]] HudHealthSnapshot page_health() const noexcept;
     [[nodiscard]] UINT dpi() const noexcept;
 
     HWND window_ = nullptr;
@@ -58,6 +64,7 @@ private:
     HANDLE ready_event_ = nullptr;
     UINT config_changed_message_ = 0U;
     UINT toggle_edit_message_ = 0U;
+    UINT query_health_message_ = 0U;
     WebViewHost webview_;
     HudPlacement placement_;
     std::wstring transient_status_;
@@ -66,6 +73,9 @@ private:
     std::wstring navigation_tone_ = L"#ffcc00";
     std::uint64_t last_generation_ = 0U;
     unsigned int navigation_retry_attempt_ = 0U;
+    HudPageState page_state_ = HudPageState::Starting;
+    HudProvider page_provider_ = HudProvider::Unknown;
+    std::uint16_t page_detail_code_ = 0U;
     bool streaming_ = false;
     bool recording_ = false;
     bool capture_risk_ = false;

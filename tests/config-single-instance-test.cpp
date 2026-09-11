@@ -71,6 +71,15 @@ int fail(const wchar_t *message, HANDLE process = nullptr)
     return 1;
 }
 
+void pump_messages() noexcept
+{
+    MSG message{};
+    while (PeekMessageW(&message, nullptr, 0U, 0U, PM_REMOVE)) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+}
+
 LRESULT CALLBACK fake_hud_window_proc(
     HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
@@ -129,6 +138,7 @@ HWND wait_for_control_center(DWORD process_id)
 {
     const ULONGLONG deadline = GetTickCount64() + kWindowTimeoutMs;
     while (GetTickCount64() < deadline) {
+        pump_messages();
         const HWND window = FindWindowW(kControlCenterWindowClass, nullptr);
         if (window != nullptr) {
             DWORD owner_process_id = 0U;
@@ -137,19 +147,23 @@ HWND wait_for_control_center(DWORD process_id)
                 return window;
             }
         }
-        Sleep(25U);
+        Sleep(10U);
     }
     return nullptr;
 }
 
 bool exited_successfully(HANDLE process, DWORD timeout_ms)
 {
-    if (WaitForSingleObject(process, timeout_ms) != WAIT_OBJECT_0) {
-        return false;
+    const ULONGLONG deadline = GetTickCount64() + timeout_ms;
+    while (GetTickCount64() < deadline) {
+        pump_messages();
+        if (WaitForSingleObject(process, 0U) == WAIT_OBJECT_0) {
+            DWORD exit_code = 1U;
+            return GetExitCodeProcess(process, &exit_code) && exit_code == 0U;
+        }
+        Sleep(10U);
     }
-
-    DWORD exit_code = 1U;
-    return GetExitCodeProcess(process, &exit_code) && exit_code == 0U;
+    return false;
 }
 
 void publish(
@@ -205,10 +219,11 @@ bool wait_for_child_text(HWND parent, const wchar_t *needle)
 {
     const ULONGLONG deadline = GetTickCount64() + kWindowTimeoutMs;
     while (GetTickCount64() < deadline) {
+        pump_messages();
         if (child_text_contains(parent, needle)) {
             return true;
         }
-        Sleep(25U);
+        Sleep(10U);
     }
     return false;
 }
@@ -217,11 +232,7 @@ bool wait_for_edit_message()
 {
     const ULONGLONG deadline = GetTickCount64() + kWindowTimeoutMs;
     while (GetTickCount64() < deadline) {
-        MSG message{};
-        while (PeekMessageW(&message, nullptr, 0U, 0U, PM_REMOVE)) {
-            TranslateMessage(&message);
-            DispatchMessageW(&message);
-        }
+        pump_messages();
         if (edit_message_received.load(std::memory_order_acquire)) {
             return true;
         }
@@ -237,6 +248,9 @@ bool wait_for_saved_url(
     const ULONGLONG deadline = GetTickCount64() + kWindowTimeoutMs;
     std::array<wchar_t, 256U> value{};
     while (GetTickCount64() < deadline) {
+        pump_messages();
+        WritePrivateProfileStringW(
+            nullptr, nullptr, nullptr, config_file.c_str());
         value.fill(L'\0');
         const DWORD length = GetPrivateProfileStringW(
             L"chat",
@@ -245,10 +259,11 @@ bool wait_for_saved_url(
             value.data(),
             static_cast<DWORD>(value.size()),
             config_file.c_str());
-        if (length > 0U && std::wstring(value.data(), length) == expected) {
+        if (length > 0U &&
+            std::wstring(value.data(), length) == expected) {
             return true;
         }
-        Sleep(25U);
+        Sleep(10U);
     }
     return false;
 }
@@ -388,9 +403,12 @@ int wmain(int argument_count, wchar_t **arguments)
             first.process.get());
     }
 
-    if (!wait_for_child_text(control_center, L"Connected to OBS Studio") ||
-        !wait_for_child_text(control_center, L"Private HUD safety active") ||
-        !wait_for_child_text(control_center, L"YouTube chat ready")) {
+    if (!wait_for_child_text(
+            control_center, L"Connected to OBS Studio") ||
+        !wait_for_child_text(
+            control_center, L"Private HUD safety active") ||
+        !wait_for_child_text(
+            control_center, L"YouTube chat ready")) {
         DestroyWindow(fake_hud);
         return fail(
             L"The Control Center did not render live OBS and HUD health",
@@ -448,7 +466,8 @@ int wmain(int argument_count, wchar_t **arguments)
         restart_event_name,
         process_id);
     if (!second.process ||
-        !exited_successfully(second.process.get(), kProcessExitTimeoutMs)) {
+        !exited_successfully(
+            second.process.get(), kProcessExitTimeoutMs)) {
         DestroyWindow(fake_hud);
         if (second.process) {
             TerminateProcess(second.process.get(), 1U);
@@ -467,7 +486,8 @@ int wmain(int argument_count, wchar_t **arguments)
     }
 
     if (!PostMessageW(control_center, WM_CLOSE, 0U, 0L) ||
-        !exited_successfully(first.process.get(), kProcessExitTimeoutMs)) {
+        !exited_successfully(
+            first.process.get(), kProcessExitTimeoutMs)) {
         DestroyWindow(fake_hud);
         return fail(
             L"The Control Center did not exit cleanly",
@@ -475,7 +495,8 @@ int wmain(int argument_count, wchar_t **arguments)
     }
 
     DestroyWindow(fake_hud);
-    UnregisterClassW(kFakeHudWindowClass, fake_hud_class.hInstance);
+    UnregisterClassW(
+        kFakeHudWindowClass, fake_hud_class.hInstance);
 
     error.clear();
     std::filesystem::remove_all(profile, error);

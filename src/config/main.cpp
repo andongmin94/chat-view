@@ -886,7 +886,7 @@ private:
             L"ChatView " CHATVIEW_WIDEN(CHATVIEW_VERSION));
 
         recovery_button_ = create_button(
-            L"Fix now", kRecoveryButtonId, BS_DEFPUSHBUTTON);
+            L"Fix now", kRecoveryButtonId, BS_PUSHBUTTON);
         save_button_ = create_button(
             L"Save & Apply", kSaveButtonId, BS_DEFPUSHBUTTON);
         edit_button_ = create_button(

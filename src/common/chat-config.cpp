@@ -59,6 +59,12 @@ std::filesystem::path config_file_path() noexcept
     return root.empty() ? std::filesystem::path{} : root / L"config.ini";
 }
 
+void flush_private_profile_cache(
+    const std::filesystem::path &path) noexcept
+{
+    WritePrivateProfileStringW(nullptr, nullptr, nullptr, path.c_str());
+}
+
 bool has_forbidden_url_character(std::wstring_view url) noexcept
 {
     for (const wchar_t character : url) {
@@ -279,7 +285,6 @@ bool is_youtube_host(const std::wstring &host) noexcept
            is_host(host, L"m.youtube.com");
 }
 
-
 bool is_soop_station_host(const std::wstring &host) noexcept
 {
     return is_host(host, L"sooplive.com") ||
@@ -494,6 +499,8 @@ bool load_chat_config(ChatConfig &config) noexcept
             return false;
         }
 
+        flush_private_profile_cache(path);
+
         std::array<wchar_t, kMaximumUrlLength + 2U> buffer{};
         const DWORD length = GetPrivateProfileStringW(
             kConfigSection,
@@ -539,11 +546,16 @@ bool save_chat_config(const ChatConfig &config) noexcept
             return false;
         }
 
-        return WritePrivateProfileStringW(
-                   kConfigSection,
-                   kUrlKey,
-                   normalized.c_str(),
-                   path.c_str()) != FALSE;
+        if (!WritePrivateProfileStringW(
+                kConfigSection,
+                kUrlKey,
+                normalized.c_str(),
+                path.c_str())) {
+            return false;
+        }
+
+        flush_private_profile_cache(path);
+        return true;
     } catch (...) {
         return false;
     }
@@ -557,10 +569,16 @@ bool clear_chat_config() noexcept
             return false;
         }
 
+        flush_private_profile_cache(path);
         if (DeleteFileW(path.c_str())) {
+            flush_private_profile_cache(path);
             return true;
         }
-        return GetLastError() == ERROR_FILE_NOT_FOUND;
+        if (GetLastError() == ERROR_FILE_NOT_FOUND) {
+            flush_private_profile_cache(path);
+            return true;
+        }
+        return false;
     } catch (...) {
         return false;
     }

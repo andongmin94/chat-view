@@ -117,8 +117,23 @@ int main()
         return fail("Failed to write the diagnostics test log");
     }
 
+    chatview::DiagnosticsRuntimeSnapshot runtime;
+    runtime.obs_connected = true;
+    runtime.control_status_available = true;
+    runtime.control_status.flags =
+        chatview::ControlStatusStreaming |
+        chatview::ControlStatusHudRunning |
+        chatview::ControlStatusHudVisible;
+    runtime.control_status.hud_process_id = 4242U;
+    runtime.control_status.generation = 1U;
+    runtime.hud_health_available = true;
+    runtime.hud_health = {
+        chatview::HudPageState::ConnectionLost,
+        chatview::HudProvider::YouTube,
+        7U};
+
     const chatview::DiagnosticsExportResult result =
-        chatview::export_diagnostics_bundle_to(output_root);
+        chatview::export_diagnostics_bundle_to(output_root, runtime);
     if (!result.success || result.directory.empty()) {
         std::wcerr << L"Diagnostics export failed: " << result.error << L'\n';
         std::filesystem::remove_all(root, error);
@@ -160,7 +175,17 @@ int main()
             std::string::npos ||
         privacy.find("No chat messages are collected") ==
             std::string::npos ||
-        summary.find("ChatView diagnostics") == std::string::npos) {
+        summary.find("ChatView diagnostics") == std::string::npos ||
+        summary.find("OBS bridge connected: Yes") == std::string::npos ||
+        summary.find("OBS output: Streaming") == std::string::npos ||
+        summary.find("Display Capture interlock: Inactive") ==
+            std::string::npos ||
+        summary.find("HUD provider: YouTube") == std::string::npos ||
+        summary.find("HUD page state: Connection lost") ==
+            std::string::npos ||
+        summary.find(
+            "Current recovery condition: Provider chat connection lost") ==
+            std::string::npos) {
         std::filesystem::remove_all(root, error);
         return fail("Diagnostics export lost its expected safe content");
     }

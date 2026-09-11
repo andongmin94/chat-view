@@ -384,6 +384,202 @@ std::wstring provider_name(const std::wstring &url) noexcept
     return L"Unknown";
 }
 
+const wchar_t *yes_no(bool value) noexcept
+{
+    return value ? L"Yes" : L"No";
+}
+
+std::wstring provider_name(HudProvider provider)
+{
+    switch (provider) {
+    case HudProvider::Weflab:
+        return L"Weflab";
+    case HudProvider::Chzzk:
+        return L"CHZZK";
+    case HudProvider::Soop:
+        return L"SOOP";
+    case HudProvider::YouTube:
+        return L"YouTube";
+    case HudProvider::Unknown:
+    default:
+        return L"Unknown";
+    }
+}
+
+std::wstring page_state_name(HudPageState state)
+{
+    switch (state) {
+    case HudPageState::Starting:
+        return L"Starting";
+    case HudPageState::SetupRequired:
+        return L"Setup required";
+    case HudPageState::Loading:
+        return L"Loading";
+    case HudPageState::Ready:
+        return L"Ready";
+    case HudPageState::Retrying:
+        return L"Retrying";
+    case HudPageState::Recovering:
+        return L"Recovering";
+    case HudPageState::LoginRequired:
+        return L"Login required";
+    case HudPageState::Offline:
+        return L"Broadcast offline";
+    case HudPageState::LayoutChanged:
+        return L"Provider layout changed";
+    case HudPageState::NetworkOffline:
+        return L"Network offline";
+    case HudPageState::ConnectionLost:
+        return L"Connection lost";
+    case HudPageState::SystemPaused:
+        return L"Windows session paused";
+    case HudPageState::SystemResuming:
+        return L"Windows session resuming";
+    case HudPageState::Fatal:
+        return L"Fatal";
+    case HudPageState::Unknown:
+    default:
+        return L"Unknown";
+    }
+}
+
+std::wstring recovery_condition(HudPageState state)
+{
+    switch (state) {
+    case HudPageState::Starting:
+        return L"HUD startup in progress";
+    case HudPageState::Loading:
+        return L"Chat page load in progress";
+    case HudPageState::Retrying:
+        return L"Navigation retry active";
+    case HudPageState::Recovering:
+        return L"WebView or heartbeat recovery active";
+    case HudPageState::NetworkOffline:
+        return L"Browser network is offline";
+    case HudPageState::ConnectionLost:
+        return L"Provider chat connection lost";
+    case HudPageState::SystemPaused:
+        return L"Windows session is paused";
+    case HudPageState::SystemResuming:
+        return L"Windows resume revalidation active";
+    case HudPageState::Fatal:
+        return L"HUD reported a fatal error";
+    case HudPageState::SetupRequired:
+        return L"Chat configuration required";
+    case HudPageState::LoginRequired:
+        return L"Provider login required";
+    case HudPageState::Offline:
+        return L"Broadcast is offline or ended";
+    case HudPageState::LayoutChanged:
+        return L"Provider page layout changed";
+    case HudPageState::Ready:
+        return L"None active";
+    case HudPageState::Unknown:
+    default:
+        return L"Unavailable";
+    }
+}
+
+std::wstring output_description(const ControlStatusSnapshot &snapshot)
+{
+    std::vector<std::wstring> outputs;
+    if (has_control_status_flag(snapshot, ControlStatusStreaming)) {
+        outputs.emplace_back(L"Streaming");
+    }
+    if (has_control_status_flag(snapshot, ControlStatusRecording)) {
+        outputs.emplace_back(L"Recording");
+    }
+    if (has_control_status_flag(snapshot, ControlStatusReplayBuffer)) {
+        outputs.emplace_back(L"Replay buffer");
+    }
+    if (has_control_status_flag(snapshot, ControlStatusVirtualCamera)) {
+        outputs.emplace_back(L"Virtual camera");
+    }
+    if (outputs.empty()) {
+        return L"Idle";
+    }
+
+    std::wstring result;
+    for (std::size_t index = 0U; index < outputs.size(); ++index) {
+        if (index != 0U) {
+            result.append(L", ");
+        }
+        result.append(outputs[index]);
+    }
+    return result;
+}
+
+void append_runtime_summary(
+    std::wostringstream &summary,
+    const DiagnosticsRuntimeSnapshot &runtime)
+{
+    summary << L"
+Live runtime snapshot
+"
+            << L"---------------------
+"
+            << L"OBS bridge connected: " << yes_no(runtime.obs_connected)
+            << L"
+";
+
+    if (runtime.control_status_available &&
+        is_valid_control_status_snapshot(runtime.control_status)) {
+        const ControlStatusSnapshot &status = runtime.control_status;
+        summary << L"OBS output: " << output_description(status) << L"
+"
+                << L"Display Capture interlock: "
+                << (has_control_status_flag(status, ControlStatusCaptureRisk)
+                        ? L"Active"
+                        : L"Inactive")
+                << L"
+"
+                << L"HUD running: "
+                << yes_no(has_control_status_flag(
+                       status, ControlStatusHudRunning))
+                << L"
+"
+                << L"HUD visible: "
+                << yes_no(has_control_status_flag(
+                       status, ControlStatusHudVisible))
+                << L"
+";
+    } else {
+        summary << L"OBS output: Unavailable
+"
+                << L"Display Capture interlock: Unavailable
+"
+                << L"HUD running: Unavailable
+"
+                << L"HUD visible: Unavailable
+";
+    }
+
+    if (runtime.hud_health_available &&
+        is_valid_hud_health(runtime.hud_health)) {
+        summary << L"HUD provider: "
+                << provider_name(runtime.hud_health.provider) << L"
+"
+                << L"HUD page state: "
+                << page_state_name(runtime.hud_health.state) << L"
+"
+                << L"HUD detail code: "
+                << runtime.hud_health.detail_code << L"
+"
+                << L"Current recovery condition: "
+                << recovery_condition(runtime.hud_health.state) << L"
+";
+    } else {
+        summary << L"HUD provider: Unavailable
+"
+                << L"HUD page state: Unavailable
+"
+                << L"HUD detail code: Unavailable
+"
+                << L"Current recovery condition: Unavailable
+";
+    }
+}
+
 struct ProcessSummary {
     unsigned int hud_count = 0U;
     unsigned int webview_count = 0U;
@@ -580,7 +776,8 @@ void append_file_summary(
 } // namespace
 
 DiagnosticsExportResult export_diagnostics_bundle_to(
-    const std::filesystem::path &output_root) noexcept
+    const std::filesystem::path &output_root,
+    const DiagnosticsRuntimeSnapshot &runtime) noexcept
 {
     DiagnosticsExportResult result;
     try {
@@ -649,6 +846,7 @@ DiagnosticsExportResult export_diagnostics_bundle_to(
             summary,
             obs_root / L"bin" / L"64bit" / L"obs64.exe",
             L"obs64.exe");
+        append_runtime_summary(summary, runtime);
 
         const std::wstring privacy =
             L"ChatView diagnostics privacy rules\n"
@@ -694,7 +892,14 @@ DiagnosticsExportResult export_diagnostics_bundle_to(
     return result;
 }
 
-DiagnosticsExportResult export_diagnostics_bundle() noexcept
+DiagnosticsExportResult export_diagnostics_bundle_to(
+    const std::filesystem::path &output_root) noexcept
+{
+    return export_diagnostics_bundle_to(output_root, {});
+}
+
+DiagnosticsExportResult export_diagnostics_bundle(
+    const DiagnosticsRuntimeSnapshot &runtime) noexcept
 {
     const std::filesystem::path desktop = desktop_directory();
     if (desktop.empty()) {
@@ -702,7 +907,12 @@ DiagnosticsExportResult export_diagnostics_bundle() noexcept
         result.error = L"The Desktop diagnostics location could not be resolved.";
         return result;
     }
-    return export_diagnostics_bundle_to(desktop);
+    return export_diagnostics_bundle_to(desktop, runtime);
+}
+
+DiagnosticsExportResult export_diagnostics_bundle() noexcept
+{
+    return export_diagnostics_bundle({});
 }
 
 } // namespace chatview

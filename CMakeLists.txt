@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(chat-view-obs VERSION 0.3.7 LANGUAGES CXX)
+project(chat-view-obs VERSION 0.3.8 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ChatView OBS currently supports Windows only.")
@@ -192,6 +192,8 @@ target_compile_definitions(
     chat-view-diagnostics-core PRIVATE CHATVIEW_VERSION="${PROJECT_VERSION}")
 chatview_enable_win32(chat-view-diagnostics-core)
 chatview_enable_warnings(chat-view-diagnostics-core)
+target_link_libraries(
+    chat-view-config PRIVATE chat-view-diagnostics-core)
 
 add_executable(chat-view-diagnostics WIN32
     src/diagnostics/main.cpp

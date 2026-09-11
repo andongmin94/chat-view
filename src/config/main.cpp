@@ -5,6 +5,7 @@
 #include "common/win32-handle.hpp"
 #include "common/window-messages.hpp"
 #include "config/control-status-reader.hpp"
+#include "diagnostics/diagnostics-exporter.hpp"
 
 #include <Windows.h>
 #include <shellapi.h>
@@ -32,7 +33,8 @@ constexpr int kSaveButtonId = 1002;
 constexpr int kEditButtonId = 1003;
 constexpr int kRestartButtonId = 1004;
 constexpr int kCloseButtonId = 1005;
-constexpr int kWindowWidthDip = 820;
+constexpr int kDiagnosticsButtonId = 1006;
+constexpr int kWindowWidthDip = 920;
 constexpr int kWindowHeightDip = 520;
 constexpr int kMinimumUrlLength = 0;
 constexpr int kMaximumUrlLength = 2048;
@@ -535,6 +537,9 @@ private:
             case kRestartButtonId:
                 restart_hud();
                 return 0L;
+            case kDiagnosticsButtonId:
+                export_diagnostics();
+                return 0L;
             case kCloseButtonId:
                 DestroyWindow(window_);
                 return 0L;
@@ -637,10 +642,12 @@ private:
             L"Move / Resize", kEditButtonId, BS_PUSHBUTTON);
         restart_button_ = create_button(
             L"Restart HUD", kRestartButtonId, BS_PUSHBUTTON);
+        diagnostics_button_ = create_button(
+            L"Export diagnostics", kDiagnosticsButtonId, BS_PUSHBUTTON);
         close_button_ = create_button(
             L"Close", kCloseButtonId, BS_PUSHBUTTON);
 
-        const std::array<HWND, 18U> required{
+        const std::array<HWND, 19U> required{
             title_,
             subtitle_,
             url_label_,
@@ -658,7 +665,8 @@ private:
             feedback_,
             save_button_,
             edit_button_,
-            restart_button_};
+            restart_button_,
+            diagnostics_button_};
         if (std::any_of(
                 required.begin(),
                 required.end(),
@@ -768,12 +776,16 @@ private:
         }
         if (!connected_ || !status_reader_.parent_alive()) {
             connected_ = false;
+            snapshot_available_ = false;
+            latest_health_available_ = false;
             set_disconnected_status();
             return;
         }
 
         chatview::ControlStatusSnapshot snapshot;
         if (!status_reader_.read(snapshot)) {
+            snapshot_available_ = false;
+            latest_health_available_ = false;
             set_colored_text(
                 obs_value_,
                 L"●  Status unavailable",
@@ -804,6 +816,7 @@ private:
         if (status_changed) {
             snapshot_ = snapshot;
         }
+        snapshot_available_ = true;
 
         set_colored_text(
             obs_value_,
@@ -828,6 +841,10 @@ private:
                              : nullptr;
         const bool health_available =
             query_hud_health(hud, health);
+        latest_health_available_ = health_available;
+        if (health_available) {
+            latest_health_ = health;
+        }
         const HealthPresentation health_status =
             health_available
                 ? health_presentation(health)
@@ -1016,6 +1033,47 @@ private:
             L"HUD restart requested.", kColorGood);
     }
 
+    void export_diagnostics()
+    {
+        chatview::DiagnosticsRuntimeSnapshot runtime;
+        runtime.obs_connected =
+            connected_ && status_reader_.parent_alive();
+        runtime.control_status_available =
+            runtime.obs_connected && snapshot_available_;
+        runtime.control_status = snapshot_;
+        runtime.hud_health_available = latest_health_available_;
+        runtime.hud_health = latest_health_;
+
+        const chatview::DiagnosticsExportResult result =
+            chatview::export_diagnostics_bundle(runtime);
+        if (!result.success) {
+            set_feedback(
+                result.error.empty()
+                    ? L"ChatView diagnostics could not be exported."
+                    : result.error,
+                kColorError);
+            return;
+        }
+
+        const HINSTANCE opened = ShellExecuteW(
+            window_,
+            L"open",
+            result.directory.c_str(),
+            nullptr,
+            nullptr,
+            SW_SHOWNORMAL);
+        if (reinterpret_cast<INT_PTR>(opened) <= 32) {
+            set_feedback(
+                L"Diagnostics were exported, but the folder could not be opened.",
+                kColorWarning);
+            return;
+        }
+
+        set_feedback(
+            L"Privacy-filtered diagnostics exported. Review before sharing.",
+            kColorGood);
+    }
+
     void set_feedback(
         const std::wstring &text, COLORREF color)
     {
@@ -1108,7 +1166,7 @@ private:
             DEFAULT_PITCH | FF_DONTCARE,
             L"Segoe UI");
 
-        const std::array<HWND, 19U> body_controls{
+        const std::array<HWND, 20U> body_controls{
             subtitle_,
             url_edit_,
             provider_value_,
@@ -1121,6 +1179,7 @@ private:
             save_button_,
             edit_button_,
             restart_button_,
+            diagnostics_button_,
             close_button_,
             version_,
             url_label_,
@@ -1191,26 +1250,27 @@ private:
                 TRUE);
         };
 
-        move(title_, 32, 24, 756, 38);
-        move(subtitle_, 34, 61, 752, 24);
+        move(title_, 32, 24, 856, 38);
+        move(subtitle_, 34, 61, 852, 24);
         move(url_label_, 34, 105, 300, 22);
-        move(url_edit_, 34, 132, 752, 32);
-        move(provider_value_, 36, 170, 748, 24);
-        move(status_group_, 28, 207, 764, 190);
+        move(url_edit_, 34, 132, 852, 32);
+        move(provider_value_, 36, 170, 848, 24);
+        move(status_group_, 28, 207, 864, 190);
         move(obs_label_, 52, 239, 190, 24);
-        move(obs_value_, 248, 239, 510, 24);
+        move(obs_value_, 248, 239, 610, 24);
         move(hud_label_, 52, 275, 190, 24);
-        move(hud_value_, 248, 275, 510, 24);
+        move(hud_value_, 248, 275, 610, 24);
         move(safety_label_, 52, 311, 190, 24);
-        move(safety_value_, 248, 311, 510, 24);
+        move(safety_value_, 248, 311, 610, 24);
         move(output_label_, 52, 347, 190, 24);
-        move(output_value_, 248, 347, 510, 24);
-        move(feedback_, 34, 407, 450, 24);
-        move(save_button_, 34, 443, 142, 38);
-        move(edit_button_, 188, 443, 142, 38);
-        move(restart_button_, 342, 443, 142, 38);
-        move(close_button_, 644, 443, 142, 38);
-        move(version_, 500, 409, 286, 22);
+        move(output_value_, 248, 347, 610, 24);
+        move(feedback_, 34, 407, 540, 24);
+        move(save_button_, 34, 443, 146, 38);
+        move(edit_button_, 190, 443, 146, 38);
+        move(restart_button_, 346, 443, 146, 38);
+        move(diagnostics_button_, 502, 443, 190, 38);
+        move(close_button_, 742, 443, 146, 38);
+        move(version_, 650, 409, 238, 22);
     }
 
     void center_on_primary_monitor()
@@ -1255,6 +1315,7 @@ private:
     Options options_;
     chatview::ControlStatusReader status_reader_;
     chatview::ControlStatusSnapshot snapshot_;
+    chatview::HudHealthSnapshot latest_health_;
     HINSTANCE instance_ = nullptr;
     HWND window_ = nullptr;
     HWND title_ = nullptr;
@@ -1276,6 +1337,7 @@ private:
     HWND save_button_ = nullptr;
     HWND edit_button_ = nullptr;
     HWND restart_button_ = nullptr;
+    HWND diagnostics_button_ = nullptr;
     HWND close_button_ = nullptr;
     HFONT title_font_ = nullptr;
     HFONT body_font_ = nullptr;
@@ -1283,6 +1345,8 @@ private:
     UINT activation_message_ = 0U;
     UINT dpi_ = 96U;
     bool connected_ = false;
+    bool snapshot_available_ = false;
+    bool latest_health_available_ = false;
     COLORREF provider_color_ = kColorMuted;
     COLORREF obs_color_ = kColorMuted;
     COLORREF hud_color_ = kColorMuted;

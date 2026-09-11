@@ -15,6 +15,8 @@ This branch currently provides an installable single-PC alpha:
 - automatic conversion of ordinary CHZZK, SOOP, and YouTube broadcast URLs;
 - browser connectivity and provider connection-loss recovery;
 - Windows suspend, workstation-lock, and cancelled-shutdown recovery;
+- privacy-filtered diagnostics from OBS or the Control Center, with no automatic upload;
+- repeated live HUD/WebView2 resource-growth soak coverage;
 - OBS **Tools → ChatView Settings...** configuration;
 - click-through locked mode;
 - draggable and resizable edit mode;
@@ -78,6 +80,8 @@ https://www.youtube.com/live_chat?is_popout=1&v=<video-id>
 ```
 
 Saving broadcasts a local configuration-change message, so the running HUD reloads without restarting OBS.
+
+Use **Export diagnostics** in the Control Center, or **Tools → Export ChatView Diagnostics...** in OBS, to create a Desktop folder containing a binary-integrity summary, the current OBS/HUD state when available, and only ChatView-tagged OBS log lines. The export omits the configured URL and chat messages, redacts user-profile paths and IPC names, uploads nothing automatically, and must be reviewed before sharing.
 
 The URL normalizer requires HTTPS, the default HTTPS port, no embedded credentials, a supported host and path, a valid CHZZK channel ID, a valid SOOP channel path, and a non-empty YouTube video ID. SOOP broadcast-number routes are reduced to a channel-scoped `vtype=chat` URL so a live redirect remains bound to the configured streamer. It stores only the normalized chat URL. New top-level WebView navigation outside the allowlist is cancelled.
 

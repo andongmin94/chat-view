@@ -21,7 +21,19 @@ jobs:
           fetch-depth: 0
 
       - name: Apply lifecycle follow-up
-        run: python scripts/finalize-system-lifecycle.py
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path('scripts/finalize-system-lifecycle.py').read_text(encoding='utf-8')
+          marker = '\nreplace_once(\n    "README.md",'
+          if source.count(marker) != 1:
+              raise SystemExit('README patch boundary was not unique')
+          source = source.split(marker, 1)[0] + '\n'
+          compile(source, 'finalize-system-lifecycle.py', 'exec')
+          exec(source, {'__name__': '__main__'})
+          PY
 
       - name: Commit lifecycle follow-up
         shell: bash
@@ -29,6 +41,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md src tests
+          git add src tests
           git commit -m "fix: recover from cancelled Windows shutdown"
           git push origin HEAD:OBS

@@ -1,0 +1,36 @@
+name: Apply runtime history telemetry
+
+on:
+  push:
+    branches:
+      - OBS
+    paths:
+      - .github/workflows/apply-runtime-history-telemetry.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out ChatView
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply runtime history telemetry
+        run: python scripts/apply-runtime-history-telemetry.py
+
+      - name: Validate and commit source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CMakeLists.txt README.md src tests
+          git diff --cached --check
+          git commit -m "feat: persist HUD restart history and circuit state"
+          git push origin HEAD:OBS

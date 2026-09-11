@@ -32,43 +32,56 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
   const post = window.chrome.webview.postMessage.bind(window.chrome.webview);
   const startedAt = performance.now();
   const layoutDeadlineMs = 15000;
-  const textLimit = 40000;
+  const mutationDelayMs = 750;
+  const periodicIntervalMs = 2000;
+  const maximumStatusNodes = 24;
+  const maximumStatusTextLength = 12000;
+  const maximumNodeTextLength = 2048;
   let lastMessage = '';
   let scheduled = false;
+  let observer = null;
+  let observerConnected = false;
 
-  const send = (state, detail = 0) => {
-    const message = `CVH1|${provider}|${state}|${detail}`;
-    if (message === lastMessage) return;
-    lastMessage = message;
-    try { post(message); } catch (_) {}
+  const genericStatusSelectors = [
+    '[data-chatview-state]',
+    '[data-chatview-status]',
+    '[role="alert"]',
+    '[role="status"]'
+  ];
+  const providerStatusSelectors = {
+    1: [
+      '[data-testid*="status"]',
+      '[class*="notice"]',
+      '[class*="error"]',
+      '[class*="empty"]',
+      '[class*="login"]',
+      '[class*="offline"]'
+    ],
+    2: [
+      '[class*="notice"]',
+      '[class*="error"]',
+      '[class*="empty"]',
+      '[class*="login"]',
+      '[class*="offline"]',
+      '[class*="ended"]'
+    ],
+    3: [
+      '#chat_area [class*="notice"]',
+      '#chat_area [class*="error"]',
+      '#chat_area [class*="empty"]',
+      '#chat_area [class*="login"]',
+      '#chat_area [class*="offline"]',
+      '#chat_area [class*="end"]'
+    ],
+    4: [
+      'yt-live-chat-message-input-renderer',
+      'yt-live-chat-viewer-engagement-message-renderer',
+      'yt-live-chat-restricted-participation-renderer',
+      'yt-live-chat-placeholder-item-renderer',
+      'yt-live-chat-banner-renderer'
+    ]
   };
-
-  const visible = (selector) => {
-    let element = null;
-    try { element = document.querySelector(selector); } catch (_) { return false; }
-    if (!element) return false;
-    const rect = element.getBoundingClientRect();
-    if (rect.width < 80 || rect.height < 80) return false;
-    const style = getComputedStyle(element);
-    return style.display !== 'none' &&
-      style.visibility !== 'hidden' &&
-      Number.parseFloat(style.opacity || '1') > 0.01;
-  };
-
-  const bodyText = () => {
-    if (!document.body) return '';
-    const value = document.body.innerText || document.body.textContent || '';
-    return value.slice(0, textLimit).toLowerCase();
-  };
-
-  const includesAny = (text, phrases) => {
-    for (let index = 0; index < phrases.length; ++index) {
-      if (text.includes(phrases[index])) return index + 1;
-    }
-    return 0;
-  };
-
-  const selectors = {
+  const readySelectors = {
     1: [
       '[data-chatview-ready="true"]',
       '[data-testid*="chat"]',
@@ -100,7 +113,6 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
       'yt-live-chat-app'
     ]
   };
-
   const offlinePhrases = [
     '방송이 종료되었습니다',
     '라이브가 종료되었습니다',
@@ -121,28 +133,125 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
     'login required'
   ];
 
-  const evaluate = () => {
+  const isRendered = (element, minimumWidth = 1, minimumHeight = 1) => {
+    if (!element || typeof element.getBoundingClientRect !== 'function') return false;
+    const rect = element.getBoundingClientRect();
+    if (rect.width < minimumWidth || rect.height < minimumHeight) return false;
+    const style = getComputedStyle(element);
+    return style.display !== 'none' &&
+      style.visibility !== 'hidden' &&
+      Number.parseFloat(style.opacity || '1') > 0.01;
+  };
+
+  const queryAll = (selector) => {
+    try { return document.querySelectorAll(selector); } catch (_) { return []; }
+  };
+
+  const includesAny = (text, phrases) => {
+    for (let index = 0; index < phrases.length; ++index) {
+      if (text.includes(phrases[index])) return index + 1;
+    }
+    return 0;
+  };
+
+  const collectStatusText = () => {
+    const parts = [];
+    if (document.title) parts.push(document.title.slice(0, maximumNodeTextLength));
+
+    const selectors = genericStatusSelectors.concat(
+      providerStatusSelectors[provider] || []);
+    let visited = 0;
+    let length = parts.reduce((sum, part) => sum + part.length, 0);
+
+    outer:
+    for (const selector of selectors) {
+      for (const element of queryAll(selector)) {
+        if (visited >= maximumStatusNodes || length >= maximumStatusTextLength) break outer;
+        ++visited;
+        if (!isRendered(element)) continue;
+        const text = String(element.textContent || '')
+          .slice(0, maximumNodeTextLength)
+          .trim();
+        if (!text) continue;
+        parts.push(text);
+        length += text.length;
+      }
+    }
+    return parts.join(' ').slice(0, maximumStatusTextLength).toLowerCase();
+  };
+
+  const explicitState = () => {
+    let element = null;
+    try { element = document.querySelector('[data-chatview-state]'); } catch (_) {}
+    if (!element || typeof element.getAttribute !== 'function') return null;
+    const value = String(element.getAttribute('data-chatview-state') || '')
+      .trim()
+      .toLowerCase();
+    switch (value) {
+      case 'loading': return [3, 100];
+      case 'ready': return [4, 101];
+      case 'login-required': return [7, 102];
+      case 'offline': return [8, 103];
+      case 'layout-changed': return [9, 104];
+      default: return null;
+    }
+  };
+
+  function stopObserving() {
+    if (observer && observerConnected) {
+      observer.disconnect();
+      observerConnected = false;
+    }
+  }
+
+  function startObserving() {
+    if (!observer) observer = new MutationObserver(schedule);
+    if (!observerConnected && document.documentElement) {
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      observerConnected = true;
+    }
+  }
+
+  const send = (state, detail = 0) => {
+    const message = `CVH1|${provider}|${state}|${detail}`;
+    if (message !== lastMessage) {
+      lastMessage = message;
+      try { post(message); } catch (_) {}
+    }
+    if (state === 3) startObserving();
+    else stopObserving();
+  };
+
+  function evaluate() {
     if (!document.body || document.readyState === 'loading') {
       send(3, 0);
       return;
     }
 
-    const text = bodyText();
-    const offlineDetail = includesAny(text, offlinePhrases);
+    const explicit = explicitState();
+    if (explicit) {
+      send(explicit[0], explicit[1]);
+      return;
+    }
+
+    const statusText = collectStatusText();
+    const offlineDetail = includesAny(statusText, offlinePhrases);
     if (offlineDetail) {
       send(8, offlineDetail);
       return;
     }
 
-    const loginDetail = includesAny(text, loginPhrases);
+    const loginDetail = includesAny(statusText, loginPhrases);
     if (loginDetail) {
       send(7, loginDetail);
       return;
     }
 
-    const candidates = selectors[provider] || [];
+    const candidates = readySelectors[provider] || [];
     for (let index = 0; index < candidates.length; ++index) {
-      if (visible(candidates[index])) {
+      let element = null;
+      try { element = document.querySelector(candidates[index]); } catch (_) {}
+      if (isRendered(element, 80, 80)) {
         send(4, index + 1);
         return;
       }
@@ -153,33 +262,30 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
     } else {
       send(3, 0);
     }
-  };
+  }
 
-  const schedule = () => {
+  function schedule() {
     if (scheduled) return;
     scheduled = true;
     setTimeout(() => {
       scheduled = false;
       evaluate();
-    }, 200);
-  };
+    }, mutationDelayMs);
+  }
 
-  const installObserver = () => {
+  const install = () => {
     if (!document.documentElement) {
-      setTimeout(installObserver, 0);
+      setTimeout(install, 0);
       return;
     }
-    new MutationObserver(schedule).observe(document.documentElement, {
-      childList: true,
-      subtree: true
-    });
+    startObserving();
     evaluate();
   };
 
   document.addEventListener('DOMContentLoaded', schedule, { once: true });
   window.addEventListener('load', schedule, { once: true });
-  setInterval(evaluate, 2000);
-  installObserver();
+  setInterval(evaluate, periodicIntervalMs);
+  install();
 })();
 )JS";
 

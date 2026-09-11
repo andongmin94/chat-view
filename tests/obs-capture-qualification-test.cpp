@@ -213,7 +213,8 @@ AttemptOutcome run_attempt(
             outcome.report,
             "pipeline=monitor_capture>scene>main_texture") &&
         has_report_line(outcome.report, "calibration_visible=1") &&
-        has_report_line(outcome.report, "hidden_window_excluded=1");
+        has_report_line(outcome.report, "hidden_window_excluded=1") &&
+        has_report_line(outcome.report, "affinity_honored=1");
     outcome.retryable =
         !outcome.passed && is_retryable_report(outcome.report);
 

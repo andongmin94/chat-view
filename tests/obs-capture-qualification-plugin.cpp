@@ -33,6 +33,9 @@ constexpr wchar_t kProbeWindowClassName[] =
 constexpr char kDisplayCaptureSourceId[] = "monitor_capture";
 constexpr DWORD kSourceReadyTimeoutMs = 12000U;
 constexpr DWORD kProbeSettleMs = 450U;
+constexpr DWORD kTransitionTimeoutMs = 6000U;
+constexpr DWORD kTransitionSampleIntervalMs = 100U;
+constexpr unsigned int kRequiredConsecutiveSamples = 3U;
 constexpr int kMinimumCalibrationDistance = 72;
 constexpr int kHiddenDistanceFloor = 24;
 
@@ -714,6 +717,85 @@ std::string pixel_text(const Pixel &pixel)
            std::to_string(pixel.third);
 }
 
+bool wait_for_distinct_sample(
+    std::uint32_t width,
+    std::uint32_t height,
+    const Pixel &background,
+    Pixel &sample,
+    std::string &error) noexcept
+{
+    const ULONGLONG deadline = GetTickCount64() + kTransitionTimeoutMs;
+    unsigned int consecutive = 0U;
+
+    while (!stopping.load(std::memory_order_acquire) &&
+           GetTickCount64() < deadline) {
+        Pixel candidate;
+        if (!sample_main_texture(width, height, candidate, error)) {
+            return false;
+        }
+        sample = candidate;
+
+        if (pixel_distance(background, candidate) >=
+            kMinimumCalibrationDistance) {
+            ++consecutive;
+            if (consecutive >= kRequiredConsecutiveSamples) {
+                return true;
+            }
+        } else {
+            consecutive = 0U;
+        }
+        Sleep(kTransitionSampleIntervalMs);
+    }
+
+    error = stopping.load(std::memory_order_acquire)
+                ? "Qualification was cancelled"
+                : "OBS Display Capture did not distinguish the calibrated probe windows";
+    return false;
+}
+
+bool wait_for_background_sample(
+    std::uint32_t width,
+    std::uint32_t height,
+    const Pixel &background,
+    const Pixel &foreground,
+    int background_limit,
+    const char *timeout_message,
+    Pixel &sample,
+    std::string &error) noexcept
+{
+    const ULONGLONG deadline = GetTickCount64() + kTransitionTimeoutMs;
+    unsigned int consecutive = 0U;
+
+    while (!stopping.load(std::memory_order_acquire) &&
+           GetTickCount64() < deadline) {
+        Pixel candidate;
+        if (!sample_main_texture(width, height, candidate, error)) {
+            return false;
+        }
+        sample = candidate;
+
+        const int background_distance =
+            pixel_distance(background, candidate);
+        const int foreground_distance =
+            pixel_distance(foreground, candidate);
+        if (background_distance <= background_limit &&
+            background_distance + 12 < foreground_distance) {
+            ++consecutive;
+            if (consecutive >= kRequiredConsecutiveSamples) {
+                return true;
+            }
+        } else {
+            consecutive = 0U;
+        }
+        Sleep(kTransitionSampleIntervalMs);
+    }
+
+    error = stopping.load(std::memory_order_acquire)
+                ? "Qualification was cancelled"
+                : timeout_message;
+    return false;
+}
+
 void run_qualification() noexcept
 {
     std::string failure;
@@ -773,9 +855,10 @@ void run_qualification() noexcept
         }
 
         if (!probes.show_foreground_unprotected(failure) ||
-            !sample_main_texture(
+            !wait_for_distinct_sample(
                 fixture.base_width,
                 fixture.base_height,
+                background,
                 foreground,
                 failure)) {
             throw std::runtime_error(failure);
@@ -783,24 +866,31 @@ void run_qualification() noexcept
 
         const int calibration_distance =
             pixel_distance(background, foreground);
-        if (calibration_distance < kMinimumCalibrationDistance) {
-            throw std::runtime_error(
-                "OBS Display Capture did not distinguish the calibrated probe windows");
-        }
-
+        const int protected_limit = std::max(
+            32, calibration_distance / 3);
         if (!probes.protect_foreground(failure) ||
-            !sample_main_texture(
+            !wait_for_background_sample(
                 fixture.base_width,
                 fixture.base_height,
+                background,
+                foreground,
+                protected_limit,
+                "WDA_EXCLUDEFROMCAPTURE remained visible in the OBS main texture",
                 protected_foreground,
                 failure)) {
             throw std::runtime_error(failure);
         }
 
+        const int hidden_limit = std::max(
+            kHiddenDistanceFloor, calibration_distance / 5);
         if (!probes.hide_foreground(failure) ||
-            !sample_main_texture(
+            !wait_for_background_sample(
                 fixture.base_width,
                 fixture.base_height,
+                background,
+                foreground,
+                hidden_limit,
+                "A hidden top-level window remained visible in the OBS main texture",
                 hidden_foreground,
                 failure)) {
             throw std::runtime_error(failure);
@@ -810,8 +900,6 @@ void run_qualification() noexcept
             pixel_distance(background, hidden_foreground);
         const int foreground_to_hidden =
             pixel_distance(foreground, hidden_foreground);
-        const int hidden_limit = std::max(
-            kHiddenDistanceFloor, calibration_distance / 5);
         if (background_to_hidden > hidden_limit ||
             background_to_hidden >= foreground_to_hidden) {
             throw std::runtime_error(
@@ -823,9 +911,12 @@ void run_qualification() noexcept
         const int foreground_to_protected =
             pixel_distance(foreground, protected_foreground);
         const bool affinity_honored =
-            background_to_protected <=
-                std::max(32, calibration_distance / 3) &&
+            background_to_protected <= protected_limit &&
             background_to_protected + 12 < foreground_to_protected;
+        if (!affinity_honored) {
+            throw std::runtime_error(
+                "WDA_EXCLUDEFROMCAPTURE remained visible in the OBS main texture");
+        }
 
         std::ostringstream report;
         report

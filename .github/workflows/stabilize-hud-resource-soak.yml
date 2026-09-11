@@ -1,0 +1,41 @@
+name: Stabilize HUD resource soak
+
+on:
+  push:
+    branches:
+      - obs-preflight-work
+    paths:
+      - .github/workflows/stabilize-hud-resource-soak.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  stabilize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out ChatView
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply settled-window resource accounting
+        run: python scripts/stabilize-hud-resource-soak.py
+
+      - name: Commit soak-test stabilization
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/hud-resource-soak-test.cpp
+          git commit -m "test: detect sustained HUD resource growth"
+          git push origin HEAD:obs-preflight-work
+
+      - name: Dispatch Windows validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh workflow run windows-build.yml --ref obs-preflight-work

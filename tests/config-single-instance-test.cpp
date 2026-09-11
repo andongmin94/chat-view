@@ -420,9 +420,18 @@ int wmain(int argument_count, wchar_t **arguments)
             first.process.get());
     }
 
-    SetWindowTextW(
-        url_edit,
-        L"https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+    constexpr wchar_t kInputUrl[] =
+        L"https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+    if (SendMessageW(
+            url_edit,
+            WM_SETTEXT,
+            0U,
+            reinterpret_cast<LPARAM>(kInputUrl)) == FALSE) {
+        DestroyWindow(fake_hud);
+        return fail(
+            L"The Control Center URL field rejected WM_SETTEXT",
+            first.process.get());
+    }
     if (!post_command(control_center, kSaveButtonId, save_button)) {
         DestroyWindow(fake_hud);
         return fail(

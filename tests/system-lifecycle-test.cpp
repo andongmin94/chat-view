@@ -21,12 +21,13 @@ int main()
 
     SystemLifecycle lifecycle;
     if (lifecycle.paused() || lifecycle.power_suspended() ||
-        lifecycle.session_locked()) {
+        lifecycle.session_locked() || lifecycle.end_session_pending()) {
         return fail("A new lifecycle state was unexpectedly paused");
     }
 
     if (lifecycle.resume() != SystemLifecycleAction::None ||
-        lifecycle.unlock_session() != SystemLifecycleAction::None) {
+        lifecycle.unlock_session() != SystemLifecycleAction::None ||
+        lifecycle.cancel_end_session() != SystemLifecycleAction::None) {
         return fail("A duplicate active notification caused a transition");
     }
 
@@ -75,9 +76,11 @@ int main()
         return fail("Shutdown and session-lock pause reasons were not combined");
     }
 
-    lifecycle.suspend();
-    lifecycle.lock_session();
-    lifecycle.begin_end_session();
+    if (lifecycle.suspend() != SystemLifecycleAction::Pause ||
+        lifecycle.lock_session() != SystemLifecycleAction::None ||
+        lifecycle.begin_end_session() != SystemLifecycleAction::None) {
+        return fail("Reset fixture did not enter all pause states");
+    }
     lifecycle.reset();
     if (lifecycle.paused() || lifecycle.power_suspended() ||
         lifecycle.session_locked() || lifecycle.end_session_pending()) {

@@ -21,6 +21,49 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Disambiguate the required-controls patch anchor
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/apply-one-click-recovery.py")
+          text = path.read_text(encoding="utf-8")
+          old = """replace_once(
+              \"src/config/main.cpp\",
+              '''            recovery_value_,
+                      feedback_,
+                      save_button_,''',
+              '''            recovery_value_,
+                      feedback_,
+                      recovery_button_,
+                      save_button_,''',
+          )"""
+          new = """replace_once(
+              \"src/config/main.cpp\",
+              '''            recovery_value_,
+                      feedback_,
+                      save_button_,
+                      edit_button_,
+                      restart_button_,
+                      diagnostics_button_};''',
+              '''            recovery_value_,
+                      feedback_,
+                      recovery_button_,
+                      save_button_,
+                      edit_button_,
+                      restart_button_,
+                      diagnostics_button_};''',
+          )"""
+          if text.count(old) != 1:
+              raise SystemExit(
+                  f"expected one required-controls patch block, found {text.count(old)}")
+          path.write_text(
+              text.replace(old, new, 1),
+              encoding="utf-8",
+              newline="\n")
+          PY
+
       - name: Apply one-click recovery layer
         run: python scripts/apply-one-click-recovery.py
 

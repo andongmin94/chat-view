@@ -34,8 +34,8 @@ constexpr int kEditButtonId = 1003;
 constexpr int kRestartButtonId = 1004;
 constexpr int kCloseButtonId = 1005;
 constexpr int kDiagnosticsButtonId = 1006;
-constexpr int kWindowWidthDip = 920;
-constexpr int kWindowHeightDip = 520;
+constexpr int kWindowWidthDip = 960;
+constexpr int kWindowHeightDip = 570;
 constexpr int kMinimumUrlLength = 0;
 constexpr int kMaximumUrlLength = 2048;
 
@@ -66,6 +66,11 @@ struct WindowSearch {
 };
 
 struct HealthPresentation {
+    std::wstring text;
+    COLORREF color = kColorMuted;
+};
+
+struct RuntimePresentation {
     std::wstring text;
     COLORREF color = kColorMuted;
 };
@@ -274,6 +279,95 @@ HealthPresentation health_presentation(
     default:
         return {L"Chat page status unavailable", kColorMuted};
     }
+}
+
+std::wstring runtime_restart_reason_name(
+    chatview::RuntimeRestartReason reason)
+{
+    switch (reason) {
+    case chatview::RuntimeRestartReason::LaunchFailure:
+        return L"HUD launch failed";
+    case chatview::RuntimeRestartReason::StartupTimeout:
+        return L"HUD startup timed out";
+    case chatview::RuntimeRestartReason::WebViewFailure:
+        return L"WebView host failed";
+    case chatview::RuntimeRestartReason::NavigationFailure:
+        return L"chat navigation failed";
+    case chatview::RuntimeRestartReason::CaptureExclusionFailure:
+        return L"capture exclusion was lost";
+    case chatview::RuntimeRestartReason::ReadySignalFailure:
+        return L"HUD readiness signal failed";
+    case chatview::RuntimeRestartReason::PlacementFailure:
+        return L"HUD placement failed";
+    case chatview::RuntimeRestartReason::PageHealthTimeout:
+        return L"page-health heartbeat timed out";
+    case chatview::RuntimeRestartReason::ConnectionRecovery:
+        return L"chat connection recovery failed";
+    case chatview::RuntimeRestartReason::SystemLifecycleRecovery:
+        return L"Windows resume recovery restarted the HUD";
+    case chatview::RuntimeRestartReason::UnexpectedExit:
+        return L"HUD exited unexpectedly";
+    case chatview::RuntimeRestartReason::ManualRestart:
+        return L"manual restart";
+    case chatview::RuntimeRestartReason::None:
+    default:
+        return L"unknown reason";
+    }
+}
+
+std::wstring runtime_exit_suffix(
+    const chatview::RuntimeTelemetrySnapshot &telemetry)
+{
+    return telemetry.last_exit_code ==
+                   chatview::kRuntimeExitCodeUnavailable
+               ? std::wstring{}
+               : L", exit " +
+                     std::to_wstring(telemetry.last_exit_code);
+}
+
+RuntimePresentation runtime_presentation(
+    const chatview::RuntimeTelemetrySnapshot &telemetry)
+{
+    if (!chatview::has_runtime_telemetry_flag(
+            telemetry,
+            chatview::RuntimeTelemetryHistoryValid)) {
+        return {L"No restart history", kColorMuted};
+    }
+
+    const std::wstring reason =
+        runtime_restart_reason_name(telemetry.restart_reason);
+    const std::wstring exit = runtime_exit_suffix(telemetry);
+    if (chatview::has_runtime_telemetry_flag(
+            telemetry,
+            chatview::RuntimeTelemetryCircuitOpen)) {
+        return {
+            L"Automatic restart blocked after " +
+                std::to_wstring(telemetry.consecutive_failures) +
+                L" failures — " + reason + exit,
+            kColorError};
+    }
+
+    if (telemetry.consecutive_failures != 0U) {
+        return {
+            L"Automatic recovery pending — " + reason +
+                L" (failure " +
+                std::to_wstring(telemetry.consecutive_failures) +
+                L"/" +
+                std::to_wstring(
+                    chatview::kMaximumRuntimeFailureCount) +
+                L")" + exit,
+            kColorWarning};
+    }
+
+    if (telemetry.restart_reason ==
+        chatview::RuntimeRestartReason::ManualRestart) {
+        return {L"Last restart requested manually", kColorMuted};
+    }
+
+    return {
+        L"Last automatic recovery: " + reason +
+            L" — failure counter cleared" + exit,
+        kColorGood};
 }
 
 BOOL CALLBACK find_hud_window(HWND window, LPARAM data)
@@ -632,6 +726,8 @@ private:
         safety_value_ = create_static(L"Checking...");
         output_label_ = create_static(L"OBS output");
         output_value_ = create_static(L"Checking...");
+        recovery_label_ = create_static(L"Restart history");
+        recovery_value_ = create_static(L"Checking...");
         feedback_ = create_static(L"");
         version_ = create_static(
             L"ChatView " CHATVIEW_WIDEN(CHATVIEW_VERSION));
@@ -647,7 +743,7 @@ private:
         close_button_ = create_button(
             L"Close", kCloseButtonId, BS_PUSHBUTTON);
 
-        const std::array<HWND, 19U> required{
+        const std::array<HWND, 21U> required{
             title_,
             subtitle_,
             url_label_,
@@ -662,6 +758,8 @@ private:
             safety_value_,
             output_label_,
             output_value_,
+            recovery_label_,
+            recovery_value_,
             feedback_,
             save_button_,
             edit_button_,
@@ -806,6 +904,11 @@ private:
                 L"●  Unknown",
                 kColorMuted,
                 output_color_);
+            set_colored_text(
+                recovery_value_,
+                L"●  Unknown",
+                kColorMuted,
+                recovery_color_);
             EnableWindow(edit_button_, FALSE);
             EnableWindow(restart_button_, FALSE);
             return;
@@ -851,6 +954,8 @@ private:
                 : HealthPresentation{
                       L"Chat page status unavailable",
                       kColorMuted};
+        const RuntimePresentation runtime_status =
+            runtime_presentation(snapshot.runtime_telemetry);
 
         if (hud_running && hud_visible) {
             set_colored_text(
@@ -875,6 +980,14 @@ private:
                 health_status.color == kColorGood
                     ? kColorWarning
                     : health_status.color,
+                hud_color_);
+        } else if (chatview::has_runtime_telemetry_flag(
+                       snapshot.runtime_telemetry,
+                       chatview::RuntimeTelemetryCircuitOpen)) {
+            set_colored_text(
+                hud_value_,
+                L"●  Stopped — automatic restart circuit open",
+                kColorError,
                 hud_color_);
         } else {
             set_colored_text(
@@ -903,6 +1016,11 @@ private:
             L"●  " + output_description(snapshot),
             kColorText,
             output_color_);
+        set_colored_text(
+            recovery_value_,
+            L"●  " + runtime_status.text,
+            runtime_status.color,
+            recovery_color_);
 
         EnableWindow(
             edit_button_,
@@ -932,6 +1050,11 @@ private:
             L"●  Unknown",
             kColorMuted,
             output_color_);
+        set_colored_text(
+            recovery_value_,
+            L"●  Unavailable",
+            kColorMuted,
+            recovery_color_);
         EnableWindow(edit_button_, FALSE);
         EnableWindow(restart_button_, FALSE);
     }
@@ -1107,6 +1230,8 @@ private:
             color = safety_color_;
         } else if (control == output_value_) {
             color = output_color_;
+        } else if (control == recovery_value_) {
+            color = recovery_color_;
         } else if (control == feedback_) {
             color = feedback_color_;
         }
@@ -1166,7 +1291,7 @@ private:
             DEFAULT_PITCH | FF_DONTCARE,
             L"Segoe UI");
 
-        const std::array<HWND, 20U> body_controls{
+        const std::array<HWND, 22U> body_controls{
             subtitle_,
             url_edit_,
             provider_value_,
@@ -1175,6 +1300,7 @@ private:
             hud_value_,
             safety_value_,
             output_value_,
+            recovery_value_,
             feedback_,
             save_button_,
             edit_button_,
@@ -1186,7 +1312,8 @@ private:
             obs_label_,
             hud_label_,
             safety_label_,
-            output_label_};
+            output_label_,
+            recovery_label_};
         for (HWND control : body_controls) {
             if (control != nullptr) {
                 SendMessageW(
@@ -1202,12 +1329,13 @@ private:
             WM_SETFONT,
             reinterpret_cast<WPARAM>(title_font_),
             TRUE);
-        const std::array<HWND, 5U> labels{
+        const std::array<HWND, 6U> labels{
             url_label_,
             obs_label_,
             hud_label_,
             safety_label_,
-            output_label_};
+            output_label_,
+            recovery_label_};
         for (HWND label : labels) {
             SendMessageW(
                 label,
@@ -1250,27 +1378,29 @@ private:
                 TRUE);
         };
 
-        move(title_, 32, 24, 856, 38);
-        move(subtitle_, 34, 61, 852, 24);
+        move(title_, 32, 24, 896, 38);
+        move(subtitle_, 34, 61, 892, 24);
         move(url_label_, 34, 105, 300, 22);
-        move(url_edit_, 34, 132, 852, 32);
-        move(provider_value_, 36, 170, 848, 24);
-        move(status_group_, 28, 207, 864, 190);
+        move(url_edit_, 34, 132, 892, 32);
+        move(provider_value_, 36, 170, 888, 24);
+        move(status_group_, 28, 207, 904, 226);
         move(obs_label_, 52, 239, 190, 24);
-        move(obs_value_, 248, 239, 610, 24);
+        move(obs_value_, 248, 239, 650, 24);
         move(hud_label_, 52, 275, 190, 24);
-        move(hud_value_, 248, 275, 610, 24);
+        move(hud_value_, 248, 275, 650, 24);
         move(safety_label_, 52, 311, 190, 24);
-        move(safety_value_, 248, 311, 610, 24);
+        move(safety_value_, 248, 311, 650, 24);
         move(output_label_, 52, 347, 190, 24);
-        move(output_value_, 248, 347, 610, 24);
-        move(feedback_, 34, 407, 540, 24);
-        move(save_button_, 34, 443, 146, 38);
-        move(edit_button_, 190, 443, 146, 38);
-        move(restart_button_, 346, 443, 146, 38);
-        move(diagnostics_button_, 502, 443, 190, 38);
-        move(close_button_, 742, 443, 146, 38);
-        move(version_, 650, 409, 238, 22);
+        move(output_value_, 248, 347, 650, 24);
+        move(recovery_label_, 52, 383, 190, 24);
+        move(recovery_value_, 248, 383, 650, 24);
+        move(feedback_, 34, 443, 570, 24);
+        move(save_button_, 34, 479, 142, 38);
+        move(edit_button_, 186, 479, 142, 38);
+        move(restart_button_, 338, 479, 142, 38);
+        move(diagnostics_button_, 490, 479, 198, 38);
+        move(close_button_, 806, 479, 120, 38);
+        move(version_, 680, 445, 246, 22);
     }
 
     void center_on_primary_monitor()
@@ -1332,6 +1462,8 @@ private:
     HWND safety_value_ = nullptr;
     HWND output_label_ = nullptr;
     HWND output_value_ = nullptr;
+    HWND recovery_label_ = nullptr;
+    HWND recovery_value_ = nullptr;
     HWND feedback_ = nullptr;
     HWND version_ = nullptr;
     HWND save_button_ = nullptr;
@@ -1352,6 +1484,7 @@ private:
     COLORREF hud_color_ = kColorMuted;
     COLORREF safety_color_ = kColorMuted;
     COLORREF output_color_ = kColorMuted;
+    COLORREF recovery_color_ = kColorMuted;
     COLORREF feedback_color_ = kColorMuted;
 };
 

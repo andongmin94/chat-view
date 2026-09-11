@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/runtime-history-store.hpp"
 #include "diagnostics/diagnostics-exporter.hpp"
 
 #include <Windows.h>
@@ -117,6 +118,22 @@ int main()
         return fail("Failed to write the diagnostics test log");
     }
 
+    chatview::RuntimeHistoryStore history_store(
+        local_app_data / L"ChatView");
+    const chatview::RuntimeTelemetrySnapshot persisted_history{
+        20U,
+        chatview::RuntimeRestartReason::ConnectionRecovery,
+        chatview::kMaximumRuntimeFailureCount,
+        chatview::RuntimeTelemetryHistoryValid |
+            chatview::RuntimeTelemetryAutomatic |
+            chatview::RuntimeTelemetryCircuitOpen,
+        133485408000000000ULL,
+    };
+    if (!history_store.save(persisted_history)) {
+        std::filesystem::remove_all(root, error);
+        return fail("Failed to prepare persisted runtime history");
+    }
+
     chatview::DiagnosticsRuntimeSnapshot runtime;
     runtime.obs_connected = true;
     runtime.control_status_available = true;
@@ -126,6 +143,14 @@ int main()
         chatview::ControlStatusHudVisible;
     runtime.control_status.hud_process_id = 4242U;
     runtime.control_status.generation = 1U;
+    runtime.control_status.runtime_telemetry = {
+        19U,
+        chatview::RuntimeRestartReason::PageHealthTimeout,
+        2U,
+        chatview::RuntimeTelemetryHistoryValid |
+            chatview::RuntimeTelemetryAutomatic,
+        133485408000000001ULL,
+    };
     runtime.hud_health_available = true;
     runtime.hud_health = {
         chatview::HudPageState::ConnectionLost,
@@ -185,9 +210,42 @@ int main()
             std::string::npos ||
         summary.find(
             "Current recovery condition: Provider chat connection lost") ==
+            std::string::npos ||
+        summary.find("Runtime history source: Live OBS status") ==
+            std::string::npos ||
+        summary.find(
+            "Last restart reason: Page-health heartbeat timed out") ==
+            std::string::npos ||
+        summary.find("Last HUD exit code: 19") == std::string::npos ||
+        summary.find("Consecutive failures: 2") == std::string::npos ||
+        summary.find("Automatic restart circuit: Closed") ==
             std::string::npos) {
         std::filesystem::remove_all(root, error);
         return fail("Diagnostics export lost its expected safe content");
+    }
+
+    const chatview::DiagnosticsExportResult persisted_result =
+        chatview::export_diagnostics_bundle_to(output_root);
+    if (!persisted_result.success || persisted_result.directory.empty()) {
+        std::filesystem::remove_all(root, error);
+        return fail("Persisted runtime history was not exportable");
+    }
+    const std::string persisted_summary = read_bytes(
+        persisted_result.directory / L"summary.txt");
+    if (persisted_summary.find(
+            "Runtime history source: Persisted local history") ==
+            std::string::npos ||
+        persisted_summary.find(
+            "Last restart reason: Chat connection recovery failed") ==
+            std::string::npos ||
+        persisted_summary.find("Last HUD exit code: 20") ==
+            std::string::npos ||
+        persisted_summary.find("Consecutive failures: 6") ==
+            std::string::npos ||
+        persisted_summary.find("Automatic restart circuit: Open") ==
+            std::string::npos) {
+        std::filesystem::remove_all(root, error);
+        return fail("Persisted runtime history was not reported correctly");
     }
 
     std::filesystem::remove_all(root, error);

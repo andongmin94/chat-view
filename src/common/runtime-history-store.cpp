@@ -26,7 +26,7 @@ constexpr std::uint32_t kFnvPrime = 16777619U;
 struct RuntimeHistoryRecord {
     std::uint32_t magic = kRuntimeHistoryMagic;
     std::uint32_t version = kRuntimeHistoryVersion;
-    std::uint32_t size = sizeof(RuntimeHistoryRecord);
+    std::uint32_t size = 64U;
     std::uint32_t checksum = 0U;
     std::uint32_t last_exit_code = kRuntimeExitCodeUnavailable;
     std::uint32_t restart_reason = 0U;

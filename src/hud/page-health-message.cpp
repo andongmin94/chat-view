@@ -199,7 +199,7 @@ bool parse_unsigned(
         }
         const std::uint32_t digit =
             static_cast<std::uint32_t>(character - L'0');
-        if (parsed > (maximum - digit) / 10U) {
+        if (digit > maximum || parsed > (maximum - digit) / 10U) {
             return false;
         }
         parsed = parsed * 10U + digit;

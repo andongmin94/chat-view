@@ -1,0 +1,43 @@
+name: Apply one-click recovery actions
+
+on:
+  push:
+    branches:
+      - obs-preflight-work
+    paths:
+      - .github/workflows/apply-one-click-recovery.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out ChatView
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply one-click recovery layer
+        run: python scripts/apply-one-click-recovery.py
+
+      - name: Validate and commit recovery layer
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CMakeLists.txt README.md src tests
+          git diff --cached --check
+          git commit -m "feat: add blocker-specific one-click recovery"
+          git push origin HEAD:obs-preflight-work
+
+      - name: Dispatch Windows validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh workflow run windows-build.yml --ref obs-preflight-work

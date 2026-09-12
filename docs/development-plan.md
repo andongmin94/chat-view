@@ -10,13 +10,13 @@ The owner confirmed CHZZK first and prohibited OBS installation/execution on the
 
 ## Code-quality gate requested before feature expansion
 
-Review baseline: `12ce12bd040368112db70d6c0880c4ec55aa4779`. See [code-quality-audit.md](code-quality-audit.md) for evidence, limitations and open findings.
+Review baseline: `12ce12bd040368112db70d6c0880c4ec55aa4779`. See [code-quality-audit.md](code-quality-audit.md) for the original evidence and limitations, and [lifecycle-fixes.md](lifecycle-fixes.md) for the Q1-Q3 follow-up.
 
-This cleanup removes the unused diagnostics/report implementation and its unregistered test (three files), and fixes the reproduced posting-login-versus-readable-chat classification with eleven regression combinations. The active diagnostics exporter/redaction, registered native tests, IPC, capture safeguards, packaging and dependencies are preserved. No new branch or framework is introduced.
+Cleanup `ba7176a` removed the unused diagnostics/report implementation and its unregistered test (three files), and fixed the reproduced posting-login-versus-readable-chat classification with eleven regression combinations. The active diagnostics exporter/redaction, registered native tests, IPC, capture safeguards, packaging and dependencies were preserved. No new branch or framework was introduced.
 
-Actual local checks: original script suite passed; new regression failed original code as expected; corrected script suite/regressions and syntax check passed; repository C++ page-health tests passed under GCC 14.2 with warnings-as-errors and ASan/UBSan. Relevant baseline and modified source/test blob identities were verified. This is not a local Windows build or a real provider-page test.
+Checks for that cleanup: original script suite passed; new regression failed original code as expected; corrected script suite/regressions and syntax check passed; repository C++ page-health tests passed under GCC 14.2 with warnings-as-errors and ASan/UBSan. Windows build #273 at `ba7176a` and its Page health script workflow subsequently passed. That is baseline evidence for the next change, not its result.
 
-Before extending the cross-PC/session lifecycle, address audit Q1 (stable-time reset based on event silence), Q2 (configuration UI directly showing the HUD) and Q3 (allocating error formatter reachable from noexcept boundaries) with focused regressions. Then resume CHZZK/platform work, rather than open-ended cleanup. Q1–Q3 are recorded source findings, not fixes included in this commit.
+**Q1-Q3 follow-up:** the prepared patch is now integrated on top of `ba7176a`. Runtime stability uses elapsed monotonic age with process-liveness validation; Control Center requests idempotent interaction instead of directly showing the HUD; controller Windows-error logging no longer allocates a message string and contains logging exceptions. New CTest coverage and real-HUD smoke assertions accompany the change. The six timing and seventeen interaction scenarios and logging failure tests passed in the portable mocked harness, rerun during integration. The existing Windows workflow must validate the actual integration commit before closing this gate. Do not confuse the original audit's open Q1-Q3 findings with the subsequent implementation or reapply the old downloadable patch blindly.
 
 ## Consolidation record
 
@@ -31,17 +31,20 @@ Merge `12ce12b` preserves the latest work tree at cfe9421084190b6fa09495d6b546ad
 | OBS / f9ed23e | Obsolete one-shot telemetry patch tooling excluded; history retained |
 | main / 496d474 | Original product preserved unchanged |
 
-At the start of this quality audit the remote branch list contained only OBS and main. Branch deletion was not performed by this audit. Always re-read refs before writing.
+At the start of the quality audit the remote branch list contained only OBS and main. Branch deletion was not performed by that audit. Always re-read refs before writing.
 
 ## Evidence and known failures
 
 Native baseline c82fce0 was preserved through consolidation. Earlier Windows build #271 failed official OBS capture qualification after passing its native tests:
 https://github.com/andongmin94/chat-view/actions/runs/34626547210
 
-Windows build #272 at `12ce12b` subsequently **passed all workflow stages**, including native tests, package checks, official OBS installation/runtime qualification and artifact upload. This was re-read during this audit:
+Windows build #272 at `12ce12b` subsequently **passed all workflow stages**, including native tests, package checks, official OBS installation/runtime qualification and artifact upload:
 https://github.com/andongmin94/chat-view/actions/runs/34677416613
 
-The subsequent pass with unchanged native sources is not a diagnosed fix for #271. Keep the history and investigate repeatability if it recurs; do not weaken assertions or report #271 as the latest run. Likewise #272 is baseline evidence, not the result for this cleanup. Inspect both Windows build and Page health script checks attached to the new commit.
+Windows build #273 at `ba7176a` also **passed all workflow stages**, including official OBS qualification and package upload:
+https://github.com/andongmin94/chat-view/actions/runs/34680162067
+
+The later passes are not a diagnosed fix for #271. Keep the history and investigate repeatability if it recurs; do not weaken assertions or report #271 as the latest run. Inspect the Windows checks attached to the Q1-Q3 integration commit; neither #272 nor #273 validates that follow-up.
 
 Implemented assets: native plugin and private HUD, rendering/input/placement, native configuration, local transport, recovery/telemetry, active redacted diagnostics, installers/package checks and tests. Not implemented: platform service/accounts, own CHZZK ingestion/UI, OBS-independent gaming-PC session, demonstrated OBS-free dual-PC clean feed, campaign/public-ad/HP/reward system. Missing future modules do not make existing modules unusable.
 
@@ -49,7 +52,7 @@ Implemented assets: native plugin and private HUD, rendering/input/placement, na
 
 ### P0. Product direction and branch consolidation
 
-Five goals and confirmed constraints are in PRODUCT.md; existing development is integrated in OBS with ancestry preserved. Source/test/build preservation was verified at merge. The current cleanup is a separate quality change, not another architecture rewrite.
+Five goals and confirmed constraints are in PRODUCT.md; existing development is integrated in OBS with ancestry preserved. Source/test/build preservation was verified at merge. Quality fixes are bounded follow-ups, not another architecture rewrite.
 
 ### P1. Resolve product-defining feasibility while retaining the native product
 
@@ -57,7 +60,7 @@ P1-01: implement the smallest official CHZZK authorization/subscription path and
 
 P1-02: qualify a single-PC capture path and investigate a dual-PC clean feed with OBS absent from the gaming PC. Pairing and private-HUD rendering alone do not pass. Do not return to the rejected gaming-PC OBS proposal or silently require another broadcasting suite. Record hardware, OS, capture/HDMI path, game/window mode, latency/resources, local visibility and recorded exclusion.
 
-After the bounded code-quality gate above, fix only further blockers to explicit acceptance tests. Do not replace all diagnostics/recovery or spend successive milestones extending them alone. The UI's broad READY TO STREAM claim still needs narrowing when its presentation is changed.
+After Windows validation of the bounded code-quality gate above, fix only further blockers to explicit acceptance tests. Do not replace all diagnostics/recovery or spend successive milestones extending them alone. The UI's broad READY TO STREAM claim still needs narrowing when its presentation is changed.
 
 ### P2. First-party CHZZK chat on the existing HUD
 
@@ -89,4 +92,4 @@ Provider registration and channel authorization are needed for real integration;
 
 ## Next session
 
-Read AGENTS.md, this audit and current OBS refs/CI. Complete focused Q1–Q3 fixes with regression tests before session expansion, then resume CHZZK and OBS-free gaming-PC feasibility. Preserve native assets and avoid another indefinite telemetry/preflight project. End with exact changed/tested commits, honest failures and the next product acceptance test.
+Read AGENTS.md, the audit follow-up and current OBS refs/CI. First inspect Windows results for the integrated Q1-Q3 changes; once passing, resume CHZZK and OBS-free gaming-PC feasibility. Preserve native assets and avoid another indefinite telemetry/preflight project. End with exact changed/tested commits, honest failures and the next product acceptance test.

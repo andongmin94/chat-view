@@ -461,6 +461,17 @@ if(BUILD_TESTING)
         COMMAND chat-view-restart-policy-test
     )
 
+    add_executable(chat-view-runtime-stability-test
+        tests/runtime-stability-test.cpp
+    )
+    target_include_directories(
+        chat-view-runtime-stability-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_warnings(chat-view-runtime-stability-test)
+    add_test(
+        NAME chat-view-runtime-stability
+        COMMAND chat-view-runtime-stability-test
+    )
+
     add_executable(chat-view-capture-risk-policy-test
         tests/capture-risk-policy-test.cpp
         src/plugin/capture-risk-policy.hpp

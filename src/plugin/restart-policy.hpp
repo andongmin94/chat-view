@@ -13,6 +13,18 @@ inline constexpr std::uint32_t kMaximumAutomaticRestartFailures =
 inline constexpr std::uint32_t kInitialAutomaticRestartDelayMs = 500U;
 inline constexpr std::uint32_t kMaximumAutomaticRestartDelayMs = 30000U;
 
+inline constexpr std::uint32_t kRuntimeStablePeriodMs = 30000U;
+
+// Use runtime age, not a fresh interval after each state-publish wakeup.
+[[nodiscard]] constexpr std::uint32_t runtime_stability_wait_ms(
+    std::uint64_t ready_at_ms, std::uint64_t now_ms) noexcept
+{
+    const std::uint64_t elapsed = now_ms - ready_at_ms;
+    return elapsed >= kRuntimeStablePeriodMs
+               ? 0U
+               : kRuntimeStablePeriodMs - static_cast<std::uint32_t>(elapsed);
+}
+
 class RestartPolicy final {
 public:
     constexpr void record_failure() noexcept

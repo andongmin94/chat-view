@@ -40,6 +40,7 @@ private:
         HWND window, UINT message, WPARAM wparam, LPARAM lparam);
     LRESULT hit_test(LPARAM lparam) const noexcept;
     void toggle_edit_mode();
+    [[nodiscard]] bool set_edit_mode(bool editing);
     void apply_window_mode() noexcept;
     void reload_chat_config() noexcept;
     bool apply_page_health(
@@ -83,6 +84,7 @@ private:
     UINT config_changed_message_ = 0U;
     UINT toggle_edit_message_ = 0U;
     UINT query_health_message_ = 0U;
+    UINT open_interaction_message_ = 0U;
     WebViewHost webview_;
     HudPlacement placement_;
     std::wstring transient_status_;
@@ -107,6 +109,7 @@ private:
     bool system_resume_pending_ = false;
     bool restart_after_system_resume_ = false;
     bool capture_exclusion_failed_ = false;
+    bool shutting_down_ = false;
 };
 
 } // namespace chatview

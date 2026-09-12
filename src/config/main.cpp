@@ -1322,27 +1322,37 @@ private:
             return;
         }
 
-        const LONG_PTR extended_style =
-            GetWindowLongPtrW(hud, GWL_EXSTYLE);
-        const bool interactive =
-            (extended_style &
-             static_cast<LONG_PTR>(
-                 WS_EX_TRANSPARENT | WS_EX_NOACTIVATE)) == 0;
-        if (!interactive) {
-            const UINT message = RegisterWindowMessageW(
-                chatview::kToggleEditMessageName);
-            if (!send_hud_control_message(hud, message)) {
-                set_feedback(
-                    L"ChatView could not open the private HUD for interaction.",
-                    kColorError);
-                return;
-            }
+        const UINT message = RegisterWindowMessageW(
+            chatview::kOpenHudInteractionMessageName);
+        // Transfer only foreground eligibility, never window visibility.
+        // Failure to grant focus does not override the HUD's safety decision.
+        if (message != 0U) {
+            (void)AllowSetForegroundWindow(snapshot.hud_process_id);
+        }
+        DWORD_PTR accepted = 0U;
+        if (message == 0U ||
+            SendMessageTimeoutW(
+                hud,
+                message,
+                0U,
+                0L,
+                SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT,
+                kHudControlTimeoutMs,
+                &accepted) == 0) {
+            set_feedback(
+                L"No confirmation from the HUD. Check its current state before retrying.",
+                kColorWarning);
+            return;
+        }
+        if (accepted != 1U) {
+            set_feedback(
+                L"The HUD refused interaction because its current state is not safe.",
+                kColorWarning);
+            return;
         }
 
-        ShowWindow(hud, SW_SHOW);
-        SetForegroundWindow(hud);
         set_feedback(
-            L"Private HUD interaction opened. Sign in or reposition it, then lock it again.",
+            L"The HUD accepted interaction. Lock it again after use.",
             kColorGood);
     }
 

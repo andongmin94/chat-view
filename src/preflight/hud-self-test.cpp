@@ -574,6 +574,26 @@ void publish(
     SetEvent(event);
 }
 
+bool interaction_result_matches(HWND window, bool expected)
+{
+    const UINT message = RegisterWindowMessageW(
+        chatview::kOpenHudInteractionMessageName);
+    DWORD_PTR result = 2U;
+    if (message == 0U ||
+        SendMessageTimeoutW(
+            window, message, 0U, 0L,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT,
+            1000U, &result) == 0 ||
+        result != (expected ? 1U : 0U)) {
+        return false;
+    }
+    const LONG_PTR style = GetWindowLongPtrW(window, GWL_EXSTYLE);
+    const LONG_PTR locked = WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
+    return expected
+               ? IsWindowVisible(window) && (style & locked) == 0
+               : !IsWindowVisible(window) && (style & locked) == locked;
+}
+
 int fail(const wchar_t *message, HANDLE process = nullptr)
 {
     std::wcerr << message << L'\n';
@@ -748,7 +768,7 @@ int wmain(int argument_count, wchar_t **arguments)
             L"The ready HUD window could not be enumerated",
             child_process.get());
     }
-    if (IsWindowVisible(window)) {
+    if (IsWindowVisible(window) || !interaction_result_matches(window, false)) {
         return fail(
             L"The HUD ignored capture suppression during startup",
             child_process.get());
@@ -789,9 +809,10 @@ int wmain(int argument_count, wchar_t **arguments)
             child_process.get());
     }
 
-    if (!send_control_message(window, toggle_edit_message)) {
+    if (!interaction_result_matches(window, true) ||
+        !interaction_result_matches(window, true)) {
         return fail(
-            L"Failed to request HUD edit mode",
+            L"Repeated open requests did not keep HUD edit mode enabled",
             child_process.get());
     }
     if (!wait_for_style(
@@ -858,7 +879,8 @@ int wmain(int argument_count, wchar_t **arguments)
     }
     Sleep(150U);
     if (IsWindowVisible(window) ||
-        !wait_for_style(window, locked_style, 0)) {
+        !wait_for_style(window, locked_style, 0) ||
+        !interaction_result_matches(window, false)) {
         return fail(
             L"Capture suppression allowed the HUD to enter edit mode",
             child_process.get());
@@ -896,7 +918,8 @@ int wmain(int argument_count, wchar_t **arguments)
     }
     Sleep(150U);
     if (IsWindowVisible(window) ||
-        !wait_for_style(window, locked_style, 0)) {
+        !wait_for_style(window, locked_style, 0) ||
+        !interaction_result_matches(window, false)) {
         return fail(
             L"Windows suspend allowed the HUD to become interactive",
             child_process.get());
@@ -908,6 +931,11 @@ int wmain(int argument_count, wchar_t **arguments)
             0L) != TRUE) {
         return fail(
             L"The HUD rejected the Windows resume notification",
+            child_process.get());
+    }
+    if (!interaction_result_matches(window, false)) {
+        return fail(
+            L"Interaction bypassed pending resume revalidation",
             child_process.get());
     }
     Sleep(200U);
@@ -959,7 +987,8 @@ int wmain(int argument_count, wchar_t **arguments)
 
     SendMessageW(
         window, WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK, 0L);
-    if (!wait_for_visibility(window, false)) {
+    if (!wait_for_visibility(window, false) ||
+        !interaction_result_matches(window, false)) {
         return fail(
             L"The HUD did not hide for session lock",
             child_process.get());

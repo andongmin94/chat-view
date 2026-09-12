@@ -181,9 +181,12 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
         kToggleEditMessageName);
     query_health_message_ = RegisterWindowMessageW(
         kQueryHudHealthMessageName);
+    open_interaction_message_ = RegisterWindowMessageW(
+        kOpenHudInteractionMessageName);
     if (config_changed_message_ == 0U ||
         toggle_edit_message_ == 0U ||
-        query_health_message_ == 0U) {
+        query_health_message_ == 0U ||
+        open_interaction_message_ == 0U) {
         debug_windows_error(L"RegisterWindowMessageW");
         return false;
     }
@@ -219,6 +222,7 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
 
 void HudWindow::destroy() noexcept
 {
+    shutting_down_ = true;
     if (window_ != nullptr) {
         KillTimer(window_, kStatusTimerId);
         KillTimer(window_, kNavigationRetryTimerId);
@@ -269,6 +273,8 @@ void HudWindow::apply_state(const SharedSnapshot &snapshot)
     last_generation_ = snapshot.generation;
 
     if (has_flag(snapshot, SharedStateShutdown)) {
+        shutting_down_ = true;
+        ShowWindow(window_, SW_HIDE);
         PostQuitMessage(0);
         return;
     }
@@ -329,6 +335,10 @@ LRESULT HudWindow::handle_message(
         message == toggle_edit_message_) {
         toggle_edit_mode();
         return 0L;
+    }
+    if (open_interaction_message_ != 0U &&
+        message == open_interaction_message_) {
+        return set_edit_mode(true) ? 1L : 0L;
     }
     if (query_health_message_ != 0U &&
         message == query_health_message_) {
@@ -638,10 +648,12 @@ LRESULT HudWindow::handle_message(
         }
         break;
     case WM_CLOSE:
+        shutting_down_ = true;
         ShowWindow(window_, SW_HIDE);
         PostQuitMessage(0);
         return 0L;
     case WM_DESTROY:
+        shutting_down_ = true;
         PostQuitMessage(0);
         return 0L;
     default:
@@ -713,31 +725,50 @@ LRESULT HudWindow::hit_test(LPARAM lparam) const noexcept
 
 void HudWindow::toggle_edit_mode()
 {
-    if (window_ == nullptr || !webview_ready_ ||
-        capture_exclusion_failed_ || capture_risk_ ||
-        system_suppressed()) {
-        return;
+    (void)set_edit_mode(!edit_mode_);
+}
+
+bool HudWindow::set_edit_mode(bool editing)
+{
+    const auto allowed = [this]() noexcept {
+        return window_ != nullptr && webview_ready_ &&
+               !capture_exclusion_failed_ && !capture_risk_ &&
+               !system_suppressed() && !shutting_down_ &&
+               page_state_ != HudPageState::Fatal;
+    };
+    if (!allowed()) {
+        return false;
     }
 
-    if (edit_mode_) {
-        capture_and_persist_bounds();
+    if (edit_mode_ != editing) {
+        if (edit_mode_) {
+            capture_and_persist_bounds();
+            if (!allowed()) {
+                return false;
+            }
+        }
+        edit_mode_ = editing;
+        apply_window_mode();
+        if (!allowed()) {
+            return false;
+        }
+        update_host_state();
     }
-    edit_mode_ = !edit_mode_;
-    apply_window_mode();
-    if (capture_exclusion_failed_) {
-        return;
-    }
-    update_host_state();
 
-    if (edit_mode_) {
-        ShowWindow(window_, SW_SHOW);
-        if (!capture_exclusion_intact()) {
-            fail_closed_capture_exclusion();
-            return;
+    if (editing) {
+        // This existing HUD-owned path re-applies and verifies affinity
+        // before showing, then verifies it again after showing.
+        if (!apply_capture_policy() || !allowed() || !edit_mode_ ||
+            !IsWindowVisible(window_)) {
+            return false;
         }
         SetForegroundWindow(window_);
+        if (!allowed()) {
+            return false;
+        }
         webview_.focus();
     }
+    return allowed() && edit_mode_ == editing;
 }
 
 void HudWindow::apply_window_mode() noexcept
@@ -1364,6 +1395,12 @@ void HudWindow::fail_closed_capture_exclusion() noexcept
 
 bool HudWindow::apply_capture_policy() noexcept
 {
+    if (shutting_down_ || page_state_ == HudPageState::Fatal) {
+        if (window_ != nullptr) {
+            ShowWindow(window_, SW_HIDE);
+        }
+        return false;
+    }
     if (window_ == nullptr || !webview_ready_ ||
         capture_exclusion_failed_) {
         return !capture_exclusion_failed_;

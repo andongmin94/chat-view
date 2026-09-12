@@ -25,44 +25,26 @@ constexpr wchar_t kRuntimeExecutableName[] = L"chat-view-hud.exe";
 constexpr DWORD kRuntimeReadyWaitMs = 12000U;
 constexpr DWORD kRuntimeExitWaitMs = 2000U;
 constexpr DWORD kRuntimeTerminateWaitMs = 2000U;
-constexpr DWORD kRuntimeStablePeriodMs = 30000U;
 
 struct RuntimeWindowSearch {
     DWORD process_id = 0U;
     HWND window = nullptr;
 };
 
-std::wstring last_error_message(DWORD error)
+void log_windows_error(const char *operation, DWORD error) noexcept
 {
-    wchar_t *buffer = nullptr;
-    const DWORD length = FormatMessageW(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-            FORMAT_MESSAGE_IGNORE_INSERTS,
-        nullptr,
-        error,
-        0U,
-        reinterpret_cast<LPWSTR>(&buffer),
-        0U,
-        nullptr);
-
-    std::wstring message;
-    if (length != 0U && buffer != nullptr) {
-        message.assign(buffer, length);
-        LocalFree(buffer);
+    // No allocating std::wstring/FormatMessage buffer on noexcept paths.
+    // A custom OBS logging callback must not escape this boundary either.
+    try {
+        blog(
+            LOG_ERROR,
+            "[ChatView OBS] %s failed with error %lu",
+            operation,
+            static_cast<unsigned long>(error));
+    } catch (...) {
+        OutputDebugStringA(
+            "[ChatView OBS] Windows error could not be written to the OBS log\n");
     }
-    return message;
-}
-
-void log_windows_error(const char *operation, DWORD error)
-{
-    const std::wstring detail = last_error_message(error);
-    blog(
-        LOG_ERROR,
-        "[ChatView OBS] %s failed with error %lu%s%ls",
-        operation,
-        static_cast<unsigned long>(error),
-        detail.empty() ? "" : ": ",
-        detail.empty() ? L"" : detail.c_str());
 }
 
 bool is_regular_file(const std::wstring &path) noexcept
@@ -625,6 +607,7 @@ void RuntimeController::supervisor_loop() noexcept
     }
 
     ULONGLONG retry_deadline = 0U;
+    ULONGLONG runtime_ready_at_ms = 0U;
 
     const auto record_failure =
         [this, &restart_policy, &retry_deadline](
@@ -789,6 +772,7 @@ void RuntimeController::supervisor_loop() noexcept
                 }
                 if (launch_result.started) {
                     retry_deadline = 0U;
+                    runtime_ready_at_ms = GetTickCount64();
                     blog(
                         LOG_INFO,
                         "[ChatView OBS] HUD runtime started and reported "
@@ -803,6 +787,23 @@ void RuntimeController::supervisor_loop() noexcept
                 continue;
             }
 
+            DWORD stable_wait_ms = INFINITE;
+            if (restart_policy.failure_count() != 0U) {
+                stable_wait_ms = runtime_stability_wait_ms(
+                    runtime_ready_at_ms, GetTickCount64());
+                // Check on every iteration: publish events must not postpone
+                // recovery, and an already exited process must not clear it.
+                if (stable_wait_ms == 0U &&
+                    WaitForSingleObject(process, 0U) == WAIT_TIMEOUT) {
+                    clear_stable_failure_count();
+                    stable_wait_ms = INFINITE;
+                    blog(
+                        LOG_INFO,
+                        "[ChatView OBS] HUD remained stable; restart "
+                        "failure counter reset");
+                }
+            }
+
             HANDLE wait_handles[3] = {
                 stop_event,
                 process,
@@ -812,7 +813,7 @@ void RuntimeController::supervisor_loop() noexcept
                 3U,
                 wait_handles,
                 FALSE,
-                kRuntimeStablePeriodMs);
+                stable_wait_ms);
             if (wait_result == WAIT_OBJECT_0) {
                 return;
             }
@@ -856,13 +857,7 @@ void RuntimeController::supervisor_loop() noexcept
                 continue;
             }
             if (wait_result == WAIT_TIMEOUT) {
-                if (restart_policy.failure_count() != 0U) {
-                    blog(
-                        LOG_INFO,
-                        "[ChatView OBS] HUD remained stable; restart "
-                        "failure counter reset");
-                }
-                clear_stable_failure_count();
+                // Recheck age and process liveness before resetting history.
                 continue;
             }
             if (wait_result == WAIT_FAILED) {

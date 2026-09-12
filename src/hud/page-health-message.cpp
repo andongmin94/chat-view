@@ -83,6 +83,11 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
       'yt-live-chat-banner-renderer'
     ]
   };
+  // Only concrete message lists establish read access; an outer shell does not.
+  const youtubeReaderSelectors = [
+    'yt-live-chat-renderer #items',
+    'yt-live-chat-item-list-renderer'
+  ];
   const readySelectors = {
     1: [
       '[data-chatview-ready="true"]',
@@ -109,8 +114,7 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
       '[data-testid*="chat"]'
     ],
     4: [
-      'yt-live-chat-renderer #items',
-      'yt-live-chat-item-list-renderer',
+      ...youtubeReaderSelectors,
       'yt-live-chat-renderer',
       'yt-live-chat-app'
     ]
@@ -169,6 +173,8 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
   };
 
   const collectStatusText = () => {
+    const youtubeReaderVisible = provider === 4 && youtubeReaderSelectors.some(
+      selector => isRendered(queryAll(selector)[0], 80, 80));
     const parts = [];
     if (document.title) parts.push(document.title.slice(0, maximumNodeTextLength));
 
@@ -183,6 +189,10 @@ constexpr wchar_t kPageHealthBootstrapScript[] = LR"JS(
         if (visited >= maximumStatusNodes || length >= maximumStatusTextLength) break outer;
         ++visited;
         if (!isRendered(element)) continue;
+        // Ignore posting-only notices, including matches through generic roles.
+        // Reader-level alerts, offline and reconnect banners still take priority.
+        if (youtubeReaderVisible &&
+            element.closest('yt-live-chat-message-input-renderer')) continue;
         const text = String(element.textContent || '')
           .slice(0, maximumNodeTextLength)
           .trim();

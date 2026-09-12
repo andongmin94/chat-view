@@ -19,11 +19,19 @@ class FakeElement {
     opacity = '1',
     textContent = '',
     dataState = null,
+    inPostingInput = false,
   } = {}) {
     this.rect = { width, height };
     this.style = { display, visibility, opacity };
     this.textContent = textContent;
     this.dataState = dataState;
+    this.inPostingInput = inPostingInput;
+  }
+
+  closest(selector) {
+    return selector === 'yt-live-chat-message-input-renderer' && this.inPostingInput
+      ? this
+      : null;
   }
 
   getBoundingClientRect() {
@@ -367,5 +375,61 @@ assert.deepEqual(
   ['CVH2|4|4|1', 'CVH2|4|7|5'],
   'a changed page state waited for the heartbeat interval before reporting',
 );
+
+// A posting-only sign-in prompt must not override a visible message list.
+const postingPrompt = new FakeElement({
+  textContent: 'Sign in to chat',
+  inPostingInput: true,
+});
+for (const readerSelector of [
+  'yt-live-chat-renderer #items',
+  'yt-live-chat-item-list-renderer',
+]) {
+  const selectors = new Map([
+    [readerSelector, new FakeElement()],
+    ['yt-live-chat-message-input-renderer', postingPrompt],
+    // The same input may also match a generic status selector.
+    ['[role="status"]', postingPrompt],
+  ]);
+  const expectedDetail = readerSelector.endsWith('#items') ? 1 : 2;
+  assert.deepEqual(
+    runProbe({ hostname: 'www.youtube.com', selectors }).messages,
+    [`CVH2|4|4|${expectedDetail}`],
+    'posting permission incorrectly blocked readable YouTube chat',
+  );
+
+  for (const [text, expected] of [
+    ['Login required', 'CVH2|4|7|7'],
+    ['Reconnecting to chat', 'CVH2|4|11|8'],
+    ['This live stream has ended', 'CVH2|4|8|5'],
+  ]) {
+    const withBlocker = new Map(selectors);
+    withBlocker.set('[role="alert"]', new FakeElement({ textContent: text }));
+    assert.deepEqual(
+      runProbe({ hostname: 'www.youtube.com', selectors: withBlocker }).messages,
+      [expected],
+      'a real reader-level blocker was masked by posting-only prompt handling',
+    );
+  }
+}
+
+for (const reader of [
+  null,
+  new FakeElement({ display: 'none' }),
+  new FakeElement({ width: 40, height: 40 }),
+]) {
+  assert.deepEqual(
+    runProbe({
+      hostname: 'www.youtube.com',
+      selectors: new Map([
+        ['yt-live-chat-renderer #items', reader],
+        ['yt-live-chat-app', new FakeElement()],
+        ['yt-live-chat-message-input-renderer', postingPrompt],
+      ]),
+    }).messages,
+    ['CVH2|4|7|5'],
+    'a shell without a visible reader incorrectly bypassed the login state',
+  );
+}
 
 console.log('Embedded page-health script tests passed.');

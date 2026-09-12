@@ -1,66 +1,41 @@
-# ChatView OBS
+# ChatView — OBS-based broadcasting platform
 
-ChatView OBS is a Windows OBS Studio plugin that displays a private, transparent chat HUD on the streamer's desktop while keeping the renderer outside the OBS process.
+챗뷰는 한 화면에서 게임·작업과 채팅을 함께 보는 개인용 투명 HUD를 출발점으로, 원컴·투컴 방송 지원, 자체 채팅 경험, 스트리머 선택 광고와 시청시간 기반 HP·수익을 연결하는 플랫폼을 목표로 합니다.
 
-The `OBS` branch is an independent native implementation. It does not embed or preserve the Electron application from `main`.
+**Start here:** [Product goals](PRODUCT.md) · [Architecture](docs/architecture.md) · [Development plan / handoff](docs/development-plan.md) · [Contributor instructions](AGENTS.md)
 
-## Status
+**Active development: OBS.** CHZZK is the first first-party integration. In dual-PC operation, the gaming PC must not need OBS installed or running; OBS belongs on the streaming PC. The existing native HUD is retained and extended rather than rewritten.
 
-This branch currently provides an installable single-PC alpha:
+main is the original Electron product and UX reference, not a native-code integration target. Old preflight/telemetry/probe branches are no longer separate development lines after consolidation; their implementation history is retained in OBS. Do not mistake the current single-PC implementation for the final product scope.
 
-- native OBS frontend plugin;
-- out-of-process Win32 HUD runtime;
-- transparent WebView2 composition rendering;
-- Weflab, CHZZK, SOOP, and YouTube chat pages;
-- automatic conversion of ordinary CHZZK, SOOP, and YouTube broadcast URLs;
-- browser connectivity and provider connection-loss recovery;
-- Windows suspend, workstation-lock, and cancelled-shutdown recovery;
-- privacy-filtered diagnostics from OBS or the Control Center, with no automatic upload;
-- repeated live HUD/WebView2 resource-growth soak coverage;
-- OBS **Tools → ChatView Settings...** configuration;
-- click-through locked mode;
-- draggable and resizable edit mode;
-- persisted monitor and DPI-independent bounds;
-- LIVE and REC status indicators;
-- Windows capture-exclusion request through `WDA_EXCLUDEFROMCAPTURE`;
-- fail-closed Display Capture interlock while streaming, recording, replay buffering, or virtual-camera output is active;
-- bounded shutdown and an automatic restart circuit that stops crash loops;
-- explicit **Tools → Restart ChatView HUD** recovery without restarting OBS;
-- actual OBS Display Capture → scene → main-texture pixel qualification in official OBS Studio;
-- pinned Windows CI, native tests, installer test, and packaged artifact.
+## Current implementation status
 
-The renderer remains out of process deliberately. A browser or desktop-rendering failure must not take down OBS Studio. The provider page cannot call ChatView control functions: native status is delivered one way into a closed Shadow DOM layer.
+The source contains a Windows OBS frontend plugin, an out-of-process Win32/WebView2 transparent HUD, native settings/diagnostics, URL normalization for Weflab/CHZZK/SOOP/YouTube, click-through/edit modes, placement persistence, bounded recovery, persisted restart telemetry and native tests.
 
-## Install
+**Not implemented yet:** platform accounts/backend, own CHZZK message ingestion/UI, an OBS-independent gaming-PC session, a verified OBS-free dual-PC clean feed, public campaigns connected to an ad renderer, HP accounting and payouts. The architecture describes targets, not working features.
 
-1. Download `chat-view-obs-windows-x64.zip` from a successful Windows workflow run and extract it once.
+Consolidation preserves the latest work branch's runtime source, tests, build configuration and maintained scripts/CI. It updates requirements and excludes obsolete one-shot patch tooling. The last historically reviewed Windows run at native baseline c82fce0 passed 22 native tests and repeats but failed official OBS capture qualification. Read [the handoff](docs/development-plan.md) and inspect the current OBS workflow before choosing a package. Integration is not release approval.
+
+## Install a successfully validated package
+
+1. Obtain chat-view-obs-windows-x64.zip from a successful Windows workflow run and extract it once.
 2. Close OBS Studio.
-3. Double-click `install.cmd` and approve the Windows administrator prompt.
-4. Start OBS Studio and open **Tools → ChatView Settings...**.
+3. Run install.cmd and approve the administrator prompt.
+4. Start OBS and open **Tools → ChatView Settings...**.
 
-The installer verifies the package manifest and the Microsoft Edge WebView2 Runtime, then runs a calibrated local pixel probe before copying any files. The probe must observe an ordinary foreground window and then observe the measured background after Windows capture exclusion is enabled. It then copies the plugin, HUD, settings application, and locale files into the default OBS directory:
+The installer validates the manifest, checks WebView2 Runtime, runs a local capture-exclusion probe and checks plugin loading before installation. The default target is `C:\Program Files\obs-studio`. Installer success does not prove every game, OBS capture method, GPU or physical capture-card path.
 
-```text
-C:\Program Files\obs-studio
-```
-
-For a non-default OBS directory, open PowerShell in the extracted package and run:
+For another OBS root, run PowerShell in the extracted package:
 
 ```powershell
 ./install.ps1 -ObsPath "D:\Apps\obs-studio"
 ```
 
-Double-click `uninstall.cmd` to remove the default installation, or pass a custom OBS root to `uninstall.ps1`. User settings in `%LOCALAPPDATA%\ChatView` are retained on uninstall.
+Use uninstall.cmd, or `uninstall.ps1 -ObsPath "D:\Apps\obs-studio"`, to remove installation files. Settings in `%LOCALAPPDATA%\ChatView` remain.
 
-## Configure chat
+## Configure the current external-page HUD
 
-Start OBS Studio and open:
-
-```text
-Tools → ChatView Settings...
-```
-
-For CHZZK, SOOP, and YouTube, paste the normal channel or broadcast URL that is already in the browser address bar:
+In **Tools → ChatView Settings...**, enter a supported URL. Normal broadcast links are normalized to chat documents:
 
 ```text
 https://chzzk.naver.com/live/<channel-id>
@@ -70,7 +45,7 @@ https://www.youtube.com/watch?v=<video-id>
 https://youtu.be/<video-id>
 ```
 
-ChatView converts those links into their chat-page form automatically. Direct chat URLs are also accepted:
+Direct chat-page examples:
 
 ```text
 https://weflab.com/page/...
@@ -79,73 +54,36 @@ https://play.sooplive.com/<channel-id>?vtype=chat
 https://www.youtube.com/live_chat?is_popout=1&v=<video-id>
 ```
 
-Saving broadcasts a local configuration-change message, so the running HUD reloads without restarting OBS.
+Saving notifies the HUD without restarting OBS. HTTPS/host/path/identifier validation applies. Top-level navigation stays bound to the configured chat document and new windows are suppressed. This viewer is the existing functional layer, not the final first-party platform.
 
-Use **Export diagnostics** in the Control Center, or **Tools → Export ChatView Diagnostics...** in OBS, to create a Desktop folder containing a binary-integrity summary, the current OBS/HUD state when available, and only ChatView-tagged OBS log lines. The export omits the configured URL and chat messages, redacts user-profile paths and IPC names, uploads nothing automatically, and must be reviewed before sharing.
+The current **READY TO STREAM / BLOCKED** UI evaluates ChatView-local conditions, not audio, encoding, service delivery or viewer exposure. Its login action does not prove a provider's full external authentication flow works in the restricted viewer. Readability must be distinguished from permission to post in future fixes.
 
-The URL normalizer requires HTTPS, the default HTTPS port, no embedded credentials, a supported host and path, a valid CHZZK channel ID, a valid SOOP channel path, and a non-empty YouTube video ID. SOOP broadcast-number routes are reduced to a channel-scoped `vtype=chat` URL so a live redirect remains bound to the configured streamer. It stores only the normalized chat URL. New top-level WebView navigation outside the allowlist is cancelled.
+## Move, resize and lock
 
-## Move, resize, and lock
+Use **Ctrl + Alt + Shift + H** to toggle edit mode. Drag the header or edges/corners, then toggle again to save and restore always-on-top, non-activating, click-through behavior. Monitor-relative DIP bounds are stored in `%LOCALAPPDATA%\ChatView\hud.ini` and clamped to an available display after monitor changes.
 
-Press:
-
-```text
-Ctrl + Alt + Shift + H
-```
-
-to unlock the HUD. In edit mode:
-
-- drag the header area to move the HUD;
-- drag an edge or corner to resize it;
-- press the same shortcut again to save and lock it.
-
-Locked mode restores always-on-top, non-activating, click-through behavior. Bounds are stored as monitor-relative device-independent pixels in:
-
-```text
-%LOCALAPPDATA%\ChatView\hud.ini
-```
-
-If the saved monitor disappears, the HUD falls back to the primary monitor and clamps itself into the visible work area.
-
-## Runtime behavior
+## Existing runtime and capture limits
 
 ```text
 OBS Studio
-└── chat-view-obs.dll
-    ├── observes stream and recording state
-    ├── owns the local shared-state transport
-    ├── launches the settings application
-    └── owns the HUD process lifecycle
-             │
-             │ versioned shared memory + event
-             ▼
-      chat-view-hud.exe
-      ├── owns the transparent desktop window
-      ├── hosts WebView2 through DirectComposition
-      ├── loads the normalized chat URL
-      └── exits when OBS exits
+  chat-view-obs.dll        controller and local HUD supervisor
+    chat-view-hud.exe      external transparent WebView2 desktop window
+    chat-view-config.exe   native control center
 ```
 
-The platform page probe sends a compact health heartbeat every two seconds, even when the detected state has not changed. It also reports browser offline/online transitions and provider reconnecting or disconnected banners from bounded structural status regions rather than ordinary chat messages. The native HUD watchdog reloads a configured chat page after twelve seconds without a valid heartbeat. A separately bounded connection-recovery policy gives a reported disconnect ten seconds to recover, reloads the page once, and restarts the HUD if the disconnect survives another fifteen seconds. Browser-offline time and Display Capture suppression time do not count toward either recovery deadline.
+This local implementation currently exits with its OBS parent. That is a single-PC behavior to adapt for the gaming companion, not permission to require gaming-PC OBS. Reuse rendering/placement/recovery when changing session ownership. Keep cloud/browser work off OBS callbacks and retain bounded crash-loop/shutdown behavior.
 
-Windows suspend, workstation lock, and pending logoff or shutdown immediately hide the HUD, leave edit mode, and pause page recovery. The HUD remains hidden until every pause reason has cleared. After resume, unlock, or a cancelled shutdown it waits briefly for DWM and networking to settle, reapplies and verifies capture exclusion, restores monitor-relative bounds, and reloads the configured chat page. A WebView failure received while Windows is paused is deferred and converted into one clean HUD-process restart after the session returns, avoiding restart loops behind the lock screen.
+WDA_EXCLUDEFROMCAPTURE is a Windows capture hint, not a means to remove pixels already composited into HDMI video. The current Display Capture interlock can hide the HUD during streaming/recording/replay/virtual-camera risk. It is a protective limitation, not fulfillment of the requirement that the streamer keep reading the HUD.
 
-`WDA_EXCLUDEFROMCAPTURE` is a best-effort Windows capture hint. It does not remove the HUD from a physical HDMI signal sent to a capture card. As a second software-side barrier, ChatView hides the private HUD whenever OBS reports an active or showing Display Capture source while streaming, recording, replay buffering, or virtual-camera output is running. At output start it temporarily treats any configured Display Capture source as risky until OBS source activation settles. Failed starts expire automatically, and the HUD returns only after the risk condition clears. While hidden by that policy, the HUD pauses the periodic hidden-window affinity query. It explicitly reapplies and verifies capture exclusion before showing again, then verifies once more after restoration.
+Do not bypass protection to claim support. Qualify simultaneous real-HUD visibility and stream exclusion. Single-PC and dual-PC tests are separate, and dual-PC tests must have OBS absent from the gaming PC. Pairing alone cannot establish that the video is clean. The current compositor fixture test is not evidence of every game, physical capture card or actual viewer exposure.
 
-The Windows workflow also loads a CI-only qualification module into the official OBS portable build. That module creates a real `monitor_capture` source, routes it through the current scene, reads back `obs_render_main_texture()`, and performs a calibrated foreground/background pixel comparison. The required assertion is that hiding the protected top-level window removes its pixels from the OBS program compositor. Whether Windows capture affinity is honored by the runner's selected DXGI/WGC path is recorded separately and is not confused with the fail-closed hide guarantee. This test covers Display Capture → scene → OBS main texture; it does not claim to validate encoder, muxer, streaming-service, or physical capture-card paths.
+## Diagnostics
 
-## Build
+Use **Export diagnostics** in Control Center or **Tools → Export ChatView Diagnostics...**. Exports include integrity/status/restart summaries and ChatView-tagged log data, omit configured URLs/chat text, and redact profile paths/IPC names. The local feature uploads nothing automatically; review before sharing. Planned account/chat networking requires separate consent/data handling.
 
-### Requirements
+## Build the current native implementation
 
-- Windows 10 version 2004 or newer
-- Visual Studio 2026 with Desktop development with C++
-- Windows 11 SDK 10.0.26100
-- CMake 3.28 or newer
-- OBS Studio development prefix exposing `libobsConfig.cmake` and `obs-frontend-apiConfig.cmake`
-- Microsoft WebView2 SDK restored by `scripts/restore-webview2.ps1`
-
-The active CI target is OBS Studio 32.2.2 on Windows x64.
+Requirements: Windows 10 version 2004 or newer, Visual Studio 2026 C++ tools, Windows SDK 10.0.26100, CMake 3.28+, OBS development prefix, restored WebView2 SDK. The workflow currently pins OBS Studio 32.2.2 Windows x64; inspect it before changing dependencies.
 
 ```powershell
 $env:OBS_CMAKE_PREFIX = "C:\path\to\obs-development-prefix"
@@ -157,39 +95,21 @@ ctest --test-dir build/windows-x64 --build-config RelWithDebInfo --output-on-fai
 cmake --install build/windows-x64 --config RelWithDebInfo
 ```
 
-The install tree is written to `dist/` and contains:
+The install tree is dist/. `.github/workflows/windows-build.yml` defines package, installer and official OBS validation. CTest alone is not a complete package workflow. Follow the checks attached to the actual OBS commit, not an old work-branch result.
+
+## Existing source layout
 
 ```text
-dist/
-├── install.cmd
-├── install.ps1
-├── uninstall.cmd
-├── uninstall.ps1
-├── ensure-webview2-runtime.ps1
-├── README.md
-├── LICENSE
-├── obs-plugins/64bit/
-│   ├── chat-view-obs.dll
-│   ├── chat-view-hud.exe
-│   └── chat-view-config.exe
-└── data/obs-plugins/chat-view-obs/locale/
+src/common/       Configuration and shared contracts
+src/plugin/       OBS controller, status bridge, HUD lifecycle
+src/hud/          WebView2 HUD, interaction and placement
+src/config/       Native settings application
+src/diagnostics/  Local diagnostic export
+src/preflight/    Native installation/runtime checks
+data/locale/      OBS locale resources
+scripts/          Build dependencies, packaging and installation
+tests/            Native, script and OBS integration checks
+docs/             Architecture and development handoff
 ```
 
-## Repository layout
-
-```text
-src/common/   Configuration and shared-state contracts
-src/plugin/   OBS controller and HUD process lifecycle
-src/hud/      WebView2 HUD, interaction, and placement persistence
-src/config/   Native settings application
-data/locale/  OBS locale resources
-scripts/      Build dependency, installation, and removal scripts
-tests/        Configuration, placement, and real HUD process tests
-docs/         Architecture constraints
-```
-
-## Remaining product work
-
-This is not the finished product. Before a public release it still needs interactive qualification on real streamer PCs across game capture, display capture, multi-monitor DPI layouts, and common anti-cheat environments. Dual-PC pairing, first-party multi-platform aggregation, account/backend services, and the creator advertising system remain later layers. Weflab pages can be used for broader platform aggregation during this alpha.
-
-See [`docs/architecture.md`](docs/architecture.md) for the decisions that constrain implementation.
+No empty platform scaffold is introduced by consolidation. Add working layers on these existing assets, following [PRODUCT.md](PRODUCT.md).

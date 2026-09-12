@@ -4,6 +4,7 @@
 
 #include "common/chat-config.hpp"
 #include "common/diagnostic-redaction.hpp"
+#include "common/runtime-history-store.hpp"
 #include "common/win32-handle.hpp"
 
 #include <Windows.h>
@@ -509,6 +510,130 @@ std::wstring output_description(const ControlStatusSnapshot &snapshot)
     return result;
 }
 
+std::wstring runtime_restart_reason_name(RuntimeRestartReason reason)
+{
+    switch (reason) {
+    case RuntimeRestartReason::LaunchFailure:
+        return L"HUD launch failed";
+    case RuntimeRestartReason::StartupTimeout:
+        return L"HUD startup timed out";
+    case RuntimeRestartReason::WebViewFailure:
+        return L"WebView host failed";
+    case RuntimeRestartReason::NavigationFailure:
+        return L"Chat navigation failed";
+    case RuntimeRestartReason::CaptureExclusionFailure:
+        return L"Capture exclusion lost";
+    case RuntimeRestartReason::ReadySignalFailure:
+        return L"HUD readiness signal failed";
+    case RuntimeRestartReason::PlacementFailure:
+        return L"HUD placement failed";
+    case RuntimeRestartReason::PageHealthTimeout:
+        return L"Page-health heartbeat timed out";
+    case RuntimeRestartReason::ConnectionRecovery:
+        return L"Chat connection recovery failed";
+    case RuntimeRestartReason::SystemLifecycleRecovery:
+        return L"Windows resume recovery";
+    case RuntimeRestartReason::UnexpectedExit:
+        return L"Unexpected HUD exit";
+    case RuntimeRestartReason::ManualRestart:
+        return L"Manual restart";
+    case RuntimeRestartReason::None:
+    default:
+        return L"Unavailable";
+    }
+}
+
+std::wstring format_filetime_utc(std::uint64_t value)
+{
+    if (value == 0U) {
+        return L"Unavailable";
+    }
+
+    ULARGE_INTEGER converted{};
+    converted.QuadPart = value;
+    FILETIME filetime{
+        converted.LowPart,
+        converted.HighPart,
+    };
+    SYSTEMTIME utc{};
+    if (!FileTimeToSystemTime(&filetime, &utc)) {
+        return L"Unavailable";
+    }
+
+    wchar_t text[32]{};
+    swprintf_s(
+        text,
+        L"%04u-%02u-%02u %02u:%02u:%02uZ",
+        static_cast<unsigned int>(utc.wYear),
+        static_cast<unsigned int>(utc.wMonth),
+        static_cast<unsigned int>(utc.wDay),
+        static_cast<unsigned int>(utc.wHour),
+        static_cast<unsigned int>(utc.wMinute),
+        static_cast<unsigned int>(utc.wSecond));
+    return text;
+}
+
+void append_runtime_history(
+    std::wostringstream &summary,
+    const DiagnosticsRuntimeSnapshot &runtime)
+{
+    RuntimeTelemetrySnapshot telemetry;
+    std::wstring source = L"Unavailable";
+
+    if (runtime.control_status_available &&
+        is_valid_control_status_snapshot(runtime.control_status) &&
+        has_runtime_telemetry_flag(
+            runtime.control_status.runtime_telemetry,
+            RuntimeTelemetryHistoryValid)) {
+        telemetry = runtime.control_status.runtime_telemetry;
+        source = L"Live OBS status";
+    } else {
+        RuntimeHistoryStore store;
+        if (store.load(telemetry)) {
+            source = L"Persisted local history";
+        }
+    }
+
+    summary << L"\nHUD restart history\n"
+            << L"-------------------\n"
+            << L"Runtime history source: " << source << L"\n";
+    if (!has_runtime_telemetry_flag(
+            telemetry, RuntimeTelemetryHistoryValid)) {
+        summary << L"Last restart reason: Unavailable\n"
+                << L"Last HUD exit code: Unavailable\n"
+                << L"Last restart automatic: Unavailable\n"
+                << L"Consecutive failures: 0\n"
+                << L"Automatic restart circuit: Closed\n"
+                << L"Last runtime event UTC: Unavailable\n";
+        return;
+    }
+
+    summary << L"Last restart reason: "
+            << runtime_restart_reason_name(telemetry.restart_reason)
+            << L"\n"
+            << L"Last HUD exit code: ";
+    if (telemetry.last_exit_code == kRuntimeExitCodeUnavailable) {
+        summary << L"Unavailable\n";
+    } else {
+        summary << telemetry.last_exit_code << L"\n";
+    }
+    summary << L"Last restart automatic: "
+            << yes_no(has_runtime_telemetry_flag(
+                   telemetry, RuntimeTelemetryAutomatic))
+            << L"\n"
+            << L"Consecutive failures: "
+            << telemetry.consecutive_failures << L"\n"
+            << L"Automatic restart circuit: "
+            << (has_runtime_telemetry_flag(
+                    telemetry, RuntimeTelemetryCircuitOpen)
+                    ? L"Open"
+                    : L"Closed")
+            << L"\n"
+            << L"Last runtime event UTC: "
+            << format_filetime_utc(telemetry.event_filetime_utc)
+            << L"\n";
+}
+
 void append_runtime_summary(
     std::wostringstream &summary,
     const DiagnosticsRuntimeSnapshot &runtime)
@@ -558,6 +683,8 @@ void append_runtime_summary(
                 << L"HUD detail code: Unavailable\n"
                 << L"Current recovery condition: Unavailable\n";
     }
+
+    append_runtime_history(summary, runtime);
 }
 
 struct ProcessSummary {

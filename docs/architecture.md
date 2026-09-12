@@ -1,166 +1,116 @@
-# Architecture
+# ChatView architecture
 
-## Product boundary
+Updated: 2026-09-12. Product authority: [PRODUCT.md](../PRODUCT.md). Work state: [development-plan.md](development-plan.md).
 
-ChatView OBS is not an OBS dock. Its primary surface is an operating-system-level HUD displayed over the streamer's game, browser, or desktop.
+## Confirmed requirements and implementation status
 
-The OBS plugin is a controller. The external HUD runtime owns browser composition, the desktop window, and local presentation state.
+The five product goals, CHZZK-first integration, and **no OBS on the gaming PC in dual-PC operation** are owner-confirmed. OBS is the active development/integration branch; main remains the original UX reference. Other target choices below are proposals, not claims of implemented platform capabilities.
 
-```text
-OBS Studio
-└── chat-view-obs.dll
-    ├── observes stream and recording state
-    ├── owns the local status transport
-    ├── launches configuration UI
-    └── owns the HUD process lifecycle
-             │
-             │ versioned shared state
-             ▼
-      chat-view-hud.exe
-      ├── owns the transparent top-level window
-      ├── hosts WebView2 with DirectComposition
-      ├── owns interaction and placement
-      └── exits with its OBS parent
+The native controller/HUD/configuration/recovery/diagnostics/installer/test implementation is retained. Platform accounts, first-party ingestion, dual-PC companion operation, public campaigns and reward accounting have not yet been implemented. Do not restart the native project to add them.
+
+## 1. Boundaries and ownership
+
+| Component | Responsibility | Exclusions |
+| --- | --- | --- |
+| OBS plugin, on the streaming PC | OBS menus; bounded output/scene/ad-source state; local runtime coordination | Blocking cloud/auth requests and financial calculations in OBS callbacks |
+| ChatView native companion | Transparent private HUD, input/placement, desktop/session connection; local OBS IPC where OBS exists | Requirement for local OBS in the gaming-PC role; authoritative HP or balances |
+| ChatView web UI | Own chat renderer, creator dashboard, separate public ad renderer | Provider secrets or arbitrary-content access to privileged native commands |
+| Platform application | Accounts/devices, provider connections/chat delivery, broadcast sessions, campaigns/evidence/rewards | Game-video transport through the chat service; treating client reports as independent proof |
+
+These are responsibility boundaries, not four microservices. Reuse the existing native HUD process rather than adding Electron or a second native renderer. The same implementation acquires explicit single-PC, gaming-PC and streaming-side roles; avoid duplicated product/business logic.
+
+Keep private chat outside OBS's browser/rendering process. Public ads use a separate OBS source, preferably OBS's existing Browser Source rather than a new browser engine. The ad page is first-party code with approved image/media assets, not arbitrary advertiser scripts. Source addition/scene edits require the creator's explicit action; never silently rearrange a broadcast.
+
+## 2. Proposed stack and deployment
+
+Keep C++/CMake/OBS APIs/Win32/WebView2/DirectComposition already present. Current implementation targets Windows x64, not every desktop OS. Web UI: TypeScript/React/Vite. Server: supported Node.js LTS, Express/Zod, PostgreSQL, and object storage for approved assets. These web choices build on main's existing ecosystem; do not reintroduce its obsolete Electron runtime/IPC. Check current dependency documentation/types and protocol requirements before adding pinned versions.
+
+Start with one deployable application and database. Separate accounts/devices, provider/chat, broadcast sessions, campaigns/placements and evidence/rewards in code. REST is proposed for configuration and authenticated WebSocket for delivery/session updates. No speculative Redis, broker, Kubernetes, service mesh or empty plugin framework.
+
+Keep current src/plugin, src/hud, src/config and tests in place. Introduce platform/server, platform/web and truly shared contracts only with a working first-party slice. Do not reorganize the whole native tree for a diagram.
+
+## 3. Single-PC and dual-PC operation
+
+Single PC: game plus private HUD on the local monitor; a verified OBS capture path excludes the HUD; a separate public ad source is composed for the audience. Check actual HUD visibility/exclusion during output start and scene transitions, not only a colored fixture.
+
+Dual PC target:
+
+```
+Gaming PC: game + ChatView companion (NO OBS)
+  private HUD -> streamer's screen only
+  independently qualified clean video -> streaming-PC capture input
+  authenticated ChatView connection -> platform service
+
+Streaming PC: OBS + ChatView plugin/local runtime
+  capture input + selected public ad source -> audience
+  bounded OBS/session evidence -> platform service
+
+Platform service: authorized chat/session data -> both device roles
 ```
 
-## Fault boundary
+OBS installed/running on the gaming PC is prohibited, including portable/headless OBS and OBS Game Capture/projector routing. The previous game-PC OBS proposal is withdrawn. Do not silently require a different full broadcasting application instead. No such dependency may be buried in the companion installer.
 
-The plugin runs inside OBS. A null dereference, blocked callback, or browser/rendering failure inside the plugin could affect the broadcast process.
+The existing HUD currently requires a local OBS parent and local shared-state mapping. Preserve that working single-PC behavior until a tested role-aware lifecycle replaces the universal assumption. Gaming-PC mode must have its own authorized session lifecycle without a local OBS PID. Reuse rendering, input, placement and recovery modules; do not treat local shared memory itself as network transport.
 
-Browser and desktop rendering therefore run out of process from the first useful version. This is a permanent fault boundary, not a compatibility layer. It also leaves a clean process boundary for later game-PC/stream-PC operation.
+Use authenticated outbound platform connections first for pairing, chat and session state; avoid a hand-built unauthenticated LAN listener. Pairing codes are short-lived, one-use, rate-limited and owner-approved; devices receive revocable scoped credentials. Bounded leases prevent stale session state or continued ad credit after disconnect. Only the assigned streaming role reports authoritative session output state; a second HUD/device is not additional audience.
 
-The plugin remains deliberately small:
+### Clean video without gaming-PC OBS: open feasibility gate
 
-- subscribe to OBS frontend events;
-- serialize bounded status state;
-- launch, monitor, and stop the HUD runtime;
-- launch the settings application;
-- never perform browser, network, or rendering work on an OBS callback thread.
+Pairing does not remove pixels. Windows WDA_EXCLUDEFROMCAPTURE addresses certain OS capture APIs, not every output path. If HDMI duplication already includes the HUD, receiving-side metadata cannot reconstruct the hidden game. Do not claim privacy for that topology merely because local affinity checks pass.
 
-The callback wake handle is protected with non-throwing Win32 SRW locks. No C++ lock construction occurs in the `noexcept` frontend callback path.
+Evaluate a supported native OS capture/exclusion path and separate clean output that can operate within ChatView's companion without OBS. Verify existing maintained components and Windows capabilities before choosing a library or adding code. This is a candidate direction, not a selected/proven capture mechanism or a commitment to implement game hooks, drivers, a custom encoder or another streaming suite. Existing code contains no demonstrated OBS-free dual-PC clean-feed solution.
 
-## Local status transport
+Acceptance requires actual gaming-PC hardware with OBS absent, simultaneous readable HUD and HUD-free recorded feed, input behavior, acceptable measured resource overhead/latency, and start/transition/reconnect tests. Record refresh rate, HDR/DPI, window mode, GPU and capture hardware. Do not assume exclusive-fullscreen coverage or all anti-cheat compatibility. If a topology fails, investigate another within the confirmed constraint; do not relax no-gaming-PC-OBS without owner instruction.
 
-The single-PC transport uses a named Windows file mapping and an auto-reset event. Protocol version 4 carries only:
+Current Display Capture suppression remains a protective limitation until a verified replacement works. Hiding the HUD is not completion of the private-HUD use case. Its policy module is reusable; its blanket behavior and UI claims need revision, not deletion without evidence.
 
-- streaming active;
-- recording active;
-- private-HUD capture suppression active;
-- shutdown requested;
-- a monotonically increasing generation.
+## 4. CHZZK-first own chat
 
-The mapped structure has a fixed magic value, explicit protocol version, and sequence lock. The sequence lock prevents the HUD from accepting a partial write, while the event avoids polling. Names are scoped to the current Windows session, the OBS process ID, and a per-launch CNG random token.
+CHZZK is selected, not an unresolved preference. Authenticate and subscribe through official supported APIs; the platform service owns credentials/subscriptions and the renderer displays messages rather than scraping a provider page. Normalize only needed fields and retain attribution, message IDs and deletion/revocation behavior where supplied. Use bounded buffers/backpressure and no indefinite chat retention by default.
 
-The plugin and HUD ship as one package. Incompatible layouts increment the protocol version; obsolete layouts are not retained.
+One creator subscription should serve the creator's authorized devices; duplicate HUDs must not create duplicate upstream subscriptions or ad credit. Official session docs specify connection limits and Socket.IO client protocol/version constraints. Check a suitable maintained implementation rather than assuming a current client is compatible or copying a deprecated dependency unchecked. Verify real channel authorization, audience-query feasibility and data-use permission separately. Real chat access does not prove billable watch-time measurement.
 
-## Chat content boundary
+Use system-browser provider authorization with validated server callback/state, and PKCE where supported. Keep secrets/provider tokens off the plugin and pages. Public ads, private HUDs and dashboard accounts receive distinct scoped authorization. No payout/native control functions exposed to arbitrary web content. Posting permission and ability to read are separate; a sign-in-to-post prompt must not block a readable chat.
 
-The current alpha renders an explicitly configured web chat page rather than implementing platform protocols inside OBS.
+Keep the existing external-page feature usable until the first-party path works end to end. Then remove the replaced provider/DOM-health paths instead of indefinitely maintaining two architectures. Reusing WebView2 for ChatView-owned UI does not require retaining external-page DOM heuristics.
 
-The settings application accepts either direct chat pages or normal CHZZK, SOOP, and YouTube channel/broadcast links. The configuration layer converts supported links into one canonical chat URL before persistence:
+## 5. Advertising, HP and accounting
 
-```text
-CHZZK /live/<channel-id> or /<channel-id>
-    → https://chzzk.naver.com/chat/<channel-id>
+Required loop: creator selects campaign/banner -> public OBS placement -> audience-time-related evidence -> HP progress -> reward record. The business model remains a core goal while technical feasibility is validated early.
 
-SOOP /station/<channel-id> or play/<channel-id>[/<broadcast-number>]
-    → https://play.sooplive.com/<channel-id>?vtype=chat
+Server-side modules will own approved campaigns/creatives, creator placements, broadcast sessions, timestamped audience/ad evidence, accounting rule versions and reward records. HP represents progress, not a bank balance; its ownership, unit, display audience and payout relation remain unspecified. Do not invent a zero-HP payout requirement.
 
-YouTube /watch?v=<video-id>, /live/<video-id>, youtu.be/<video-id>
-    → https://www.youtube.com/live_chat?is_popout=1&v=<video-id>
-```
+The client reports bounded evidence, not authoritative deductions or money. Use exact monetary units, database transactions, uniqueness/idempotency and atomic campaign-budget caps across simultaneous creators. Distinguish estimates, held/rejected records, confirmed rewards and paid amounts; corrections need audit records. Synthetic demo data cannot enter payable accounting.
 
-Weflab `/page/...` URLs remain direct. The normalizer requires HTTPS, the default HTTPS port, no URL credentials, supported paths, a 32-character hexadecimal CHZZK channel ID, an ASCII SOOP channel ID with an optional numeric broadcast route, and an ASCII YouTube video identifier. SOOP canonicalization intentionally binds to the streamer channel rather than one transient broadcast number. Unsupported or ambiguous links are rejected instead of being guessed.
+Audience samples times eligible intervals are at most a candidate estimate, not proof of individual ad attention or cross-platform unique viewers. Unknown/stale samples remain unknown. Confirm provider permission and campaign terms before billing. Do not automatically apply one platform's metric rules to others.
 
-Configuration is stored by the separate native settings application in `%LOCALAPPDATA%\ChatView\config.ini`. Saving broadcasts a registered local Windows message so the HUD reloads immediately.
+OBS source showing/activity, renderer heartbeats and transforms are operational evidence, not proof against occlusion, cropping, studio preview, modified clients or fraudulent viewers. Test these cases and define bounded pilot review. Server receipt or signatures do not make client reports true.
 
-Top-level WebView navigation is restricted to the supported hosts and new windows are suppressed. Page subresources continue to load normally.
+On expired ad authorization or missing evidence, stop accrual and let the public renderer expire to transparent. Do not stop the broadcast or intentionally break private chat because accounting is unavailable. Before actual money, confirm data/commercial permissions, campaign rules, anti-fraud review, privacy/disclosure and payout obligations.
 
-This web-content boundary is the smallest complete path that preserves the existing ChatView use case. First-party platform aggregation is a later backend/runtime layer and must not be half-integrated as unused provider code.
+## 6. Preserve versus change
 
-## Transparent WebView2 composition
+| Existing asset | Treatment |
+| --- | --- |
+| OBS controller/callback and external HUD boundary | Preserve; add only necessary platform/session coordination |
+| WebView2/DirectComposition transparency; click-through/edit; DIP placement | Reuse for first-party UI and gaming-PC companion |
+| Bounded restart/circuit, persisted telemetry, lock/suspend recovery | Preserve and adapt lifecycle ownership where required |
+| Local shared memory/event transport | Keep for local OBS integration; do not pretend it connects two PCs |
+| Installer, package integrity, diagnostics redaction and native tests | Preserve; adjust packages/evidence only for real new roles |
+| Readiness/login interpretation and blanket capture suppression | Fix specific policy/claim issues; retain useful recovery and safeguards |
+| External page/DOM health implementation | Current usable feature; remove only when replaced end to end |
+| One-shot patch workflows and staged payloads | Obsolete tooling; exclude from the consolidated tree |
 
-The HUD uses a WebView2 composition controller hosted by a DirectComposition visual tree. This avoids an opaque child HWND and permits transparent web content in the top-level overlay.
+Closed Shadow DOM is UI isolation, not a security boundary. Current code accepts bounded page-health reports; documentation must not claim it registers no page-to-native messages. Current READY TO STREAM text describes local ChatView checks, not audio/encoder/service delivery or independent ad exposure.
 
-The runtime:
+## References
 
-- creates a D3D11 BGRA device, with WARP fallback;
-- creates a DirectComposition device, target, and root visual;
-- creates an `ICoreWebView2CompositionController`;
-- sets the WebView default background to transparent;
-- injects a closed Shadow DOM control layer for edit bounds and OBS status;
-- forces document and body backgrounds transparent without rewriting the provider UI.
+Behavioral references, not evidence of completed ChatView support. Recheck before implementation/release.
 
-OBS state reaches that closed control layer only through native-to-page JSON messages. The provider page receives no callable ChatView control function, and the native host registers no page-to-native message handler. The receiver also requires a trusted WebView2 message event whose source is the captured native bridge object, so script-dispatched lookalike events are ignored.
-
-The WebView2 Evergreen Runtime is checked by the package installer and installed from Microsoft's signed bootstrapper when absent. The SDK used at build time is pinned separately in CI.
-
-## Desktop window modes
-
-Locked mode is the broadcasting default. The top-level window is:
-
-- borderless;
-- absent from the taskbar;
-- always on top;
-- non-activating;
-- click-through;
-- requested to be excluded from supported Windows capture paths;
-- created with `WS_EX_NOREDIRECTIONBITMAP` for DirectComposition.
-
-`Ctrl + Alt + Shift + H` toggles edit mode. Edit mode temporarily enables activation and native move/resize hit testing. The injected control layer shows a visible frame, while the webpage remains the content surface. Locking persists the final bounds and restores the private HUD defaults.
-
-`WDA_EXCLUDEFROMCAPTURE` is a best-effort Windows capture hint, not DRM and not an HDMI-path guarantee. A future broadcast-visible overlay must be a separate OBS source rather than weakening the private-HUD default.
-
-The plugin also runs a 100 ms output-safety monitor. It enumerates OBS input sources and recognizes the pinned Windows Display Capture source ID `monitor_capture`. If Display Capture is active or showing while streaming, recording, replay buffering, or virtual-camera output is running, protocol version 4 orders the HUD to hide. Output-starting events use a bounded pending state and temporarily treat any configured Display Capture source as risky, closing the gap before OBS activates the program source. A post-start conservative interval covers OBS events emitted before source activation, failed starts expire instead of leaving the HUD permanently suppressed, an unstable scene/profile graph is treated as risky, edit mode is disabled during suppression, and the HUD reappears only after the risk clears. This interlock is defense in depth above the Windows affinity check; it is not presented as protection for physical capture-card paths. While policy suppression has already hidden the HUD, the periodic affinity probe is paused. Before any restoration, the runtime explicitly reapplies `WDA_EXCLUDEFROMCAPTURE`, verifies it while the window is still hidden, shows the HUD, and verifies it again. A hide transition therefore cannot leave the restored HUD relying on stale affinity state.
-
-The repair observer for the injected control shell uses normalized, compare-before-write inline state and watches the document root, host attributes, and transparency style. Its own repairs therefore settle instead of continuously triggering itself.
-
-## Placement storage
-
-Placement is local presentation state and belongs to the HUD runtime. It is stored in `%LOCALAPPDATA%\ChatView\hud.ini` as:
-
-- Win32 monitor device name;
-- horizontal and vertical offsets from the monitor work-area origin in device-independent pixels;
-- width and height in device-independent pixels.
-
-Using monitor-relative DIPs preserves useful placement across virtual-desktop reordering and DPI changes. Missing monitors fall back to the primary display. Restored dimensions and positions are clamped into the current work area.
-
-## Lifecycle guarantees
-
-- Runtime and settings executable paths are resolved beside the loaded plugin DLL.
-- The HUD receives its OBS parent process ID.
-- Normal unload publishes a shutdown state and wakes the HUD.
-- The HUD also waits on the OBS process handle and exits after abnormal OBS termination.
-- Unexpected HUD exits use bounded exponential backoff and open an automatic-restart circuit after six consecutive failures.
-- **Tools → Restart ChatView HUD** explicitly resets the circuit and replaces a running HUD without restarting OBS.
-- Plugin unload uses a bounded wait and does not indefinitely block OBS shutdown.
-- WebView2 asynchronous callbacks are serviced by an alertable, input-available Win32 message loop. Each controller initialization receives a fresh callback-state generation, so a late callback from a closed controller cannot attach to a replacement controller.
-
-## Testing boundary
-
-The Windows workflow builds against pinned OBS Studio 32.2.2 development libraries and a pinned WebView2 SDK. It then runs:
-
-- provider URL normalization, rejection, and configuration persistence tests;
-- placement validation, monitor fallback, and malformed-input tests;
-- a calibrated pixel-level Windows capture-exclusion capability probe followed by a real WebView2 HUD process smoke test covering initialization readiness, locked/edit modes, native resize, persistence, capture-exclusion request, shared-state shutdown, and delayed WebView profile cleanup;
-- deterministic restart-policy tests covering backoff, circuit opening, saturation, and explicit reset;
-- capture-risk policy tests plus startup and runtime HUD hide/resume checks through the versioned shared-state transport;
-- a CI-only module loaded by official OBS Studio that creates a real Windows `monitor_capture` source, composes it through the current scene, reads back `obs_render_main_texture()`, calibrates visible foreground/background pixels, and requires a hidden protected window to disappear from the program compositor;
-- package layout validation;
-- installer and uninstaller tests against an isolated OBS directory tree.
-
-The uploaded artifact contains the install tree directly, so users extract it once and run `install.cmd`.
-
-These checks prevent publishing a package with a broken controller-to-HUD path. The compositor qualification reaches the real Display Capture source and OBS main texture, but it stops before encoder, muxer, streaming-service, and physical HDMI paths. It therefore does not replace interactive qualification on a real broadcaster workstation, GPU driver stack, game, and capture configuration.
-
-## Layering order
-
-Development proceeds only from a working product layer:
-
-1. installable single-PC OBS-controlled transparent web chat HUD;
-2. direct URL coverage for the major target platforms and real-workstation qualification;
-3. authenticated dual-PC pairing with a separate transport implementation;
-4. first-party multi-platform chat aggregation and backend services;
-5. creator advertising and verified campaign accounting.
-
-Advertising does not enter the codebase until the free HUD is stable enough to earn installation on its own.
+- Windows capture affinity (checked 2026-09-12): https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity
+- CHZZK sessions (checked 2026-09-12): https://chzzk.gitbook.io/chzzk/chzzk-api/session
+- OBS source APIs: https://docs.obsproject.com/reference-sources
+- OBS Browser Source: https://obsproject.com/kb/browser-source
+- CHZZK Live API: https://chzzk.gitbook.io/chzzk/chzzk-api/live
+- YouTube policies: https://developers.google.com/youtube/terms/developer-policies
+- PostgreSQL transactions: https://www.postgresql.org/docs/current/tutorial-transactions.html

@@ -28,6 +28,7 @@ constexpr wchar_t kCaptureProbeWindowClass[] =
 constexpr DWORD kStartupTimeoutMs = 25000U;
 constexpr DWORD kShutdownTimeoutMs = 8000U;
 constexpr DWORD kWindowStateTimeoutMs = 3000U;
+constexpr DWORD kControlMessageTimeoutMs = 5000U;
 constexpr DWORD kCaptureSettleTimeMs = 180U;
 constexpr int kCaptureProbeWidth = 240;
 constexpr int kCaptureProbeHeight = 180;
@@ -456,6 +457,19 @@ bool wait_for_style(HWND window, LONG_PTR required, LONG_PTR forbidden) noexcept
     return false;
 }
 
+bool send_control_message(HWND window, UINT message) noexcept
+{
+    DWORD_PTR ignored = 0U;
+    return SendMessageTimeoutW(
+               window,
+               message,
+               0U,
+               0L,
+               SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT,
+               kControlMessageTimeoutMs,
+               &ignored) != FALSE;
+}
+
 bool wait_for_visibility(
     HWND window, bool visible) noexcept
 {
@@ -775,7 +789,7 @@ int wmain(int argument_count, wchar_t **arguments)
             child_process.get());
     }
 
-    if (!PostMessageW(window, toggle_edit_message, 0U, 0L)) {
+    if (!send_control_message(window, toggle_edit_message)) {
         return fail(
             L"Failed to request HUD edit mode",
             child_process.get());
@@ -812,7 +826,7 @@ int wmain(int argument_count, wchar_t **arguments)
             child_process.get());
     }
 
-    if (!PostMessageW(window, toggle_edit_message, 0U, 0L)) {
+    if (!send_control_message(window, toggle_edit_message)) {
         return fail(
             L"Failed to request HUD lock mode",
             child_process.get());
@@ -837,7 +851,7 @@ int wmain(int argument_count, wchar_t **arguments)
         return fail(
             L"Capture suppression terminated the HUD instead of hiding it");
     }
-    if (!PostMessageW(window, toggle_edit_message, 0U, 0L)) {
+    if (!send_control_message(window, toggle_edit_message)) {
         return fail(
             L"Failed to test editing during capture suppression",
             child_process.get());
@@ -875,7 +889,7 @@ int wmain(int argument_count, wchar_t **arguments)
             L"The HUD did not hide for Windows suspend",
             child_process.get());
     }
-    if (!PostMessageW(window, toggle_edit_message, 0U, 0L)) {
+    if (!send_control_message(window, toggle_edit_message)) {
         return fail(
             L"Failed to test editing during Windows suspend",
             child_process.get());

@@ -22,6 +22,7 @@ OBS_MODULE_USE_DEFAULT_LOCALE("chat-view-obs", "en-US")
 namespace {
 
 constexpr UINT kCaptureRiskPollIntervalMs = 100U;
+constexpr ULONGLONG kIdleCaptureScanIntervalMs = 500U;
 constexpr ULONGLONG kOutputStartPendingTimeoutMs = 15000U;
 constexpr ULONGLONG kPostStartConservativeScanMs = 1000U;
 constexpr wchar_t kDiagnosticsExecutableName[] = L"chat-view-diagnostics.exe";
@@ -40,6 +41,8 @@ ULONGLONG streaming_start_deadline = 0U;
 ULONGLONG recording_start_deadline = 0U;
 ULONGLONG replay_buffer_start_deadline = 0U;
 ULONGLONG conservative_scan_deadline = 0U;
+ULONGLONG next_idle_capture_scan_tick = 0U;
+CaptureScan cached_capture_scan;
 bool published_capture_state = false;
 bool last_capture_suppressed = false;
 
@@ -126,8 +129,16 @@ void publish_frontend_state() noexcept
         effective_replay_buffer || virtual_camera;
 
     CaptureScan scan;
-    if (output_active && scene_graph_stable) {
-        scan = scan_display_capture_sources();
+    if (scene_graph_stable) {
+        if (output_active || now >= next_idle_capture_scan_tick) {
+            cached_capture_scan = scan_display_capture_sources();
+            next_idle_capture_scan_tick =
+                now + kIdleCaptureScanIntervalMs;
+        }
+        scan = cached_capture_scan;
+    } else {
+        cached_capture_scan = {};
+        next_idle_capture_scan_tick = 0U;
     }
 
     const bool conservative_scan =
@@ -170,7 +181,10 @@ void publish_frontend_state() noexcept
             recording,
             replay_buffer,
             virtual_camera,
-            suppress);
+            suppress,
+            scene_graph_stable,
+            scan.display_capture_active_or_showing,
+            runtime_controller->runtime_telemetry());
     }
 }
 
@@ -195,6 +209,7 @@ void on_frontend_event(obs_frontend_event event, void *) noexcept
     case OBS_FRONTEND_EVENT_FINISHED_LOADING:
     case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
     case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
+        next_idle_capture_scan_tick = 0U;
         initialize_scene_graph_state();
         break;
 
@@ -202,6 +217,8 @@ void on_frontend_event(obs_frontend_event event, void *) noexcept
     case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP:
     case OBS_FRONTEND_EVENT_PROFILE_CHANGING:
         scene_graph_stable = false;
+        cached_capture_scan = {};
+        next_idle_capture_scan_tick = 0U;
         break;
 
     case OBS_FRONTEND_EVENT_STREAMING_STARTING:
@@ -244,6 +261,9 @@ void on_frontend_event(obs_frontend_event event, void *) noexcept
     case OBS_FRONTEND_EVENT_VIRTUALCAM_STOPPED:
     case OBS_FRONTEND_EVENT_SCENE_CHANGED:
     case OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED:
+        next_idle_capture_scan_tick = 0U;
+        break;
+
     case OBS_FRONTEND_EVENT_TRANSITION_CHANGED:
     case OBS_FRONTEND_EVENT_TRANSITION_STOPPED:
     case OBS_FRONTEND_EVENT_STUDIO_MODE_ENABLED:
@@ -354,6 +374,8 @@ void reset_frontend_tracking() noexcept
     recording_start_deadline = 0U;
     replay_buffer_start_deadline = 0U;
     conservative_scan_deadline = 0U;
+    next_idle_capture_scan_tick = 0U;
+    cached_capture_scan = {};
     published_capture_state = false;
     last_capture_suppressed = false;
 }

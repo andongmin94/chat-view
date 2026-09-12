@@ -47,14 +47,21 @@ void publish(
     chatview::ControlStatus *status,
     std::uint32_t flags,
     DWORD hud_process_id,
-    std::uint64_t generation) noexcept
+    std::uint64_t generation,
+    const chatview::RuntimeTelemetrySnapshot &runtime) noexcept
 {
     InterlockedIncrement(&status->sequence);
     MemoryBarrier();
     status->flags = flags;
     status->hud_process_id = hud_process_id;
+    status->runtime_telemetry_flags = runtime.flags;
     status->generation = generation;
     status->updated_tick_ms = GetTickCount64();
+    status->runtime_event_filetime_utc = runtime.event_filetime_utc;
+    status->last_hud_exit_code = runtime.last_exit_code;
+    status->runtime_restart_reason =
+        static_cast<std::uint32_t>(runtime.restart_reason);
+    status->consecutive_runtime_failures = runtime.consecutive_failures;
     MemoryBarrier();
     InterlockedIncrement(&status->sequence);
 }
@@ -121,14 +128,25 @@ int main()
     const std::uint32_t flags =
         chatview::ControlStatusStreaming |
         chatview::ControlStatusCaptureRisk |
-        chatview::ControlStatusHudRunning;
-    publish(mapped.get(), flags, process_id, 7U);
+        chatview::ControlStatusHudRunning |
+        chatview::ControlStatusSceneGraphReady |
+        chatview::ControlStatusDisplayCaptureActive;
+    const chatview::RuntimeTelemetrySnapshot telemetry{
+        19U,
+        chatview::RuntimeRestartReason::PageHealthTimeout,
+        2U,
+        chatview::RuntimeTelemetryHistoryValid |
+            chatview::RuntimeTelemetryAutomatic,
+        133485408000000000ULL,
+    };
+    publish(mapped.get(), flags, process_id, 7U, telemetry);
     SetEvent(status_event.get());
 
     chatview::ControlStatusSnapshot snapshot;
     if (!reader.read(snapshot) || snapshot.flags != flags ||
         snapshot.hud_process_id != process_id || snapshot.generation != 7U ||
-        snapshot.updated_tick_ms == 0U) {
+        snapshot.updated_tick_ms == 0U ||
+        snapshot.runtime_telemetry != telemetry) {
         return fail(L"The control-status snapshot did not round trip");
     }
 
@@ -137,15 +155,33 @@ int main()
         return fail(L"The restart command was not delivered");
     }
 
-    publish(mapped.get(), 1U << 31U, 0U, 8U);
+    publish(mapped.get(), 1U << 31U, 0U, 8U, {});
     if (reader.read(snapshot)) {
         return fail(L"Unknown control-status flags were accepted");
     }
 
     publish(
-        mapped.get(), chatview::ControlStatusHudVisible, 0U, 9U);
+        mapped.get(), chatview::ControlStatusHudVisible, 0U, 9U, {});
     if (reader.read(snapshot)) {
         return fail(L"A visible HUD without a running process was accepted");
+    }
+
+    publish(
+        mapped.get(),
+        chatview::ControlStatusDisplayCaptureActive,
+        0U,
+        10U,
+        {});
+    if (reader.read(snapshot)) {
+        return fail(
+            L"Active Display Capture without a stable scene graph was accepted");
+    }
+
+    chatview::RuntimeTelemetrySnapshot invalid = telemetry;
+    invalid.flags |= chatview::RuntimeTelemetryCircuitOpen;
+    publish(mapped.get(), chatview::ControlStatusNone, 0U, 11U, invalid);
+    if (reader.read(snapshot)) {
+        return fail(L"Invalid runtime telemetry was accepted");
     }
 
     reader.close();

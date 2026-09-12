@@ -72,18 +72,31 @@ bool is_regular_file(const std::wstring &path) noexcept
            (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0U;
 }
 
-void log_process_exit(HANDLE process, const char *context) noexcept
+std::uint32_t log_process_exit(
+    HANDLE process, const char *context) noexcept
 {
-    DWORD exit_code = 0U;
+    DWORD exit_code = kRuntimeExitCodeUnavailable;
     if (GetExitCodeProcess(process, &exit_code)) {
         blog(
             LOG_ERROR,
             "[ChatView OBS] HUD runtime %s with exit code %lu",
             context,
             static_cast<unsigned long>(exit_code));
-    } else {
-        log_windows_error("GetExitCodeProcess", GetLastError());
+        return exit_code;
     }
+
+    log_windows_error("GetExitCodeProcess", GetLastError());
+    return kRuntimeExitCodeUnavailable;
+}
+
+std::uint64_t current_filetime_utc() noexcept
+{
+    FILETIME filetime{};
+    GetSystemTimeAsFileTime(&filetime);
+    ULARGE_INTEGER value{};
+    value.LowPart = filetime.dwLowDateTime;
+    value.HighPart = filetime.dwHighDateTime;
+    return value.QuadPart;
 }
 
 BOOL CALLBACK find_runtime_window(HWND window, LPARAM data)
@@ -119,6 +132,15 @@ RuntimeController::~RuntimeController()
 bool RuntimeController::start() noexcept
 {
     stop();
+
+    RuntimeTelemetrySnapshot restored_history;
+    const bool history_loaded =
+        runtime_history_store_.load(restored_history);
+    {
+        ExclusiveSrwLockGuard telemetry_lock(runtime_telemetry_lock_);
+        runtime_telemetry_state_ =
+            history_loaded ? restored_history : RuntimeTelemetrySnapshot{};
+    }
 
     try {
         {
@@ -229,6 +251,11 @@ void RuntimeController::update(
     }
 }
 
+RuntimeTelemetrySnapshot RuntimeController::runtime_telemetry() const noexcept
+{
+    SharedSrwLockGuard telemetry_lock(runtime_telemetry_lock_);
+    return runtime_telemetry_state_;
+}
 
 bool RuntimeController::restart_hud() noexcept
 {
@@ -424,8 +451,10 @@ bool RuntimeController::create_runtime_job_locked()
     return true;
 }
 
-bool RuntimeController::launch_runtime_locked()
+RuntimeController::RuntimeLaunchResult
+RuntimeController::launch_runtime_locked()
 {
+    RuntimeLaunchResult result;
     const std::wstring runtime_path =
         find_sibling_path(kRuntimeExecutableName);
     if (runtime_path.empty() || !is_regular_file(runtime_path)) {
@@ -433,16 +462,16 @@ bool RuntimeController::launch_runtime_locked()
             LOG_ERROR,
             "[ChatView OBS] HUD runtime was not found: %ls",
             runtime_path.c_str());
-        return false;
+        return result;
     }
 
     if (!ResetEvent(runtime_ready_event_.get())) {
         log_windows_error("ResetEvent(runtime ready)", GetLastError());
-        return false;
+        return result;
     }
 
     if (!create_runtime_job_locked()) {
-        return false;
+        return result;
     }
 
     const DWORD process_id = GetCurrentProcessId();
@@ -468,7 +497,7 @@ bool RuntimeController::launch_runtime_locked()
             &process_info)) {
         log_windows_error("CreateProcessW(HUD)", GetLastError());
         runtime_job_.reset();
-        return false;
+        return result;
     }
 
     UniqueHandle thread(process_info.hThread);
@@ -479,7 +508,7 @@ bool RuntimeController::launch_runtime_locked()
         TerminateProcess(process.get(), 1U);
         WaitForSingleObject(process.get(), kRuntimeTerminateWaitMs);
         runtime_job_.reset();
-        return false;
+        return result;
     }
 
     if (ResumeThread(thread.get()) == static_cast<DWORD>(-1)) {
@@ -487,7 +516,7 @@ bool RuntimeController::launch_runtime_locked()
         TerminateProcess(process.get(), 1U);
         WaitForSingleObject(process.get(), kRuntimeTerminateWaitMs);
         runtime_job_.reset();
-        return false;
+        return result;
     }
 
     HANDLE wait_handles[3] = {
@@ -498,21 +527,26 @@ bool RuntimeController::launch_runtime_locked()
     const DWORD wait_result =
         WaitForMultipleObjects(3U, wait_handles, FALSE, kRuntimeReadyWaitMs);
     if (wait_result == WAIT_OBJECT_0 + 1U) {
-        log_process_exit(process.get(), "exited before reporting ready");
+        result.exit_code =
+            log_process_exit(process.get(), "exited before reporting ready");
+        result.failure_reason =
+            runtime_restart_reason_from_exit_code(result.exit_code);
         runtime_job_.reset();
-        return false;
+        return result;
     }
     if (wait_result == WAIT_OBJECT_0 + 2U) {
+        result.failure_reason = RuntimeRestartReason::None;
         TerminateProcess(process.get(), 0U);
         WaitForSingleObject(process.get(), kRuntimeTerminateWaitMs);
         runtime_job_.reset();
-        return false;
+        return result;
     }
     if (wait_result != WAIT_OBJECT_0) {
         if (wait_result == WAIT_FAILED) {
             log_windows_error(
                 "WaitForMultipleObjects(HUD ready)", GetLastError());
         } else {
+            result.failure_reason = RuntimeRestartReason::StartupTimeout;
             blog(
                 LOG_ERROR,
                 "[ChatView OBS] HUD did not report ready within %lu ms",
@@ -524,12 +558,14 @@ bool RuntimeController::launch_runtime_locked()
             WaitForSingleObject(process.get(), kRuntimeTerminateWaitMs);
         }
         runtime_job_.reset();
-        return false;
+        return result;
     }
 
     runtime_process_id_ = process_info.dwProcessId;
     runtime_process_ = std::move(process);
-    return true;
+    result.started = true;
+    result.failure_reason = RuntimeRestartReason::None;
+    return result;
 }
 
 HWND RuntimeController::find_runtime_window_locked() const noexcept
@@ -576,32 +612,97 @@ std::wstring RuntimeController::find_sibling_path(
 void RuntimeController::supervisor_loop() noexcept
 {
     RestartPolicy restart_policy;
+    const RuntimeTelemetrySnapshot restored = runtime_telemetry();
+    if (has_runtime_telemetry_flag(
+            restored, RuntimeTelemetryHistoryValid)) {
+        restart_policy.restore(restored.consecutive_failures);
+        if (!restart_policy.automatic_restart_allowed()) {
+            blog(
+                LOG_WARNING,
+                "[ChatView OBS] HUD automatic restart circuit restored open; "
+                "use Tools > Restart ChatView HUD to retry");
+        }
+    }
+
     ULONGLONG retry_deadline = 0U;
 
-    const auto record_failure = [&restart_policy, &retry_deadline]() noexcept {
-        restart_policy.record_failure();
-        if (!restart_policy.automatic_restart_allowed()) {
-            retry_deadline = 0U;
-            blog(
-                LOG_ERROR,
-                "[ChatView OBS] HUD automatic restart disabled after %u "
-                "consecutive failures; use Tools > Restart ChatView HUD",
-                static_cast<unsigned int>(restart_policy.failure_count()));
-            return;
-        }
+    const auto record_failure =
+        [this, &restart_policy, &retry_deadline](
+            RuntimeRestartReason reason,
+            std::uint32_t exit_code) noexcept {
+            if (reason == RuntimeRestartReason::None) {
+                reason = RuntimeRestartReason::LaunchFailure;
+            }
 
-        const DWORD delay =
-            static_cast<DWORD>(restart_policy.delay_ms());
-        retry_deadline = GetTickCount64() + delay;
-        blog(
-            LOG_WARNING,
-            "[ChatView OBS] HUD restart scheduled in %lu ms after failure "
-            "%u/%u",
-            static_cast<unsigned long>(delay),
-            static_cast<unsigned int>(restart_policy.failure_count()),
-            static_cast<unsigned int>(
-                kMaximumAutomaticRestartFailures));
-    };
+            restart_policy.record_failure();
+            std::uint32_t telemetry_flags =
+                RuntimeTelemetryHistoryValid |
+                RuntimeTelemetryAutomatic;
+            if (!restart_policy.automatic_restart_allowed()) {
+                telemetry_flags |= RuntimeTelemetryCircuitOpen;
+            }
+            update_runtime_telemetry(RuntimeTelemetrySnapshot{
+                exit_code,
+                reason,
+                restart_policy.failure_count(),
+                telemetry_flags,
+                current_filetime_utc(),
+            });
+
+            if (!restart_policy.automatic_restart_allowed()) {
+                retry_deadline = 0U;
+                blog(
+                    LOG_ERROR,
+                    "[ChatView OBS] HUD automatic restart disabled after %u "
+                    "consecutive failures; use Tools > Restart ChatView HUD",
+                    static_cast<unsigned int>(restart_policy.failure_count()));
+                return;
+            }
+
+            const DWORD delay =
+                static_cast<DWORD>(restart_policy.delay_ms());
+            retry_deadline = GetTickCount64() + delay;
+            blog(
+                LOG_WARNING,
+                "[ChatView OBS] HUD restart scheduled in %lu ms after failure "
+                "%u/%u",
+                static_cast<unsigned long>(delay),
+                static_cast<unsigned int>(restart_policy.failure_count()),
+                static_cast<unsigned int>(
+                    kMaximumAutomaticRestartFailures));
+        };
+
+    const auto record_manual_restart =
+        [this, &restart_policy, &retry_deadline]() noexcept {
+            restart_policy.reset();
+            retry_deadline = 0U;
+            update_runtime_telemetry(RuntimeTelemetrySnapshot{
+                kRuntimeExitCodeUnavailable,
+                RuntimeRestartReason::ManualRestart,
+                0U,
+                RuntimeTelemetryHistoryValid,
+                current_filetime_utc(),
+            });
+        };
+
+    const auto clear_stable_failure_count =
+        [this, &restart_policy, &retry_deadline]() noexcept {
+            if (restart_policy.failure_count() == 0U) {
+                return;
+            }
+
+            restart_policy.reset();
+            retry_deadline = 0U;
+            RuntimeTelemetrySnapshot telemetry = runtime_telemetry();
+            if (!has_runtime_telemetry_flag(
+                    telemetry, RuntimeTelemetryHistoryValid)) {
+                return;
+            }
+            telemetry.consecutive_failures = 0U;
+            telemetry.flags &= ~static_cast<std::uint32_t>(
+                RuntimeTelemetryCircuitOpen);
+            update_runtime_telemetry(telemetry);
+        };
 
     try {
         while (!stopping_.load(std::memory_order_acquire)) {
@@ -647,8 +748,7 @@ void RuntimeController::supervisor_loop() noexcept
                         continue;
                     }
 
-                    restart_policy.reset();
-                    retry_deadline = 0U;
+                    record_manual_restart();
                     blog(
                         LOG_INFO,
                         "[ChatView OBS] Manual HUD restart requested");
@@ -670,14 +770,14 @@ void RuntimeController::supervisor_loop() noexcept
                     continue;
                 }
 
-                bool launched = false;
+                RuntimeLaunchResult launch_result;
                 {
                     std::scoped_lock lock(mutex_);
                     if (stopping_.load(std::memory_order_acquire)) {
                         return;
                     }
-                    launched = launch_runtime_locked();
-                    if (launched) {
+                    launch_result = launch_runtime_locked();
+                    if (launch_result.started) {
                         publish_locked(
                             current_flags_.load(
                                 std::memory_order_acquire));
@@ -687,14 +787,18 @@ void RuntimeController::supervisor_loop() noexcept
                 if (stopping_.load(std::memory_order_acquire)) {
                     return;
                 }
-                if (launched) {
+                if (launch_result.started) {
                     retry_deadline = 0U;
                     blog(
                         LOG_INFO,
                         "[ChatView OBS] HUD runtime started and reported "
                         "ready");
-                } else {
-                    record_failure();
+                } else if (
+                    launch_result.failure_reason !=
+                    RuntimeRestartReason::None) {
+                    record_failure(
+                        launch_result.failure_reason,
+                        launch_result.exit_code);
                 }
                 continue;
             }
@@ -716,32 +820,38 @@ void RuntimeController::supervisor_loop() noexcept
                 const bool explicit_restart =
                     restart_requested_.exchange(
                         false, std::memory_order_acq_rel);
+                bool manual_restart_accepted = false;
 
-                std::scoped_lock lock(mutex_);
-                if (runtime_process_id_ != process_id ||
-                    runtime_process_.get() != process) {
-                    continue;
+                {
+                    std::scoped_lock lock(mutex_);
+                    if (runtime_process_id_ != process_id ||
+                        runtime_process_.get() != process) {
+                        continue;
+                    }
+
+                    if (explicit_restart) {
+                        if (WaitForSingleObject(process, 0U) == WAIT_TIMEOUT) {
+                            terminate_runtime_locked(
+                                "was restarted from the OBS Tools menu");
+                        } else {
+                            runtime_process_.reset();
+                            runtime_process_id_ = 0U;
+                            runtime_job_.reset();
+                        }
+                        manual_restart_accepted = true;
+                    } else if (
+                        WaitForSingleObject(process, 0U) == WAIT_TIMEOUT) {
+                        publish_locked(
+                            current_flags_.load(
+                                std::memory_order_acquire));
+                    }
                 }
 
-                if (explicit_restart) {
-                    if (WaitForSingleObject(process, 0U) == WAIT_TIMEOUT) {
-                        terminate_runtime_locked(
-                            "was restarted from the OBS Tools menu");
-                    } else {
-                        runtime_process_.reset();
-                        runtime_process_id_ = 0U;
-                        runtime_job_.reset();
-                    }
-                    restart_policy.reset();
-                    retry_deadline = 0U;
+                if (manual_restart_accepted) {
+                    record_manual_restart();
                     blog(
                         LOG_INFO,
                         "[ChatView OBS] Manual HUD restart accepted");
-                } else if (
-                    WaitForSingleObject(process, 0U) == WAIT_TIMEOUT) {
-                    publish_locked(
-                        current_flags_.load(
-                            std::memory_order_acquire));
                 }
                 continue;
             }
@@ -752,8 +862,7 @@ void RuntimeController::supervisor_loop() noexcept
                         "[ChatView OBS] HUD remained stable; restart "
                         "failure counter reset");
                 }
-                restart_policy.reset();
-                retry_deadline = 0U;
+                clear_stable_failure_count();
                 continue;
             }
             if (wait_result == WAIT_FAILED) {
@@ -772,11 +881,12 @@ void RuntimeController::supervisor_loop() noexcept
             }
 
             bool exited = false;
+            std::uint32_t exit_code = kRuntimeExitCodeUnavailable;
             {
                 std::scoped_lock lock(mutex_);
                 if (runtime_process_id_ == process_id &&
                     runtime_process_.get() == process) {
-                    log_process_exit(
+                    exit_code = log_process_exit(
                         runtime_process_.get(), "exited unexpectedly");
                     runtime_process_.reset();
                     runtime_process_id_ = 0U;
@@ -785,7 +895,9 @@ void RuntimeController::supervisor_loop() noexcept
                 }
             }
             if (exited) {
-                record_failure();
+                record_failure(
+                    runtime_restart_reason_from_exit_code(exit_code),
+                    exit_code);
             }
         }
     } catch (const std::exception &error) {
@@ -808,6 +920,29 @@ void RuntimeController::supervisor_loop() noexcept
         if (runtime_job_) {
             TerminateJobObject(runtime_job_.get(), 1U);
         }
+    }
+}
+
+void RuntimeController::update_runtime_telemetry(
+    const RuntimeTelemetrySnapshot &snapshot) noexcept
+{
+    if (!is_valid_runtime_telemetry(snapshot)) {
+        blog(LOG_ERROR, "[ChatView OBS] Invalid HUD runtime telemetry rejected");
+        return;
+    }
+
+    {
+        ExclusiveSrwLockGuard telemetry_lock(runtime_telemetry_lock_);
+        if (runtime_telemetry_state_ == snapshot) {
+            return;
+        }
+        runtime_telemetry_state_ = snapshot;
+    }
+
+    if (!runtime_history_store_.save(snapshot)) {
+        blog(
+            LOG_WARNING,
+            "[ChatView OBS] HUD runtime history could not be persisted");
     }
 }
 

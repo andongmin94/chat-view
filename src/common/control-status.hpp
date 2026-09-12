@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "common/runtime-telemetry.hpp"
+
 #include <Windows.h>
 
 #include <cstdint>
@@ -9,7 +11,7 @@
 namespace chatview {
 
 inline constexpr std::uint32_t kControlStatusMagic = 0x43565354U; // "CVST"
-inline constexpr std::uint32_t kControlStatusVersion = 1U;
+inline constexpr std::uint32_t kControlStatusVersion = 3U;
 
 enum ControlStatusFlag : std::uint32_t {
     ControlStatusNone = 0U,
@@ -20,13 +22,16 @@ enum ControlStatusFlag : std::uint32_t {
     ControlStatusCaptureRisk = 1U << 4U,
     ControlStatusHudRunning = 1U << 5U,
     ControlStatusHudVisible = 1U << 6U,
+    ControlStatusSceneGraphReady = 1U << 7U,
+    ControlStatusDisplayCaptureActive = 1U << 8U,
 };
 
 inline constexpr std::uint32_t kKnownControlStatusFlags =
     ControlStatusStreaming | ControlStatusRecording |
     ControlStatusReplayBuffer | ControlStatusVirtualCamera |
     ControlStatusCaptureRisk | ControlStatusHudRunning |
-    ControlStatusHudVisible;
+    ControlStatusHudVisible | ControlStatusSceneGraphReady |
+    ControlStatusDisplayCaptureActive;
 
 [[nodiscard]] constexpr bool are_valid_control_status_flags(
     std::uint32_t flags) noexcept
@@ -40,10 +45,14 @@ struct ControlStatus {
     volatile LONG sequence;
     std::uint32_t flags;
     std::uint32_t hud_process_id;
-    std::uint32_t reserved32;
+    std::uint32_t runtime_telemetry_flags;
     std::uint64_t generation;
     std::uint64_t updated_tick_ms;
-    std::uint8_t reserved[24]{};
+    std::uint64_t runtime_event_filetime_utc;
+    std::uint32_t last_hud_exit_code;
+    std::uint32_t runtime_restart_reason;
+    std::uint32_t consecutive_runtime_failures;
+    std::uint32_t reserved32;
 };
 
 struct ControlStatusSnapshot {
@@ -51,6 +60,7 @@ struct ControlStatusSnapshot {
     std::uint32_t hud_process_id = 0U;
     std::uint64_t generation = 0U;
     std::uint64_t updated_tick_ms = 0U;
+    RuntimeTelemetrySnapshot runtime_telemetry;
 };
 
 [[nodiscard]] constexpr bool has_control_status_flag(
@@ -63,7 +73,8 @@ struct ControlStatusSnapshot {
 [[nodiscard]] constexpr bool is_valid_control_status_snapshot(
     const ControlStatusSnapshot &snapshot) noexcept
 {
-    if (!are_valid_control_status_flags(snapshot.flags)) {
+    if (!are_valid_control_status_flags(snapshot.flags) ||
+        !is_valid_runtime_telemetry(snapshot.runtime_telemetry)) {
         return false;
     }
 
@@ -74,6 +85,13 @@ struct ControlStatusSnapshot {
     if (visible && !running) {
         return false;
     }
+    const bool scene_graph_ready = has_control_status_flag(
+        snapshot, ControlStatusSceneGraphReady);
+    const bool display_capture_active = has_control_status_flag(
+        snapshot, ControlStatusDisplayCaptureActive);
+    if (display_capture_active && !scene_graph_ready) {
+        return false;
+    }
     return running == (snapshot.hud_process_id != 0U);
 }
 
@@ -81,6 +99,6 @@ static_assert(sizeof(LONG) == sizeof(std::int32_t));
 static_assert(sizeof(ControlStatus) == 64U);
 static_assert(are_valid_control_status_flags(ControlStatusNone));
 static_assert(are_valid_control_status_flags(kKnownControlStatusFlags));
-static_assert(!are_valid_control_status_flags(1U << 7U));
+static_assert(!are_valid_control_status_flags(1U << 9U));
 
 } // namespace chatview

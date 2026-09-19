@@ -2,17 +2,19 @@
 
 #include "common/win32-handle.hpp"
 #include "hud/hud-window.hpp"
+#include "hud/launch-options.hpp"
 #include "hud/native-chat-connection.hpp"
 #include "hud/shared-state-reader.hpp"
 
 #include <Windows.h>
 #include <shellapi.h>
 
-#include <cerrno>
-#include <cstdlib>
 #include <exception>
-#include <limits>
+#include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace {
 
@@ -41,11 +43,22 @@ private:
     bool initialized_ = false;
 };
 
-struct Options {
-    std::wstring mapping_name;
-    std::wstring event_name;
-    std::wstring ready_event_name;
-    DWORD parent_process_id = 0U;
+constexpr int kCompanionQuitHotkey = 0x4351;
+
+class CompanionQuitHotkey final {
+public:
+    bool start() noexcept
+    {
+        registered_ = RegisterHotKey(nullptr, kCompanionQuitHotkey,
+            MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'Q') != FALSE;
+        return registered_;
+    }
+    ~CompanionQuitHotkey()
+    {
+        if (registered_) UnregisterHotKey(nullptr, kCompanionQuitHotkey);
+    }
+private:
+    bool registered_ = false;
 };
 
 void enable_per_monitor_dpi_awareness()
@@ -61,55 +74,32 @@ void enable_per_monitor_dpi_awareness()
     }
 }
 
-bool parse_parent_process_id(const wchar_t *text, DWORD &process_id) noexcept
-{
-    errno = 0;
-    wchar_t *end = nullptr;
-    const unsigned long value = std::wcstoul(text, &end, 10);
-    if (errno == ERANGE || end == nullptr || end == text || *end != L'\0' ||
-        value == 0UL || value > std::numeric_limits<DWORD>::max()) {
-        return false;
-    }
-
-    process_id = static_cast<DWORD>(value);
-    return true;
-}
-
-bool parse_options(Options &options)
+std::optional<chatview::HudLaunchOptions> parse_options()
 {
     int argument_count = 0;
-    wchar_t **arguments = CommandLineToArgvW(GetCommandLineW(), &argument_count);
-    if (arguments == nullptr) {
-        return false;
-    }
-
-    bool valid = true;
-    for (int index = 1; index < argument_count && valid; ++index) {
-        const std::wstring argument = arguments[index];
-        if (argument == L"--mapping" && index + 1 < argument_count) {
-            options.mapping_name = arguments[++index];
-        } else if (argument == L"--event" && index + 1 < argument_count) {
-            options.event_name = arguments[++index];
-        } else if (argument == L"--ready-event" && index + 1 < argument_count) {
-            options.ready_event_name = arguments[++index];
-        } else if (argument == L"--parent" && index + 1 < argument_count) {
-            valid = parse_parent_process_id(arguments[++index], options.parent_process_id);
-        } else {
-            valid = false;
-        }
-    }
-
-    LocalFree(arguments);
-    return valid && !options.mapping_name.empty() && !options.event_name.empty() &&
-           options.parent_process_id != 0U;
+    // Release the shell allocation even if an owning string allocation fails.
+    const std::unique_ptr<wchar_t *, decltype(&LocalFree)> arguments(
+        CommandLineToArgvW(GetCommandLineW(), &argument_count), &LocalFree);
+    if (!arguments || argument_count < 1) return std::nullopt;
+    std::vector<std::wstring_view> values;
+    values.reserve(static_cast<std::size_t>(argument_count - 1));
+    for (int index = 1; index < argument_count; ++index)
+        values.emplace_back(arguments.get()[index]);
+    return chatview::parse_hud_launch_options(values);
 }
 
-bool dispatch_pending_messages(int &exit_code, chatview::NativeChatConnection &chat)
+bool dispatch_pending_messages(int &exit_code, chatview::NativeChatConnection &chat,
+                               bool companion)
 {
     MSG message{};
     while (PeekMessageW(&message, nullptr, 0U, 0U, PM_REMOVE)) {
         if (message.message == WM_QUIT) {
             exit_code = static_cast<int>(message.wParam);
+            return false;
+        }
+        if (companion && !message.hwnd && message.message == WM_HOTKEY &&
+            message.wParam == kCompanionQuitHotkey) {
+            exit_code = 0;
             return false;
         }
         if (chat.dispatch(message)) continue;
@@ -119,17 +109,48 @@ bool dispatch_pending_messages(int &exit_code, chatview::NativeChatConnection &c
     return true;
 }
 
-int run(HINSTANCE instance, const Options &options)
+int run(HINSTANCE instance, const chatview::HudLaunchOptions &options)
 {
+    const bool companion = options.mode == chatview::HudLaunchMode::Companion;
+    chatview::UniqueHandle companion_instance;
+    CompanionQuitHotkey quit_hotkey;
+    if (companion) {
+        const HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\ChatView.Companion");
+        const DWORD error = GetLastError();
+        companion_instance.reset(mutex);
+        if (!companion_instance) return 12;
+        if (error == ERROR_ALREADY_EXISTS) return 13;
+        // This is not the unqualified dual-PC broadcasting product. Never
+        // silently start a private HUD over a composited HDMI broadcast.
+        const int consent = MessageBoxW(nullptr,
+            L"OBS 없이 HUD를 실행하는 개발 검증 모드입니다.\n\n"
+            L"이 모드는 송출 PC의 캡처 상태를 감지하지 않습니다.\n"
+            L"화면 복제·HDMI에는 개인 채팅이 그대로 나갈 수 있습니다.\n"
+            L"영상 경로를 검증하기 전에는 실제 방송에 사용하지 마세요.\n\n"
+            L"연결: Ctrl+Alt+Shift+C / 이동: Ctrl+Alt+Shift+H\n"
+            L"챗뷰 종료: Ctrl+Alt+Shift+Q\n\n개발 검증을 계속할까요?",
+            L"ChatView · 독립 HUD (개발 검증)",
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
+        if (consent != IDYES) return 0;
+        if (!quit_hotkey.start()) {
+            MessageBoxW(nullptr, L"종료 단축키를 등록하지 못해 실행하지 않습니다.",
+                L"ChatView", MB_OK | MB_ICONERROR);
+            return 14;
+        }
+    }
+
     chatview::SharedStateReader state_reader;
-    if (!state_reader.open(
+    if (!companion && !state_reader.open(
             options.mapping_name, options.event_name, options.parent_process_id)) {
         OutputDebugStringW(L"[ChatView HUD] Failed to open controller transport\n");
         return 2;
     }
 
     chatview::UniqueHandle ready_event;
-    if (!options.ready_event_name.empty()) {
+    if (companion) {
+        ready_event.reset(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+        if (!ready_event) return 6;
+    } else if (!options.ready_event_name.empty()) {
         ready_event.reset(OpenEventW(
             EVENT_MODIFY_STATE, FALSE, options.ready_event_name.c_str()));
         if (!ready_event) {
@@ -144,23 +165,24 @@ int run(HINSTANCE instance, const Options &options)
     }
 
     chatview::NativeChatConnection chat(hud_window);
-    hud_window.show_ready();
+    if (!companion) hud_window.show_ready();
 
     chatview::SharedSnapshot initial_snapshot;
-    if (state_reader.read(initial_snapshot)) {
+    if (!companion && state_reader.read(initial_snapshot)) {
         hud_window.apply_state(initial_snapshot);
     }
 
     HANDLE wait_handles[2] = {
-        state_reader.state_changed_event(),
-        state_reader.parent_process(),
+        companion ? ready_event.get() : state_reader.state_changed_event(),
+        companion ? nullptr : state_reader.parent_process(),
     };
-    const DWORD handle_count = wait_handles[1] != nullptr ? 2U : 1U;
+    DWORD handle_count = wait_handles[1] != nullptr ? 2U : 1U;
+    bool open_companion_panel = companion;
 
     int exit_code = 0;
     bool running = true;
     while (running) {
-        if (!dispatch_pending_messages(exit_code, chat)) {
+        if (!dispatch_pending_messages(exit_code, chat, companion)) {
             break;
         }
 
@@ -180,7 +202,15 @@ int run(HINSTANCE instance, const Options &options)
             continue;
         }
 
-        if (wait_result == WAIT_OBJECT_0) {
+        if (open_companion_panel && wait_result == WAIT_OBJECT_0) {
+            open_companion_panel = false;
+            handle_count = 0U;
+            wait_handles[0] = nullptr;
+            chat.open_dialog();
+            continue;
+        }
+
+        if (!companion && wait_result == WAIT_OBJECT_0) {
             chatview::SharedSnapshot snapshot;
             if (state_reader.read(snapshot)) {
                 hud_window.apply_state(snapshot);
@@ -188,7 +218,7 @@ int run(HINSTANCE instance, const Options &options)
             continue;
         }
 
-        if (handle_count == 2U && wait_result == WAIT_OBJECT_0 + 1U) {
+        if (!companion && handle_count == 2U && wait_result == WAIT_OBJECT_0 + 1U) {
             break;
         }
 
@@ -212,8 +242,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
     try {
         enable_per_monitor_dpi_awareness();
 
-        Options options;
-        if (!parse_options(options)) {
+        const auto options = parse_options();
+        if (!options) {
             OutputDebugStringW(L"[ChatView HUD] Invalid command line\n");
             return 1;
         }
@@ -224,7 +254,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
             return 4;
         }
 
-        return run(instance, options);
+        return run(instance, *options);
     } catch (const std::exception &error) {
         OutputDebugStringA(error.what());
         OutputDebugStringW(L"\n[ChatView HUD] Unhandled exception\n");

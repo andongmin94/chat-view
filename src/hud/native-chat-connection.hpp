@@ -16,13 +16,13 @@ public:
     NativeChatConnection(const NativeChatConnection &) = delete;
     NativeChatConnection &operator=(const NativeChatConnection &) = delete;
     bool dispatch(MSG &message) noexcept;
+    void open_dialog() noexcept;
     void tick() noexcept;
     [[nodiscard]] DWORD wait_timeout() const noexcept { return active_ ? 100U : INFINITE; }
     void close() noexcept;
 private:
     friend struct NativeChatConnectionTestAccess;
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
-    void open_dialog() noexcept;
     void connect() noexcept;
     void end(const wchar_t *notice, bool preserve_host = false) noexcept;
     void notice(const wchar_t *text) noexcept;

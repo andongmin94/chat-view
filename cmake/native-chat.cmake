@@ -33,6 +33,23 @@ if(BUILD_TESTING)
     chatview_enable_warnings(chat-view-native-chat-surface-test)
     add_test(NAME chat-view-native-chat-surface COMMAND chat-view-native-chat-surface-test)
     set_tests_properties(chat-view-native-chat-surface PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE)
+
+    add_executable(chat-view-hud-launch-options-test tests/hud-launch-options-test.cpp)
+    target_include_directories(chat-view-hud-launch-options-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_warnings(chat-view-hud-launch-options-test)
+    add_test(NAME chat-view-hud-launch-options COMMAND chat-view-hud-launch-options-test)
+
+    add_executable(chat-view-companion-launch-test tests/companion-launch-test.cpp)
+    target_include_directories(chat-view-companion-launch-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    target_link_libraries(chat-view-companion-launch-test PRIVATE user32)
+    chatview_enable_win32(chat-view-companion-launch-test)
+    chatview_enable_warnings(chat-view-companion-launch-test)
+    add_test(NAME chat-view-companion-launch
+        COMMAND chat-view-companion-launch-test "$<TARGET_FILE:chat-view-hud>")
+    set_tests_properties(chat-view-companion-launch PROPERTIES TIMEOUT 70 RUN_SERIAL TRUE)
+
+    # Same test, limits and exercise counts. Full qualification runs it unfiltered.
+    set_tests_properties(chat-view-hud-resource-soak PROPERTIES LABELS qualification)
 endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/native-chat-delivery.cmake")

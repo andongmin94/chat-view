@@ -1,34 +1,29 @@
 # ChatView development guide
 
-## Start every session here
+## Start here
 
-Read [PRODUCT.md](PRODUCT.md), [docs/architecture.md](docs/architecture.md), [docs/development-plan.md](docs/development-plan.md), then [README.md](README.md). Fetch current refs and relevant CI before writing. A dated handoff is evidence, not proof that refs or tests are unchanged.
+Read [PRODUCT.md](PRODUCT.md), [docs/development-workflow.md](docs/development-workflow.md), [docs/architecture.md](docs/architecture.md), then [docs/development-plan.md](docs/development-plan.md). Read usage and specific contracts only when relevant. Fetch OBS HEAD and relevant checks once before changing code; do not rerun old audits or continuously poll unrelated CI.
 
-## Owner-confirmed constraints (2026-09-12)
+## Owner-confirmed constraints
 
-- Preserve all five product goals in PRODUCT.md. Only an explicit owner decision changes them.
-- CHZZK is the first first-party integration. Do not ask which platform to start with again.
-- In dual-PC operation, OBS is allowed on the streaming PC only. The gaming PC must not need OBS installed or running, including portable/headless OBS or an OBS projector. Do not hide that dependency inside the companion or replace it with another full broadcasting application requirement.
-- The gaming PC may run ChatView's native HUD companion. A clean video path with that companion but without gaming-PC OBS must be demonstrated separately from pairing; it is not implemented yet.
-- OBS is the sole active integration/development branch. Do not start another long-lived preflight, telemetry or probe branch. Use a short-lived PR branch only if a real protection/review requirement needs it, then integrate it promptly. Never bypass protection or force-push.
-- main remains the original Electron product and UX reference, not a native-code merge target. Preserve its single-screen use case without retaining obsolete Electron runtime/IPC compatibility.
+Preserve the five product goals: single-screen private chat; OBS integration with readable local HUD excluded from audience video; dual-PC without OBS on the gaming PC; first-party platform starting with CHZZK; creator-selected public ads with audience-time-related HP and rewards. Only the owner can change these goals. Do not reinterview them.
 
-## Preserve the implemented product
+OBS is the only active development branch. main is the original Electron product/UX reference, not a native merge target. No new long-lived work/probe branches, force pushes, protection bypasses or silent changes to main. Re-read the target ref before updating it.
 
-The existing native HUD, OBS controller, placement/input, recovery, telemetry, diagnostics, packaging and useful tests are assets to extend, not a failed rewrite to discard. The branch consolidation preserves the latest work-branch source/test/build trees. Keep current safeguards until a verified replacement works. Fix assumptions and user-facing claims rather than throwing away their whole modules.
+No installed, portable, hidden or headless OBS/projector on the gaming PC, and no replacement full broadcasting-suite requirement. Reuse the native HUD companion. Independent launch or device pairing is not a clean-video solution. Hiding the HUD is protective degradation, not successful support of a readable private HUD. A render acknowledgement is not viewer exposure, and estimated credit is not a payout.
 
-Private chat HUD, public advertising output and server-side accounting are separate responsibilities. Hiding the HUD is protective degradation, not successful support of a workflow that needs the HUD visible. Pairing is not clean video delivery. A heartbeat is not proof of viewer exposure; an estimate is not a paid reward.
+## Implementation first; proportional verification
 
-Do not spend successive milestones exclusively on diagnostics/retries/preflight/CI tuning while dual-PC, first-party chat and advertising remain indefinitely deferred. Fix failures that block explicit product acceptance tests, and retain honest failure reporting.
+The owner approved the cadence in development-workflow.md on 2026-09-20. Implement coherent user flows and run their relevant checks. Full repeated/resource/installer/capture/package qualification belongs to a distribution candidate, not every small edit. Documentation-only changes must not start the heavyweight Windows job or cancel code verification.
 
-## Implementation rules
+Known release failures stay visible and block the affected release claims, not independent implementation. Privacy/credential/broadcast-crash/financial-integrity issues take priority in their affected paths. Do not loosen test budgets, swallow failures or report skipped checks as passed. Do not consume consecutive milestones expanding diagnostics or waiting for unrelated CI while user flows are missing.
 
-Keep a working end-to-end product while adding each layer. Remove superseded paths when their replacements work; do not retain obsolete interfaces through compatibility layers, fallback architectures or migrations. Check existing dependencies and their documentation/types before adding alternatives. No speculative microservices, empty modules, generic frameworks or one-shot workflows that rewrite product source.
+Preserve the working native rendering, input, placement, recovery and OBS/HUD fault boundary. Keep cloud/network/auth/accounting out of bounded OBS callbacks. Extend the existing program, not a second desktop framework. Use existing maintained dependencies and inspect documentation/types before adding alternatives. No speculative abstractions, empty scaffolds, compatibility layers or migrations for obsolete interfaces. Remove replaced paths with a working replacement.
 
-Keep OBS callbacks bounded; browser/cloud/auth/accounting work must not block them. Never commit secrets, provider credentials, private chat or payout information. Use scoped revocable authorization and synthetic fixtures explicitly isolated from real ad evidence and rewards.
+Never commit or log provider secrets, display credentials, private messages or payout data. Synthetic fixtures are not real-provider or paid-exposure evidence.
 
-## Integration and handoff
+## Durable, short handoff
 
-Consolidation of known development work is not approval for public release. Report source preservation, tests actually run and known CI failures separately. Before deleting any old work branch, verify its current head is an ancestor of OBS; keep main and OBS. Never delete a branch just because its name looks temporary.
+Update development-plan.md in the same coherent change: changed user behavior, exact source/CI evidence, known failures with affected scope, and one next user flow. Put product authority only in PRODUCT.md, cadence only in development-workflow.md, architecture only in architecture.md, and current status only in development-plan.md. Technical contracts may explain current mechanisms but must not redefine goals, priority or release policy.
 
-End each session by updating docs/development-plan.md with changed behavior, starting/resulting commits, actual test evidence, failures and the next acceptance test. Architecture changes must explain their effect on G1-G5. Keep confirmed requirements, proposals and implementation facts distinct.
+Do not create a new Markdown report per session or duplicate CI transcripts in several documents. Completed investigations belong in Git history; retain only still-needed contracts and unresolved evidence. Never claim a remote update when only a local patch exists. Developer builds, routine passes, full qualification and live/hardware acceptance are different states.

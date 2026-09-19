@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <Windows.h>
-#include <WebView2.h>
+#include <objbase.h>
 #include <wrl/client.h>
+#include <WebView2.h>
 #include <memory>
 #include <string>
 

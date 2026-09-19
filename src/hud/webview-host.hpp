@@ -71,11 +71,18 @@ private:
     void post_navigation_failure(
         COREWEBVIEW2_WEB_ERROR_STATUS status) const noexcept;
     void apply_host_state() noexcept;
+    // Only host-authored content; never exposed to URL settings or web pages.
+    [[nodiscard]] bool navigate_local_document(
+        const wchar_t *html, std::wstring &document_url) noexcept;
+    HRESULT handle_local_document_request(
+        ICoreWebView2WebResourceRequestedEventArgs *args) noexcept;
 
     HWND window_ = nullptr;
     bool ready_ = false;
     bool editing_ = false;
     std::wstring current_url_;
+    std::wstring local_document_url_;
+    std::string local_document_utf8_;
     std::wstring status_text_;
     std::wstring status_tone_ = L"#aeb0b2";
     std::shared_ptr<CallbackState> callback_state_;
@@ -97,6 +104,7 @@ private:
     EventRegistrationToken process_failed_token_{};
     EventRegistrationToken web_message_received_token_{};
     EventRegistrationToken download_starting_token_{};
+    EventRegistrationToken local_document_requested_token_{};
 };
 
 } // namespace chatview

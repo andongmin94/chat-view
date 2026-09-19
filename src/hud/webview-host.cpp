@@ -14,6 +14,7 @@
 #include <wrl.h>
 #include <wrl/event.h>
 
+#include <array>
 #include <cstdint>
 #include <cwchar>
 #include <string>
@@ -25,11 +26,16 @@ namespace {
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 
+// Reserved virtual origin, answered entirely from memory. This is not a server.
+constexpr wchar_t kLocalDocumentOrigin[] = L"https://chatview.invalid/";
+constexpr wchar_t kLocalDocumentFilter[] = L"https://chatview.invalid/*";
+
 constexpr wchar_t kSetupPage[] = LR"HTML(
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ChatView setup</title>
 <style>
@@ -350,10 +356,15 @@ void WebViewHost::close() noexcept
 
     ready_ = false;
     current_url_.clear();
+    local_document_url_.clear();
+    local_document_utf8_.clear();
     if (webview4_ && download_starting_token_.value != 0) {
         webview4_->remove_DownloadStarting(download_starting_token_);
     }
     if (webview_) {
+        if (local_document_requested_token_.value != 0) {
+            webview_->remove_WebResourceRequested(local_document_requested_token_);
+        }
         if (navigation_starting_token_.value != 0) {
             webview_->remove_NavigationStarting(navigation_starting_token_);
         }
@@ -385,6 +396,7 @@ void WebViewHost::close() noexcept
     process_failed_token_ = {};
     web_message_received_token_ = {};
     download_starting_token_ = {};
+    local_document_requested_token_ = {};
 
     if (controller_) {
         controller_->Close();
@@ -443,6 +455,9 @@ bool WebViewHost::navigate(const std::wstring &url) noexcept
         return false;
     }
 
+    // Invalidate private-document ownership before queuing external navigation.
+    local_document_url_.clear();
+    local_document_utf8_.clear();
     current_url_ = normalized;
     return SUCCEEDED(webview_->Navigate(current_url_.c_str()));
 }
@@ -453,7 +468,8 @@ bool WebViewHost::reload() noexcept
         return false;
     }
     if (current_url_.empty()) {
-        return SUCCEEDED(webview_->NavigateToString(kSetupPage));
+        std::wstring document_url;
+        return navigate_local_document(kSetupPage, document_url);
     }
     return SUCCEEDED(webview_->Navigate(current_url_.c_str()));
 }
@@ -462,11 +478,87 @@ void WebViewHost::show_setup_page() noexcept
 {
     current_url_.clear();
     if (ready_ && webview_) {
-        const HRESULT result = webview_->NavigateToString(kSetupPage);
-        if (FAILED(result)) {
-            post_failure(result);
+        std::wstring document_url;
+        if (!navigate_local_document(kSetupPage, document_url)) {
+            post_failure(E_FAIL);
         }
     }
+}
+
+bool WebViewHost::navigate_local_document(
+    const wchar_t *html, std::wstring &document_url) noexcept
+{
+    if (!ready_ || !webview_ || html == nullptr) return false;
+    try {
+        const size_t characters = wcslen(html);
+        if (characters == 0U || characters > 2U * 1024U * 1024U) return false;
+        const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+            html, static_cast<int>(characters), nullptr, 0, nullptr, nullptr);
+        if (size <= 0) return false;
+        std::string bytes(static_cast<size_t>(size), '\0');
+        if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, html,
+                static_cast<int>(characters), bytes.data(), size, nullptr, nullptr) != size) return false;
+        GUID id{};
+        std::array<wchar_t, 39> guid{};
+        if (FAILED(CoCreateGuid(&id)) || StringFromGUID2(id, guid.data(),
+                static_cast<int>(guid.size())) != 39) return false;
+        // A fresh URL prevents messages from a previous local document being
+        // accepted during an asynchronous replacement, even before it loads.
+        std::wstring url = kLocalDocumentOrigin;
+        url.append(guid.data() + 1, 36U);
+        url += L"/index.html";
+        document_url = url; // Bind the caller before Navigate can raise events.
+        if (FAILED(webview_->Stop())) return false;
+        current_url_.clear();
+        local_document_url_ = std::move(url);
+        local_document_utf8_ = std::move(bytes);
+        if (SUCCEEDED(webview_->Navigate(local_document_url_.c_str()))) return true;
+    } catch (...) {
+        // Allocation/conversion failures must not cross a Win32 callback.
+    }
+    local_document_url_.clear();
+    local_document_utf8_.clear();
+    return false;
+}
+
+HRESULT WebViewHost::handle_local_document_request(
+    ICoreWebView2WebResourceRequestedEventArgs *args) noexcept
+{
+    // The registered filter covers this reserved origin only, not provider I/O.
+    // Every request receives a local response, including stale/unknown paths.
+    ComPtr<ICoreWebView2WebResourceRequest> request;
+    HRESULT result = args->get_Request(&request);
+    if (FAILED(result)) return result;
+    LPWSTR uri = nullptr;
+    LPWSTR method = nullptr;
+    COREWEBVIEW2_WEB_RESOURCE_CONTEXT context{};
+    const bool allowed = ready_ && current_url_.empty() &&
+        !local_document_url_.empty() &&
+        SUCCEEDED(args->get_ResourceContext(&context)) &&
+        context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT &&
+        SUCCEEDED(request->get_Uri(&uri)) && uri && local_document_url_ == uri &&
+        SUCCEEDED(request->get_Method(&method)) && method && wcscmp(method, L"GET") == 0;
+    CoTaskMemFree(uri);
+    CoTaskMemFree(method);
+    ComPtr<IStream> content;
+    if (allowed) {
+        result = CreateStreamOnHGlobal(nullptr, TRUE, &content);
+        if (FAILED(result)) return result;
+        ULONG written = 0U;
+        const ULONG size = static_cast<ULONG>(local_document_utf8_.size());
+        result = content->Write(local_document_utf8_.data(), size, &written);
+        if (FAILED(result) || written != size) return FAILED(result) ? result : E_FAIL;
+        LARGE_INTEGER beginning{};
+        result = content->Seek(beginning, STREAM_SEEK_SET, nullptr);
+        if (FAILED(result)) return result;
+    }
+    ComPtr<ICoreWebView2WebResourceResponse> response;
+    result = environment_->CreateWebResourceResponse(content.Get(),
+        allowed ? 200 : 404, allowed ? L"OK" : L"Not Found",
+        L"Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n"
+        L"X-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n"
+        L"Content-Security-Policy: frame-ancestors 'none'\r\n", &response);
+    return FAILED(result) ? result : args->put_Response(response.Get());
 }
 
 void WebViewHost::set_host_state(
@@ -707,6 +799,22 @@ HRESULT WebViewHost::on_controller_created(
     }
 
     const std::shared_ptr<CallbackState> state = callback_state_;
+    result = webview_->AddWebResourceRequestedFilter(
+        kLocalDocumentFilter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
+    result = webview_->add_WebResourceRequested(
+        Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+            [state](ICoreWebView2 *, ICoreWebView2WebResourceRequestedEventArgs *args) -> HRESULT {
+                return state->owner
+                    ? state->owner->handle_local_document_request(args) : E_ABORT;
+            }).Get(), &local_document_requested_token_);
+    if (FAILED(result)) {
+        post_failure(result);
+        return S_OK;
+    }
     result = webview_->add_NavigationStarting(
         Callback<ICoreWebView2NavigationStartingEventHandler>(
             [state](
@@ -953,6 +1061,9 @@ bool WebViewHost::is_navigation_allowed(
         return false;
     }
 
+    if (!local_document_url_.empty()) {
+        return current_url_.empty() && local_document_url_ == url;
+    }
     if (wcscmp(url, L"about:blank") == 0) {
         return current_url_.empty();
     }

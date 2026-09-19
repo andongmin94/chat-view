@@ -1,46 +1,39 @@
 # Development plan and session handoff
 
-Updated: 2026-09-20 (Asia/Seoul). Read AGENTS.md, PRODUCT.md and docs/architecture.md; re-fetch OBS refs/checks before writing.
+Updated: 2026-09-20 (Asia/Seoul). Read AGENTS.md, PRODUCT.md and architecture.md; re-fetch OBS refs/checks before writing.
 
 ## Confirmed direction
 
-OBS is the only active branch; main is the original product/UX reference. Preserve all five goals: one-screen private chat HUD; OBS integration with stream exclusion; dual-PC with NO OBS on the gaming PC; first-party CHZZK/platform; creator-selected public advertising with audience-time-related HP and rewards. Pairing is not clean video, render/message counts are not audience exposure, and estimates are not payouts. The native product and its capture safeguards stay functional while replacements are built.
+OBS is the only active branch; main is the original product/UX reference. Preserve the five goals: one-screen private chat HUD; OBS with stream exclusion; dual-PC with NO OBS on the gaming PC; own CHZZK/platform; creator-selected public ads with audience-time-related HP/rewards. Pairing is not clean video; render/message counts are not audience exposure; estimates are not payouts. Do not reinterview the owner about CHZZK or gaming-PC OBS.
 
-## Current slice: P2a native display, not complete account/HUD integration
+## Current work: finish the interrupted P2a native display
 
-Starting commit: 6598edc1feeda288ecb6c5063e72c87f94957698. Its Windows build #282 completed successfully (re-fetched this session), including official OBS installation/runtime/capture qualification and package upload:
-https://github.com/andongmin94/chat-view/actions/runs/35452295314
+Starting remote: 170a2dddd77b72746dbb314b46fbe31c2fbe4479. The interrupted session had already added NativeChatSurface, shared browser/native text renderer, bounded display DTO receiver and real-WebView2 CTest. It had not connected account/device authorization or a network worker, and did not enable a user-facing mode. Preserve this work rather than rebuilding it.
 
-P2a adds NativeChatSurface on the existing WebViewHost/DirectComposition/WebView2 engine. The browser and native document use one shared chat-renderer.js; browser SSE setup stays separate. CMake embeds the shared renderer and native bridge into a nonce-bound local document. No hosted URL, arbitrary external-page privilege, bundled developer secret, new desktop framework or npm dependency is added. Existing native settings, capture interlock, input/placement and OBS-parent lifecycle are unchanged.
+Its Windows #286 / 35456426730 compiled, passed the existing 23 tests and failed the new native display test. Logs establish the cause: NavigateToString generated a data: navigation URI; the old about:blank guard cancelled it before script execution. Repair replaces the internal loading path with exact host-owned memory documents served through WebView2 WebResourceRequested. Setup/chat/clearing share that path. Normal external chat URL validation and capture policy are not widened. Source ownership now includes the exact fresh document identity as well as host/nonce/navigation correlation.
 
-The native display API opens only on a ready host, waits for document load plus its correlated readiness message, and accepts bounded versioned JSON with PostWebMessageAsJson. It rejects wrong document/pre-handshake/closed-host/invalid JSON/oversized input. The receiver accepts trusted bridge events, validates text/count/time bounds, renders text nodes and clears on invalid data, revoke, delivery loss or unload. Host-state messages do not refresh chat liveness. Navigation and process loss invalidate the binding; recreation needs a fresh nonce. Ready/rendered counts are diagnostics, never device authentication or ad evidence.
+The repair removes temporary test URI/script tracing and adds real DOM assertions, forbidden/stale URL cancellation, successful setup loading, immediate delivery invalidation and queued clear/reopen checks. No new npm/native package, framework, local port, compatibility shim or workflow is introduced. The existing Windows workflow performs compilation, all CTests/repeats and official OBS/package validation. See [native-chat-display.md](native-chat-display.md) for the implementation contract.
 
-**Exact scope:** display implementation plus a real-WebView2 test harness. The class is compiled with the HUD, but no user-facing first-party mode is enabled and the CHZZK socket is NOT yet connected to the native process. Do not call this real CHZZK-to-HUD acceptance or OBS-free two-PC support. The developer probe is not promoted to a production server and is not bundled in the native installer. See [native-chat-display.md](native-chat-display.md).
+**At authoring this repair has not yet run on Windows.** Check its exact commit's run before claiming success. Local work verified the original host source/header against their Git blob SHA and reviewed the bounded replacement; no local Windows/OBS execution or real-channel verification is claimed. Do not mistake the earlier 20 DOM/bridge tests for this native test.
 
-## Tests for this slice
+## Existing validated layers
 
-Local Node 22.16: 20 new shared-renderer/native-receiver tests passed; generated module syntax checked. Existing source text used for edits was verified against Git blob hashes before changing it. Local network/package downloads and Windows execution are unavailable, so local results are DOM/bridge simulations, not complete repository or native execution.
+- Native Q1-Q3 at a7ea2e7: Windows #274 passed 23 tests/repeats and official OBS validation. Old downloadable patches are obsolete.
+- CHZZK P1-01a/b: reusable API/auth/socket/session/parser and authenticated bounded loopback preview are implemented. Client secrets stay in developer/service configuration. Real NAVER authorization remains an open external acceptance test.
+- 3d801f2 / CHZZK #7: four Windows/Linux x Node22/24 jobs passed locked install, audit, 82 tests, strict types and unchanged manifests. https://github.com/andongmin94/chat-view/actions/runs/35452154580
+- Native Windows #282 / 6598edc: all stages passed. https://github.com/andongmin94/chat-view/actions/runs/35452295314
+- P2a added 20 shared-renderer/native-receiver tests; consult its contract CI separately. It changed native files, so #282 does not validate P2a.
+- 170a2dd / Windows #286: diagnosed native-document loading failure. https://github.com/andongmin94/chat-view/actions/runs/35456426730
 
-The existing CHZZK workflow must run its full suite (including the 20 new tests), strict types, locked installation/audit and manifest stability. Existing preview tests now import the shared renderer and verify its new asset is same-browser protected; there is no compatibility re-export at the old path. The preview asset map owns routing instead of duplicating its allowlist in the probe.
+Historical dependency failures and the closed parser/type-check recovery are in dependency-validation.md. Do not reopen that investigation. Native #271 capture intermittency was not diagnosed by later successes; investigate only if it recurs and blocks a product test. Never disable privacy assertions to pass CI.
 
-Windows CTest gains chat-view-native-chat-surface using the actual production WebViewHost with synthetic Unicode and HTML-looking strings. It checks actual document readiness/render-count acknowledgements, schema failure, revoke clearing, input bounds, setup/external navigation isolation, reopen and host destruction/recreation. It runs with the existing full Windows workflow and repeat tests, not a new ad-hoc workflow. This authoring record precedes that commit's CI; verify the exact run before calling it passed. No actual channel, GPU/gameplay/capture card, paid exposure or production identity was tested.
+## Product acceptance after P2a passes
 
-## Previously closed gates — do not restart these
+1. Feed NativeChatSurface with a bounded authenticated chat-delivery worker and scoped revocable creator/device access. Keep OAuth/provider secrets server-side. Do not promote the loopback probe to public service or allow arbitrary pages/native commands. Reuse the implemented session/renderer; no further generic rendering diagnostics milestone.
+2. In parallel, real authorized CHZZK login -> connected/subscribed -> Unicode chat -> stop/reconnect/revoke. Credentials only in private configuration. A mock/server fixture is not a live pass.
+3. Extend native lifecycle to gaming-PC companion without local OBS, and separately qualify HUD-free video while HUD stays readable. Record wiring, OS/GPU/game mode/HDR/refresh/latency/resources. No OBS/projector workaround on gaming PC.
+4. Selected public ad -> bounded exposure evidence -> server HP -> reward record, then a paid pilot only after metric rights, budget/idempotency/fraud and payout rules. Synthetic events never create payable credit.
 
-- Q1-Q3 native quality fixes at a7ea2e7: Windows #274 passed 23 tests plus repeats and official OBS qualification. Old downloadable patches are obsolete.
-- CHZZK P1-01a/b: reusable authorization/API/socket/session/parser, bounded authenticated loopback SSE and first-party browser renderer are implemented. Duplicate starts/reconnect/revoke/expiry behavior is covered. Real NAVER account/channel acceptance remains open.
-- 3d801f2 CHZZK contract #7: Windows/Linux x Node 22/24 all passed npm ci, full audit (zero reported findings at the time), 82 tests, strict types and manifest stability. Locked graph and standard tsconfig are retained:
-  https://github.com/andongmin94/chat-view/actions/runs/35452154580
-- #281 was cancelled by the later documentation update; #282 at 6598edc succeeded. Do not describe #281 as passed or #282 as still running.
+Still absent: completed user-facing CHZZK-to-HUD connection, production accounts/backend, authenticated gaming companion, verified OBS-free two-PC clean feed, public campaigns and reward/payout system. The display class is not a substitute for these goals.
 
-Dependency failure/recovery details remain in dependency-validation.md. The unavailable parseuri 2.0.0 experiment and temporary registry-inspection step are not current work. The structured Manager/Engine.IO options route and exact locked graph passed #7. Do not loosen audit/type checks or launch another parser selection project. Historical native #271 capture intermittency was not diagnosed by later passes; investigate only if it recurs and blocks a product test.
-
-## Next concrete product boundary
-
-After this slice's full CI, implement creator/device authorization and an authenticated bounded chat-delivery worker that feeds NativeChatSurface. Provider app secrets/tokens must stay on the service, and the native receiver must have revocable, scoped session access. Do not ask ordinary streamers for developer credentials, promote the loopback probe to production, introduce an unauthenticated local message port, or allow its HTTP URL through external-page settings. Avoid more generic rendering diagnostics; connect the implemented display layer to the product.
-
-Real-provider test remains separate: authorized CHZZK login -> actual connected/subscribed -> Unicode message -> stop/reconnect/revoke. Owner-provided app credentials belong only in private configuration. Lack of them does not prevent independent product code, nor permit a simulated pass.
-
-Then extend native lifecycle ownership for the gaming-PC companion without local OBS, and qualify a separate HUD-free video feed on real hardware. Record wiring/OS/GPU/game mode/HDR/refresh/latency/resources plus simultaneous local readability and recorded exclusion. Keep public ad rendering separate from private HUD data; follow with selection -> evidence -> server HP -> reward records before a bounded paid pilot.
-
-Remaining owner input: real developer authorization, representative dual-PC hardware, HP/rate/payout rules and hosting assets. The goals, CHZZK priority, sole OBS branch and gaming-PC OBS prohibition are already settled.
+Remaining owner inputs: real developer authorization, representative dual-PC hardware, HP/rate/payout semantics and hosting assets. Their absence does not stop unrelated code work or permit inventing completion. End each session with exact changed/tested commit and run evidence.

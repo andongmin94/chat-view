@@ -1,78 +1,44 @@
 # ChatView — OBS-based broadcasting platform
 
-챗뷰는 하나의 화면에서 게임·작업과 채팅을 함께 보는 개인용 투명 HUD를 출발점으로, 원컴·투컴 방송 지원, 자체 채팅 경험, 스트리머가 선택하는 광고와 시청시간 기반 HP·수익을 연결하는 플랫폼을 목표로 합니다.
+챗뷰는 스트리머가 하나의 스크린에서 게임·작업과 채팅을 함께 보는 OBS 기반 방송지원 플랫폼입니다. 개인 채팅 HUD는 스트리머에게만, 선택한 광고는 시청자에게 표시합니다. 치지직 자체 연동부터 시작하고, 게임 PC에 OBS가 없는 투컴과 시청시간 기반 광고 HP·수익을 목표로 합니다.
 
-**Start here:** [Product goals](PRODUCT.md) · [Architecture](docs/architecture.md) · [Development handoff](docs/development-plan.md) · [Contributor instructions](AGENTS.md)
+**개발 브랜치: OBS.** main은 초기 Electron 제품의 사용 경험 참조이며 병합·재개발 대상이 아닙니다.
 
-**Active development: OBS.** main remains the original Electron product and UX reference, not a native merge target. CHZZK is the first own integration. Dual-PC operation must not require OBS on the gaming PC. Do not mistake today's single-PC implementation for the final product scope.
+## 문서의 역할
 
-## Current implementation
+[제품 목표](PRODUCT.md)는 최종 제품과 확정 제약, [개발 운영](docs/development-workflow.md)은 구현·검증 방식, [아키텍처](docs/architecture.md)는 책임과 구조를 정의합니다. **현재 구현·검증 결과·다음 작업은 [개발 현황](docs/development-plan.md) 한 곳**에 기록합니다. 새 개발 세션은 [AGENTS.md](AGENTS.md)부터 읽습니다.
 
-The native Windows branch provides an OBS controller, separate Win32/WebView2 transparent HUD, configuration/diagnostics, external chat URL normalization, click-through/edit modes, DPI/placement persistence, bounded recovery and tests. Inspect the actual code commit's CI before selecting a package; [the handoff](docs/development-plan.md) separates exact validation results, documentation-only commits and unresolved hardware checks.
+## 현재 사용할 수 있는 개발 경로
 
-The [CHZZK integration](platform/README.md) authenticates a creator, subscribes to CHAT events and produces bounded, validated messages. A [scoped display gateway](docs/display-delivery.md) shares that upstream session with read-only displays. The [native display client](docs/native-display-client.md) connects the gateway to the existing transparent HUD through WinHTTP and the shared first-party text renderer. The developer browser preview remains available, but its web page is not loaded into the native viewer and no provider secret is sent to the HUD.
+기존 네이티브 OBS 제어기·투명 WebView2 HUD·클릭 통과·위치/크기/DPI 저장·제한된 복구·설정/진단 기능이 있습니다. 치지직 인증/채팅 구독 모듈과 챗뷰 자체 렌더러, 읽기 전용 서버 전달, WinHTTP 수신기와 네이티브 연결창도 구현되어 있습니다.
 
-**This is a developer connection path, not a deployed multi-user service.** Real CHZZK authorization/messages, production accounts and device renewal, the OBS-independent gaming companion, demonstrated OBS-free dual-PC clean video, public ad campaigns, HP accounting and payouts remain separate open gates. Synthetic tests and CI passes do not certify those capabilities.
+같은 `chat-view-hud.exe`를 `--companion`으로 실행하면 로컬 OBS 부모나 공유 메모리 없이 시작하도록 구현했습니다. 개발 경고 동의 후 기존 연결창을 열며, 중복 companion 실행을 막고 **Ctrl+Alt+Shift+Q**로 종료합니다. OBS 제어 모드는 기존 부모 종료 연동을 유지합니다. 잘못된 OBS 실행 인수를 독립 모드로 바꾸지 않습니다.
 
-## Install a validated native package
+**개발자용 연결 경로이지 배포된 다중 사용자 서비스가 아닙니다.** 실계정 치지직 전체 검증, 일반 사용자용 기기 등록/자동 갱신, 송출 PC 연동과 검증된 투컴 영상 전달, 광고·HP·수익은 아직 완료되지 않았습니다. 독립 실행만으로 HDMI에서 HUD가 제외되지는 않습니다. 실제 방송에 쓰기 전 해당 영상 구성을 검증해야 합니다.
 
-Get `chat-view-obs-windows-x64.zip` from a successful Windows workflow, extract it, close OBS and run `install.cmd` with administrator approval. Start OBS and open **Tools → ChatView Settings...**. The default target is `C:\Program Files\obs-studio`.
+## 개발용 자체 채팅 연결
 
-For another root, run PowerShell in the package:
+[platform/README.md](platform/README.md)에 따라 비공개 개발자 설정으로 로컬 연동 도구를 실행하고 채널을 승인합니다. 관리 화면에서 **표시 연결용 1회 키 발급**을 선택합니다. HUD의 **Ctrl+Alt+Shift+C** 연결창에서 서비스 origin과 표시 키를 입력합니다. HTTPS가 기본이며 로컬 도구만 명시적 허용 후 `http://127.0.0.1:47831`을 사용합니다.
 
-```powershell
-./install.ps1 -ObsPath "D:\Apps\obs-studio"
-```
+표시 키는 치지직 비밀번호·개발자 비밀키가 아닙니다. 입력값은 사용/창 닫기 시 비우고 저장하지 않습니다. 창을 닫아도 연결은 유지되며 **연결 종료**는 개인 채팅을 지웁니다. 만료·철회·연결 손실도 전달을 종료합니다. 현재 5분 이하 표시 권한은 개발 계약이며, 최종 사용자에게 수동 재연결을 반복시키는 제품 목표가 아닙니다.
 
-Use `uninstall.cmd` or `uninstall.ps1 -ObsPath "D:\Apps\obs-studio"` to remove installation files. `%LOCALAPPDATA%\ChatView` settings remain. The installer checks the manifest, WebView2 Runtime, local capture exclusion and plugin loading. These checks do not establish support for every OBS source, game, GPU or HDMI/capture-card path.
+실행 방식·보안 경계는 [네이티브 표시 계약](docs/native-display-client.md), 서버 헤더/경로는 [전달 계약](docs/display-delivery.md)을 봅니다. 일반 스트리머에게 개발자 비밀키나 이 로컬 도구를 배포하지 않습니다.
 
-## Connect first-party chat — developer validation
+## 기존 외부 페이지와 창 조작
 
-With the OBS-started HUD running, press **Ctrl + Alt + Shift + C** to open its native connection panel. Enter the service origin and a fresh one-use display key from the creator-authorized management page, then choose **연결**. HTTPS is required by default. The existing loopback developer probe requires explicit local-server opt-in and the literal `http://127.0.0.1:47831` origin; localhost aliases and LAN HTTP are not accepted.
+OBS의 **Tools → ChatView Settings...**에서 치지직·SOOP·YouTube 방송/채팅 URL 또는 위플랩 페이지를 설정할 수 있습니다. 허용된 HTTPS 호스트·경로를 정규화하며 새 창과 다른 문서 이동은 제한됩니다. 자체 채팅 연결에 쓰는 로컬 관리 URL을 이 설정에 넣지 않습니다. 설정 변경으로 문서가 교체되면 기존 자체 채팅 전달을 끝내고 다른 페이지로 메시지를 보내지 않습니다.
 
-The masked key is cleared on use/close and is not saved. Closing the panel keeps the connection; **연결 종료** clears the private display. Server revocation, expired authorization or transport loss also end delivery. These short display leases are not a requirement for final users to reconnect manually every five minutes: durable account/device enrollment and renewal are not implemented yet.
+**Ctrl+Alt+Shift+H**로 편집 모드를 켜고 이동/크기를 조정한 뒤 다시 잠급니다. 잠금 모드는 비활성·클릭 통과를 사용하며 위치는 `%LOCALAPPDATA%\ChatView\hud.ini`에 저장합니다. 상태 문구 `READY TO STREAM`은 현재 ChatView 내부 판정이지 방송 전체의 준비·전송 성공 보장이 아닙니다.
 
-See [the native connection instructions and test scope](docs/native-display-client.md) and [private developer setup](platform/README.md). Ordinary streamers must not receive developer client secrets or be asked to run this probe as a public server. Never paste provider credentials into the connection panel, chat, commits or diagnostics. Its key is a limited chat-read capability, not a CHZZK password or access token.
+## 캡처와 배포 제한
 
-## Configure the existing external-page HUD
+현재 캡처 위험 정책은 Display Capture 상황에서 HUD를 숨길 수 있습니다. 이는 보호 동작이며, 스트리머가 계속 읽는 상태로 송출에서 제외되는 최종 요구를 충족했다는 뜻은 아닙니다. Windows 캡처 제외 설정, 장치 연결, 렌더링 성공은 물리적 HDMI 영상의 비공개 보장이 아닙니다.
 
-Enter a supported broadcast or chat URL in **Tools → ChatView Settings...**:
+배포 패키지는 **해당 커밋의 전체 qualification이 성공한 결과만** 사용합니다. 일반 development CI는 패키지를 올리지 않습니다. 설치하려면 검증된 패키지를 풀고 OBS를 종료한 뒤 `install.cmd`를 실행합니다. 기본 OBS 경로는 `C:\Program Files\obs-studio`이며 다른 경로는 `install.ps1 -ObsPath`로 지정합니다. `uninstall.cmd`로 제거하며 사용자 설정은 유지됩니다. 이 설치기는 게임 PC용 배포 설치기가 아닙니다.
 
-```text
-https://chzzk.naver.com/live/<channel-id>
-https://chzzk.naver.com/chat/<channel-id>
-https://www.sooplive.com/station/<channel-id>
-https://play.sooplive.com/<channel-id>/<broadcast-number>
-https://play.sooplive.com/<channel-id>?vtype=chat
-https://www.youtube.com/watch?v=<video-id>
-https://youtu.be/<video-id>
-https://www.youtube.com/live_chat?is_popout=1&v=<video-id>
-https://weflab.com/page/...
-```
+## 개발 빌드
 
-Saving normalizes and applies supported HTTPS/host/path/identifier combinations without restarting OBS. Navigation is bound to the configured chat document and new windows are suppressed. Changing these settings replaces the owned first-party document and ends its old delivery; private chat is never forwarded into the replacement external page. This existing layer is retained until its first-party replacement is accepted end to end.
-
-The current **READY TO STREAM / BLOCKED** label describes local ChatView checks, not audio/encoding/service delivery or actual viewer exposure. Complete provider login inside the restricted external viewer is not guaranteed. Do not enter the developer probe URL here: native first-party delivery uses the separate connection panel, not an exception to external-page URL policy.
-
-## Move, resize and lock
-
-Use **Ctrl + Alt + Shift + H** to toggle edit mode, drag the header or edges/corners, then toggle again to save and restore non-activating click-through behavior. Bounds are monitor-relative DIP values in `%LOCALAPPDATA%\ChatView\hud.ini`, clamped to an available display after monitor changes. Control Center interaction requests are validated by the HUD itself.
-
-## Runtime and capture limitations
-
-OBS loads `chat-view-obs.dll`, which supervises external `chat-view-hud.exe`; `chat-view-config.exe` is the native control center. The current local HUD exits with its OBS parent. Gaming-PC-independent session ownership remains to implement, reusing the existing renderer/input/placement/recovery modules. The new network worker is independent of OBS and WebView objects, but that does not make the shipping executable an independent companion yet.
-
-`WDA_EXCLUDEFROMCAPTURE` is an OS capture hint, not a way to remove pixels already composited into HDMI video. The current Display Capture interlock may hide the HUD during output risk. This is protective degradation, **not** completion of the requirement that the streamer keep reading the HUD while it is absent from the broadcast.
-
-Qualify actual-HUD visibility and stream exclusion together. Single-PC and dual-PC tests are separate; gaming-PC OBS is prohibited for the dual-PC requirement. Pairing, native text delivery and synthetic compositor fixtures are not proof of a clean hardware video feed. Do not bypass protection to claim support.
-
-## Diagnostics
-
-Use **Export diagnostics** in Control Center or **Tools → Export ChatView Diagnostics...**. The active local exporter includes status/restart summaries and ChatView-tagged log data, omits configured URLs/chat text and redacts profile paths/IPC names. It uploads nothing automatically. Review exports before sharing. Native chat connections are separate user-initiated network activity; their tokens, URLs, server error bodies and chat text are not added to product logs. Production account operation requires its own data handling.
-
-## Native build
-
-Windows 10 version 2004+, Visual Studio 2026 C++ tools, Windows SDK 10.0.26100, CMake 3.28+, an OBS development prefix and restored WebView2 SDK are required. The current workflow pins OBS 32.2.2 Windows x64; inspect it before upgrading. With testing enabled, also install a supported Node 22.16+ or Node 24 and the locked platform dependencies for the actual native HTTP/WebSocket fixture. Node is a development/test prerequisite, not a new runtime shipped to streamers.
+현재 설정은 Windows x64, Windows 10 2004+, Visual Studio 2026 C++ 도구, SDK 10.0.26100, CMake 3.28+, OBS 개발 라이브러리와 WebView2 SDK를 사용합니다. 버전은 실제 workflow를 확인합니다. Node는 개발용 도구/통합 테스트에 필요하며 네이티브 사용자 실행 환경에 추가한 런타임이 아닙니다.
 
 ```powershell
 npm --prefix platform ci --ignore-scripts
@@ -80,10 +46,8 @@ $env:OBS_CMAKE_PREFIX = "C:\path\to\obs-development-prefix"
 $env:WEBVIEW2_SDK_DIR = ./scripts/restore-webview2.ps1
 cmake --preset windows-x64
 cmake --build --preset windows-x64-relwithdebinfo
-ctest --test-dir build/windows-x64 --build-config RelWithDebInfo --output-on-failure
-cmake --install build/windows-x64 --config RelWithDebInfo
+ctest --test-dir build/windows-x64 --build-config RelWithDebInfo --label-exclude qualification --output-on-failure
+./build/windows-x64/rundir/obs-plugins/64bit/chat-view-hud.exe --companion
 ```
 
-The install tree is `dist/`; `.github/workflows/windows-build.yml` defines packaging/installer/official-OBS checks. Native CTest alone is not a complete package workflow. The separate `CHZZK contract` workflow audits the locked graph and tests the provider/session/gateway/renderer and strict types, not real CHZZK access or capture safety. The native integration test adds actual WinHTTP, native controls and WebView2 to a synthetic gateway fixture; its assertions are not live-provider certification.
-
-Source layout: `src/common`, `src/plugin`, `src/hud`, `src/config`, `src/diagnostics`, `src/preflight`; native tests in `tests/`; dependency/installation scripts in `scripts/`; CHZZK API/session, scoped display delivery, developer tools, shared renderer and tests in `platform/`; product and handoff documents in the root and `docs/`.
+개발/배포 검사의 구분은 [운영 원칙](docs/development-workflow.md)을 따릅니다. 진단 내보내기는 로컬 동작이며 채팅·표시 키·URL을 제품 로그에 추가하지 않습니다. 공유 전 진단 파일을 확인합니다. 새 클라우드 계정 기능의 데이터 처리는 별도로 설계해야 합니다.

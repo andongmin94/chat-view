@@ -1,58 +1,43 @@
-# P2c — native authenticated chat delivery
+# Native HUD, display and companion contract
 
-Updated: 2026-09-20 (Asia/Seoul). Original P2c code: 436e8ec41226b8ffe93d275d2a0ad2cd867f8832. Current code and package validation: [development-plan.md](development-plan.md).
+Updated: 2026-09-20. Current implementation and verification: [development-plan.md](development-plan.md). Server protocol: [display-delivery.md](display-delivery.md). This contract does not impose a separate roadmap or full-CI development gate.
 
-## Validation status
+## Existing native path
 
-Historical P2c code 436e8ec passed the actual nine-scenario native delivery test initially and in five repeats in Windows #292. That full run failed a separate resource test. The same runtime with per-process tracing passed full Windows #293 at f065857, including package publication.
+CHZZK/session modules -> scoped gateway -> asynchronous WinHTTP `DisplayClient` -> `NativeChatConnection` -> existing `HudWindow`/`NativeChatSurface`/WebView2 -> shared first-party text renderer. These components are implemented, not a future handoff to build again. Private provider credentials stay on the service side; the native viewer does not load the developer management page.
 
-**Current code 82f36a6 / Windows #294 / 35464979632 is not package-validated.** Initial CTest passed 25/25. Native delivery passed initially and in its first two repeats, then failed repeat 3 at `WinHTTP gateway frame rendered`; its cause is not yet determined. Resource repeat 2 also failed on initial handle growth. The setup-document correction's actual WebView2 regression passed initially and in all five repeats. No package or official-OBS qualification was produced by #294.
+### Launch roles
 
-https://github.com/andongmin94/chat-view/actions/runs/35464979632
+OBS-controlled startup takes the validated parent/mapping/event arguments, retains capture-state supervision and exits with OBS. Explicit `chat-view-hud.exe --companion` has no local OBS parent/mapping requirement, shows a development warning, opens the same connection controls after readiness, rejects duplicate companion instances and exits with **Ctrl+Alt+Shift+Q**. Launching without arguments or with malformed/mixed modes fails; it never silently selects companion. No second renderer or desktop runtime is introduced.
 
-Do not use older successes as evidence that the intermittent current display failure is resolved. See the handoff and resource-growth-investigation.md for the exact next checks. No timeout, resource budget, cancellation or actual DOM assertion was relaxed.
+The current companion is a developer entry point, not a finished two-PC service or installer. It does not know the streaming PC's capture state. The initial warning defaults to refusal and explains that cloned/HDMI output may contain the HUD. Preserve capture-affinity and local lifecycle checks; accepting the warning is not a clean-video certificate. Real two-PC use requires the separately verified video path in [architecture.md](architecture.md).
 
-CHZZK #13 / 35462872875 at 436e8ec passed all four OS/Node jobs, 135 tests, full audit (zero findings), strict types and unchanged manifests. This resource work does not change platform code/dependencies. Synthetic tests do not establish real CHZZK authorization, public TLS deployment or physical dual-PC video.
+### Connect and control
 
-## Product path
+Prepare private developer credentials using [platform/README.md](../platform/README.md), authorize the channel and issue a display ticket. With the HUD running, **Ctrl+Alt+Shift+C** opens origin/key/connect/disconnect controls; companion opens them initially. Enter a service origin without a path. HTTPS is default; only the explicit local option permits literal `http://127.0.0.1:<port>` (the developer probe uses 47831). Localhost aliases and remote/LAN HTTP remain rejected.
 
-The creator-authorized P2b display gateway has a native consumer. DisplayClient exchanges a one-use display ticket, receives the read-only WebSocket envelope and exposes one latest snapshot. NativeChatConnection attaches it to existing HudWindow and immutable NativeChatSurface. Provider authorization, public advertising and financial authority remain separate.
+The masked key is cleared on use/close and never persisted or logged. Closing the panel preserves delivery; disconnect stops it and clears private text. Consumed/expired tickets need new approval until device enrollment/renewal replaces that developer interaction. No provider password/access token belongs in the panel. **Ctrl+Alt+Shift+H** retains existing move/resize and click-through locking.
 
-This is a native end-to-end developer connection, not a deployed account service or durable device enrollment. The OBS-started HUD retains parent/lifecycle/capture supervision. Testing HudWindow without an OBS parent fixture does not prove the shipping executable is a standalone gaming companion.
+## Transport and UI lifetimes
 
-## Use the developer connection
+DisplayClient uses OS WinHTTP WebSocket and Windows JSON/UTF-8 handling on a dedicated worker, not OBS/UI callbacks. Cancellation immediately clears the mailbox; only the worker closes network handles. Callback-owned buffers survive until HANDLE_CLOSING and hold no HWND/WebView/OBS owner pointer. Redirects, cookies and implicit HTTP authentication are disabled. Credential classes are separate and consumed tickets are not automatically replayed.
 
-Select a package only from the exact code commit's successful full Windows workflow, or use a controlled developer build. Start OBS with that build. Run the existing platform developer probe with private application credentials, authorize the channel, start chat and issue a one-use display key from its authenticated management page. Do not enter that page URL in external-chat settings. Ordinary streamers must not receive application secrets or run an exposed probe.
+Exchange responses are capped at 4 KiB, frames at 2 MiB UTF-8 with 16 KiB receive chunks. Strict UTF-8/envelope checks precede rendering, with shared field validation in the immutable JavaScript receiver. Binary, malformed and oversized input ends delivery. The 15-second operation/frame deadline also bounds fragments, and local lease/idle expiry applies even when the server does not close the socket.
 
-Press **Ctrl + Alt + Shift + C**. Enter the service origin without a path, paste the 64-character display key and connect. HTTPS is required by default. For the local developer probe only, explicitly enable the local-server option and use `http://127.0.0.1:47831`. Localhost aliases, LAN HTTP and remote HTTP remain rejected. The native key field is masked and cleared on use/close; credentials are not saved or passed in process arguments.
+The worker retains one newest snapshot; the UI has one coalesced pending frame and at most one unacknowledged WebView delivery. Missing acknowledgements end the connection. Transport, lease, system or document loss stops private delivery. External-page DOM recovery does not supervise a first-party document. A settings change replacing that document cannot send its chat into the external replacement.
 
-Closing the panel keeps the connection. Disconnect clears the private display; management-side display revocation ends it. A consumed/expired key needs fresh approval. Five-minute leases are a developer boundary, not the final manual reconnect workflow. Production renewal requires revocable device/account enrollment, not indefinite bearer validity.
+## Host-owned renderer boundary
 
-External settings remain usable. Switching them replaces the owned document and ends private delivery rather than sending chat into arbitrary pages. The embedded renderer has no network, credential, native window-control or accounting authority.
+The renderer is embedded in the binary using the existing shared JavaScript. `WebResourceRequested` serves the exact fresh `https://chatview.invalid/<document-id>/index.html` from memory. It is not a public service, local HTTP listener or arbitrary external URL exception. Stale paths/methods/non-document requests get 404. Only native code installs the document.
 
-## Transport and lifetime
+Ownership requires the same host/browser instance, selected full document identity, correlated successful navigation and nonce-bound readiness. The nonce correlates documents, not accounts/devices. Cancelled superseded navigations do not authorize old content or invalidate a newer binding. Foreign navigation never grants authority. Closing the surface replaces a loaded private document with restricted blank content; teardown invalidates the binding. The repeated static setup request retains the same document; explicit reload still replaces it for recovery.
 
-Use OS WinHTTP WebSocket and Windows.Data.Json through the existing Windows SDK. No handwritten framing/JSON parser, new desktop framework or downloaded native dependency. Networking is asynchronous on a worker, not OBS/UI callbacks. The owner signals cancellation and clears the mailbox; the worker closes handles. Callback buffers survive final HANDLE_CLOSING and retain no HWND, WebView or owner pointer.
+After readiness, `PostWebMessageAsJson` delivers the versioned snapshot, never executable script/HTML interpolation. CSP/embedded-script nonce, exact bridge/source checks and bounded validation remain. At most 100 nickname/content/time rows become text nodes; invalid or non-subscribed data clears text. No remote media, provider secrets, arbitrary native window commands or payout operations are exposed. Render acknowledgements describe DOM handling, not actual audience attention or capture exclusion.
 
-Redirects, implicit authentication and cookies are disabled. Exchange and WebSocket credentials use separate Authorization schemes. Scope/lifetime is checked conservatively from before exchange; consumed tickets are not retried. Credentials, raw remote reasons and chat are not logged.
+## Tests and unresolved acceptance
 
-HTTP replies are bounded at 4 KiB, frames at 2 MiB UTF-8, receive chunks at 16 KiB. Strict UTF-8/JSON envelope checks precede the shared JavaScript display validator. Binary, malformed or oversized data ends delivery. Fragments share a 15-second deadline rather than extending an incomplete message indefinitely.
+Portable launch-options tests cover explicit/invalid/mixed roles, PID bounds, duplicate options and owned argument strings. The companion Windows test launches the real executable with no supplied OBS parent, answers consent, inspects the existing connection controls and loaded modules, tests duplicate launch and normal quit. It does not prove OBS is absent from the runner's filesystem or certify two-PC video.
 
-The worker retains one latest frame; the UI permits one WebView message in flight and one coalesced pending frame. Missing render acknowledgements end delivery. Local expiry is checked by owner and worker. Transport/lease/invalid-data/system/document loss clears the surface. Capture decisions remain with the HUD; this path cannot reveal a suppressed HUD. Simultaneous local visibility and stream exclusion remain a separate qualification.
+Native display integration uses an actual local HTTP/WebSocket gateway, WinHTTP, native controls and actual WebView2 DOM for Unicode/inert markup, revocation clearing, cancellation, local expiry and invalid transport. Surface tests cover memory-document ownership, setup idempotence and both teardown orders. All identities/messages are synthetic. The historically observed intermittent first-render failure remains open unless specifically resolved; a new launch or routine CI pass alone does not close it. Exact current results and affected claims are in development-plan.md, not duplicated here.
 
-## Actual test scope
-
-The Node fixture uses locked dependencies. The main scenario runs actual DisplayAccess/DisplayGateway -> WinHTTP -> native controls -> HudWindow/DirectComposition/WebView2 -> Unicode/inert-markup DOM assertions -> server revocation -> DOM clearing. A heartbeat does not stand in for rendered text.
-
-Eight more real HTTP/WebSocket scenarios cover pending-exchange cancellation, local expiry despite continued traffic, redirect rejection, wrong scope, malformed JSON, binary input, oversized frames and idle delivery. Synthetic credentials use inherited stdin, not command lines. No NAVER account or capture hardware is used.
-
-Native test builds require Node and `cd platform && npm ci --ignore-scripts`. Node is a test prerequisite, not a desktop runtime dependency. All native tests/five repeats, resource limits and OBS/package assertions remain. Separate CHZZK CI retains full audit and strict types. Local source/fixture checks are distinct from remote Windows execution and physical-workstation acceptance.
-
-## Primary references
-
-- https://learn.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpwebsocketreceive
-- https://learn.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpwebsocketcompleteupgrade
-- https://learn.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpclosehandle
-- https://learn.microsoft.com/en-us/windows/win32/api/winhttp/nc-winhttp-winhttp_status_callback
-- https://learn.microsoft.com/en-us/uwp/api/windows.data.json.jsonobject
-- https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/navigation-events
+Node is a development fixture prerequisite, not shipped as a HUD runtime. No part of this contract claims general game/fullscreen compatibility, live CHZZK authorization, durable device enrollment, clean HDMI or real rewards.

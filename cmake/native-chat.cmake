@@ -34,3 +34,5 @@ if(BUILD_TESTING)
     add_test(NAME chat-view-native-chat-surface COMMAND chat-view-native-chat-surface-test)
     set_tests_properties(chat-view-native-chat-surface PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE)
 endif()
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/native-chat-delivery.cmake")

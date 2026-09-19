@@ -2,6 +2,7 @@
 
 #include "common/win32-handle.hpp"
 #include "hud/hud-window.hpp"
+#include "hud/native-chat-connection.hpp"
 #include "hud/shared-state-reader.hpp"
 
 #include <Windows.h>
@@ -103,7 +104,7 @@ bool parse_options(Options &options)
            options.parent_process_id != 0U;
 }
 
-bool dispatch_pending_messages(int &exit_code)
+bool dispatch_pending_messages(int &exit_code, chatview::NativeChatConnection &chat)
 {
     MSG message{};
     while (PeekMessageW(&message, nullptr, 0U, 0U, PM_REMOVE)) {
@@ -111,6 +112,7 @@ bool dispatch_pending_messages(int &exit_code)
             exit_code = static_cast<int>(message.wParam);
             return false;
         }
+        if (chat.dispatch(message)) continue;
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
@@ -141,6 +143,7 @@ int run(HINSTANCE instance, const Options &options)
         return 3;
     }
 
+    chatview::NativeChatConnection chat(hud_window);
     hud_window.show_ready();
 
     chatview::SharedSnapshot initial_snapshot;
@@ -157,14 +160,15 @@ int run(HINSTANCE instance, const Options &options)
     int exit_code = 0;
     bool running = true;
     while (running) {
-        if (!dispatch_pending_messages(exit_code)) {
+        if (!dispatch_pending_messages(exit_code, chat)) {
             break;
         }
 
+        chat.tick();
         const DWORD wait_result = MsgWaitForMultipleObjectsEx(
             handle_count,
             wait_handles,
-            INFINITE,
+            chat.wait_timeout(),
             QS_ALLINPUT,
             MWMO_ALERTABLE | MWMO_INPUTAVAILABLE);
         if (wait_result == WAIT_FAILED) {
@@ -172,7 +176,7 @@ int run(HINSTANCE instance, const Options &options)
             break;
         }
 
-        if (wait_result == WAIT_IO_COMPLETION) {
+        if (wait_result == WAIT_IO_COMPLETION || wait_result == WAIT_TIMEOUT) {
             continue;
         }
 
@@ -196,6 +200,7 @@ int run(HINSTANCE instance, const Options &options)
         running = false;
     }
 
+    chat.close();
     hud_window.destroy();
     return exit_code;
 }

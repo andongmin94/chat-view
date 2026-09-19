@@ -32,6 +32,21 @@ jobs:
       - name: Check out ChatView
         uses: actions/checkout@v4
 
+      - name: Set up Node for the native delivery integration fixture
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install locked platform libraries for native delivery tests
+        working-directory: platform
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          npm ci --ignore-scripts --no-audit
+          git diff --exit-code -- package.json package-lock.json
+
       - name: Check out pinned OBS Studio sources
         uses: actions/checkout@v4
         with:

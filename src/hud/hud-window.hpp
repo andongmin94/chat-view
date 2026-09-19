@@ -33,6 +33,7 @@ public:
     void apply_state(const SharedSnapshot &snapshot);
 
 private:
+    friend class NativeChatConnection;
     static LRESULT CALLBACK window_proc(
         HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 

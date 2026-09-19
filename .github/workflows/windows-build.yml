@@ -162,6 +162,16 @@ jobs:
           cmake --install build/windows-x64 `
             --config RelWithDebInfo
 
+      - name: Report native resource evidence
+        if: always()
+        shell: pwsh
+        run: |
+          $log = 'build/windows-x64/Testing/Temporary/LastTest.log'
+          if (Test-Path -LiteralPath $log) {
+            Select-String -LiteralPath $log -Pattern '^HUD resource ' |
+              ForEach-Object { Write-Host $_.Line }
+          }
+
       - name: Create and validate package manifest
         shell: pwsh
         run: |

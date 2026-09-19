@@ -40,12 +40,21 @@ struct WindowSearch {
     HWND window = nullptr;
 };
 
+struct ProcessSample {
+    DWORD id = 0U;
+    std::uint64_t created = 0U;
+    std::wstring image;
+    DWORD handles = 0U;
+    std::uint64_t private_bytes = 0U;
+};
+
 struct ResourceSample {
     std::uint64_t process_count = 0U;
     std::uint64_t handle_count = 0U;
     std::uint64_t private_bytes = 0U;
     std::uint64_t gdi_objects = 0U;
     std::uint64_t user_objects = 0U;
+    std::vector<ProcessSample> processes;
 };
 
 class MappedState final {
@@ -260,6 +269,20 @@ bool sample_job_once(HANDLE job, ResourceSample &sample) noexcept
             return false;
         }
 
+        FILETIME created{}, exited{}, kernel{}, user{};
+        std::array<wchar_t, 32768> image{};
+        DWORD length = static_cast<DWORD>(image.size());
+        if (!GetProcessTimes(process.get(), &created, &exited, &kernel, &user) ||
+            !QueryFullProcessImageNameW(process.get(), 0U, image.data(), &length)) {
+            return false;
+        }
+        // Report identity, not command lines, user paths, chat or credentials.
+        candidate.processes.push_back(ProcessSample{
+            process_id,
+            (static_cast<std::uint64_t>(created.dwHighDateTime) << 32U) |
+                created.dwLowDateTime,
+            std::filesystem::path(image.data()).filename().wstring(),
+            handles, memory.PrivateUsage});
         ++candidate.process_count;
         candidate.handle_count += handles;
         candidate.private_bytes += memory.PrivateUsage;
@@ -273,10 +296,26 @@ bool sample_job_once(HANDLE job, ResourceSample &sample) noexcept
     return true;
 }
 
-bool sample_job(HANDLE job, ResourceSample &sample) noexcept
+void print_sample(const ResourceSample &sample, const wchar_t *phase)
+{
+    std::wcout << L"HUD resource trace phase=" << phase
+               << L" tick=" << GetTickCount64()
+               << L" handles=" << sample.handle_count << L'\n';
+    for (const auto &process : sample.processes) {
+        std::wcout << L"HUD resource process phase=" << phase
+                   << L" pid=" << process.id << L" created=" << process.created
+                   << L" image=" << process.image
+                   << L" handles=" << process.handles
+                   << L" private_bytes=" << process.private_bytes << L'\n';
+    }
+}
+
+bool sample_job(HANDLE job, ResourceSample &sample,
+                const wchar_t *phase = L"exercise") noexcept
 {
     for (unsigned int attempt = 0U; attempt < 20U; ++attempt) {
         if (sample_job_once(job, sample)) {
+            print_sample(sample, phase);
             return true;
         }
         Sleep(50U);
@@ -532,7 +571,7 @@ int wmain(int argument_count, wchar_t **arguments)
 
     ResourceSample baseline;
     ResourceSample maximum;
-    if (!sample_job(child_job.get(), baseline)) {
+    if (!sample_job(child_job.get(), baseline, L"baseline")) {
         return fail(
             L"Failed to sample the HUD process tree baseline",
             child_process.get());
@@ -549,6 +588,7 @@ int wmain(int argument_count, wchar_t **arguments)
         }
 
         if ((cycle % 4U) == 0U) {
+            std::wcout << L"HUD resource action=config cycle=" << cycle << L'\n';
             PostMessageW(window, config_message, 0U, 0L);
         }
         if (cycle == kExerciseCycles / 2U &&
@@ -571,7 +611,7 @@ int wmain(int argument_count, wchar_t **arguments)
 
     Sleep(2500U);
     ResourceSample first_window_sample;
-    if (!sample_job(child_job.get(), first_window_sample)) {
+    if (!sample_job(child_job.get(), first_window_sample, L"first-settled")) {
         return fail(
             L"Failed to sample the first settled HUD exercise window",
             child_process.get());
@@ -589,6 +629,7 @@ int wmain(int argument_count, wchar_t **arguments)
                 child_process.get());
         }
         if ((cycle % 4U) == 0U) {
+            std::wcout << L"HUD resource action=config cycle=" << cycle << L'\n';
             PostMessageW(window, config_message, 0U, 0L);
         }
         if (cycle == kVerificationCycles / 2U &&
@@ -597,11 +638,19 @@ int wmain(int argument_count, wchar_t **arguments)
                 L"The HUD failed during the verification lifecycle transition",
                 child_process.get());
         }
+        if ((cycle % 3U) == 0U) {
+            ResourceSample sample;
+            if (!sample_job(child_job.get(), sample, L"verification")) {
+                return fail(L"Failed to sample the verification process tree",
+                    child_process.get());
+            }
+            update_maximum(maximum, sample);
+        }
     }
 
     Sleep(2500U);
     ResourceSample final_sample;
-    if (!sample_job(child_job.get(), final_sample)) {
+    if (!sample_job(child_job.get(), final_sample, L"final-settled")) {
         return fail(
             L"Failed to sample the final HUD process tree",
             child_process.get());
@@ -637,6 +686,8 @@ int wmain(int argument_count, wchar_t **arguments)
         final_sample.handle_count >
             first_window_sample.handle_count + kMaximumLateHandleGrowth;
 
+    std::wcout << L"HUD resource limits initial_handles=" << kMaximumInitialHandleGrowth
+               << L" late_handles=" << kMaximumLateHandleGrowth << L'\n';
     if (final_sample.process_count >
             baseline.process_count + kMaximumProcessGrowth ||
         handles_kept_growing ||

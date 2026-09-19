@@ -1,61 +1,66 @@
 # CHZZK chat slice — P1-01b
 
-A reusable official API client and a developer-only local chat preview now connect authorization -> session ticket -> Socket.IO -> SYSTEM connected -> POST subscription -> matching SYSTEM subscribed -> CHAT -> ChatView-owned text UI.
+The reusable official API client and developer-only local preview connect authorization -> session ticket -> Socket.IO -> SYSTEM connected -> POST subscription -> matching SYSTEM subscribed -> CHAT -> ChatView-owned text UI.
 
-**This is not a deployed multi-user platform, native HUD integration, dual-PC support or an advertising meter.** The old native external-page HUD remains unchanged. Do not enter the probe URL into the native settings; that viewer does not authorize loopback pages.
+**Not a deployed multi-user platform, native HUD integration, dual-PC support or an advertising meter.** The old native external-page HUD is unchanged. Do not enter the probe URL in native settings: that viewer does not authorize loopback pages.
 
 ## Run
 
-Use Node 22.16+ or Node 24. Register a CHZZK application with `유저 정보 조회` and `채팅 메시지 조회`, with this exact redirect:
+Use a supported Node 22.16+ or Node 24 release. Register a CHZZK developer application with `유저 정보 조회` and `채팅 메시지 조회` and the exact redirect:
 
 ```text
 http://127.0.0.1:47831/callback
 ```
 
-Copy `.env.example` to `.env` in this directory and configure developer credentials privately. Ordinary streamers will not need client secrets. Never commit, paste or screenshot secrets. Do not set `DEBUG`: the upstream library can log sensitive tickets/messages, and the socket factory rejects that configuration.
+Copy .env.example to .env in this directory and configure application credentials privately. These are development credentials, not something ordinary streamers will supply. Never commit, paste or screenshot secrets. Leave DEBUG unset: upstream diagnostics can disclose tickets/messages, and the production factory rejects that configuration.
 
 ```sh
 cd platform
-npm install --ignore-scripts
+npm ci --ignore-scripts
 npm run connect
 ```
 
-Open the printed loopback address in the system browser. Log in and grant access, choose **채팅 수신 시작 / 재연결**, then open **챗뷰 자체 채팅 화면**. Keep your authorized channel available and send a message using the normal CHZZK client. The preview separately reports subscription confirmation and the first received message; a quiet channel is not automatically a broken connection.
+Open the printed loopback address in the system browser, log in and grant access, choose **채팅 수신 시작 / 재연결**, then **챗뷰 자체 채팅 화면**. Send a message through the normal CHZZK client for your authorized channel. Subscription confirmation and first-message receipt are different states; a quiet channel is not automatically broken.
 
-Stopping unsubscribes only this CHAT session and closes its socket. Reconnect uses a new API-issued URL; duplicate start does not create a duplicate subscription. Refresh stops chat before rotating the one-use token. Token expiration or upstream CHAT revocation stops delivery. **권한 철회** is different: it explicitly revokes all this application's tokens for the user and may disconnect other devices. Exiting never performs global revocation.
+Stop unsubscribes only this CHAT session and closes its socket. Reconnect obtains a fresh ticket. Duplicate start does not duplicate the subscription. Refresh stops chat before rotating the one-use token. Token expiry and upstream CHAT revocation stop delivery. **권한 철회** explicitly revokes all app/user tokens and may disconnect other devices; exiting does not perform that global action.
 
-## Boundaries and limits
+## Current limits
 
-- Only the same authenticated loopback browser can load the preview, assets and event stream. Host, Origin, OAuth state, one-use callbacks, CSRF and cookie checks remain enforced. No access token, session key or ticket is returned to the renderer.
-- The text-only renderer uses text nodes, not HTML insertion or provider-page DOM scraping. It makes no remote media requests. Nickname, content, native channel identifiers, role, verified flag and timestamp are parsed; badges/emojis are not rendered yet. The documented CHAT payload does not provide a unique message ID, so repeated identical messages are not incorrectly deduplicated and no provider ID is invented.
-- At most 100 messages are retained in process memory, with field/serialized-payload bounds. This is not a pre-decoding WebSocket frame-size guarantee. Nothing is written to chat logs, a database or an advertising ledger. Disconnect, unsubscribe, revoke and stop clear the history; the browser also clears on delivery loss.
-- Browser delivery uses same-origin Server-Sent Events, at most four readers, coalesced bursts and slow-reader disconnection. It is a developer preview, not the target public delivery architecture. No LAN binding, proxy exposure, pairing, payout or native privileged IPC is added.
+The preview and SSE stream require the same authenticated loopback browser. Host, Origin, cookie, OAuth state, single-use callbacks and CSRF checks are enforced. Tokens, session keys and tickets are not sent to the renderer. This tool must not be exposed to the LAN/internet or packaged with a client secret in the companion.
 
-## Tests and dependency decision
+The renderer uses text nodes, not HTML insertion or scraped provider DOM. It makes no remote media requests. Nickname, message, native channel identifiers, role, verified flag and timestamp are parsed; badges/emojis are not rendered yet. CHAT does not document a unique message ID, so identical legitimate messages are not incorrectly deduplicated or assigned invented provider IDs.
+
+History is capped at 100 messages in memory with field/payload bounds. This is not a pre-decoding WebSocket frame-size guarantee. Nothing enters a chat log, database or reward ledger. Stop, disconnect, unsubscribe and revoke clear history; the browser clears on delivery loss. SSE delivery is coalesced and capped at four readers, with slow-reader disconnection. It is not the target public multi-user delivery system.
+
+## Reproducible verification
 
 ```sh
+npm ci --ignore-scripts
+npm audit --audit-level=low
 npm test
 npm run typecheck
-npm audit --omit=dev --audit-level=low
 ```
 
-CHZZK documents Socket.IO-client **1.0.0 through 2.0.3**, WebSocket transport and no automatic reconnect. We select 2.0.3 with explicit upstream security-maintained dependency substitutions: engine.io-client 3.5.6, socket.io-parser 3.3.4, parseqs/parseuri 0.0.6 and xmlhttprequest-ssl 1.6.3. The Engine.IO package brings patched ws 7.5.10. These are library dependencies, not a home-grown framing implementation or a fallback to a newer incompatible Socket.IO protocol.
+The committed lock contains the actual npm-resolved graph. CI uses npm ci with lifecycle scripts disabled, audits runtime AND development dependencies without exemptions, runs tests/strict types on Windows/Linux with Node 22/24, and checks that manifests remain unchanged.
 
-This is a customized dependency graph, **not a claim that NAVER has certified these substitutions**. CI audits it and runs the actual installed client against an actual Socket.IO test server with EIO3 enabled, on Windows/Linux and Node 22/24. It checks the negotiated protocol, subscription, Unicode message delivery and cleanup. The destination is substituted only inside the test's module cache; production has no arbitrary-endpoint switch. Confirm this exact graph with a real authorized CHZZK channel before release.
+CHZZK's documented client range requires Socket.IO-client 2.0.3 here. Its Engine.IO 3 transport and patched Socket.IO parser are pinned. We use the public Manager object-options API with Node's standard URL parsing, never the legacy URI constructor. **parseuri 3.0.2 is not a callable API replacement**: the installed module is not invoked by the selected connection path. No compatibility shim or custom protocol implementation is included. Details and the history of failed dependency experiments are in [dependency-validation.md](../docs/dependency-validation.md).
 
-Local verification at authoring: 41 tests (existing authentication tests, new session/preview tests), strict type check and renderer syntax check passed. The local runtime cannot download npm packages; actual-library transport and remaining unchanged API tests are delegated to the repository CI. Inspect the latest commit's results in `docs/development-plan.md`. **No real developer credentials or hardware were available; live authorization, real CHZZK events and native-HUD display are not verified.**
+The actual-library test checks EIO3/WebSocket, structured options, encoded ticket delivery, matching subscription acknowledgement, Unicode CHAT and unsubscribe. Only the fixture destination is changed in the test; the production URL allowlist and TLS requirements remain intact. This is not certification of the substitutions by NAVER.
 
-## Next
+At commit 12470eb, the resolved graph passed audit with zero findings and all 82 tests; strict types caught a test-only captured-address narrowing error. This change fixes it and locks that graph. Inspect the new commit's clean-install/type-check results before calling the gate passed. Prior local mock-only evidence must not be confused with installed-library CI.
 
-Use a real authorized channel to verify the exact client/dependency graph. Then connect the reusable session and renderer to the platform/native HUD with narrowly scoped authorization, not by shipping this developer loopback tool or its client secret. Keep the no-gaming-PC-OBS constraint and separate clean-video qualification. Ads, audience measurement, HP and rewards remain separate goals and receive no credit from this preview.
+**No actual CHZZK developer credentials or dual-PC hardware were available. Real authorization/events and native first-party HUD display are still unverified.** The existing OBS/C++ code remains unchanged.
+
+## Next product path
+
+Qualify this exact graph with a real authorized channel, then connect the reusable session/renderer to platform account/device authorization and the existing native HUD. Do not ship the developer probe as the public backend or broaden arbitrary-page native privileges. Preserve the no-gaming-PC-OBS requirement; the clean-video hardware path needs separate proof. Ad selection, audience measurement, HP and rewards remain core goals but receive no credit from this preview.
 
 ## Primary references, checked 2026-09-19
 
 - https://chzzk.gitbook.io/chzzk/chzzk-api/session
 - https://chzzk.gitbook.io/chzzk/chzzk-api/authorization
 - https://socket.io/docs/v2/client-api/
-- https://socket.io/docs/v4/client-installation/#version-compatibility
-- https://github.com/socketio/socket.io-client/blob/2.0.3/package.json
-- https://github.com/socketio/engine.io-client/blob/3.5.6/package.json
-- https://github.com/socketio/socket.io-parser/blob/3.3.4/package.json
-- https://github.com/websockets/ws/security/advisories/GHSA-3h5v-q93c-6h6q
+- https://github.com/socketio/socket.io-client/blob/2.0.3/lib/manager.js
+- https://github.com/socketio/engine.io-client/blob/3.5.6/lib/socket.js
+- https://github.com/slevithan/parseuri/blob/main/src/index.js
+- https://github.com/socketio/socket.io/security/advisories/GHSA-2m8v-j782-fhvr

@@ -25,6 +25,7 @@ test('structured Manager options negotiate EIO3 and preserve the ticket over rea
   const io = new Server(http, { allowEIO3: true, transports: ['websocket'], serveClient: false, perMessageDeflate: false });
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
   const address = http.address(); assert.ok(address && typeof address !== 'string');
+  const port = address.port;
   t.after(() => new Promise<void>(resolve => io.close(() => resolve())));
   let peer!: Socket;
   io.on('connection', socket => {
@@ -46,7 +47,7 @@ test('structured Manager options negotiate EIO3 and preserve the ticket over rea
       assert.equal(options.forceNode, true); assert.equal(options.rejectUnauthorized, true);
       assert.deepEqual(options.transports, ['websocket']);
       assert.deepEqual(options.query, { auth: ticket });
-      super({ ...options, hostname: '127.0.0.1', port: address.port, secure: false });
+      super({ ...options, hostname: '127.0.0.1', port, secure: false });
       assert.equal(this.uri, undefined);
     }
   } };

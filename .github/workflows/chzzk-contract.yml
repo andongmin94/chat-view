@@ -33,15 +33,13 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
-      - name: Install pinned transport and test dependencies without lifecycle scripts
-        id: dependencies
-        run: npm install --ignore-scripts --no-audit
+      - name: Clean install the locked dependency graph without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit
       - name: Audit dependency graph including test tools
         run: npm audit --audit-level=low
       - name: Verify HTTP, actual Socket.IO transport and own renderer with simulated provider
         run: npm test
       - name: Strict type check
         run: npm run typecheck
-      - name: Report resolved dependency manifest
-        if: always() && steps.dependencies.outcome == 'success' && matrix.os == 'ubuntu-latest' && matrix.node == '24'
-        run: cat package-lock.json
+      - name: Confirm installation did not rewrite manifests
+        run: git diff --exit-code -- package.json package-lock.json

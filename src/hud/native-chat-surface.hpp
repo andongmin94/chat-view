@@ -27,6 +27,7 @@ public:
     [[nodiscard]] unsigned int rendered_messages() const noexcept;
     [[nodiscard]] unsigned long long rejected_frames() const noexcept;
 private:
+    friend struct NativeChatSurfaceTestAccess;
     struct State;
     std::shared_ptr<State> state_;
     Microsoft::WRL::ComPtr<ICoreWebView2> webview_;

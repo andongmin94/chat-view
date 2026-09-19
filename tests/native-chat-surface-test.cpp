@@ -3,12 +3,56 @@
 #include "hud/native-chat-surface.hpp"
 #include "hud/webview-host.hpp"
 #include <Windows.h>
+#include <wrl/event.h>
+#include <cwchar>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 
+// Narrow test-only inspection: do not add a raw browser accessor to the product API.
+namespace chatview {
+struct NativeChatSurfaceTestAccess {
+    static ICoreWebView2 *core(NativeChatSurface &surface) { return surface.webview_.Get(); }
+};
+}
+
 namespace {
+void trace_document(chatview::NativeChatSurface &surface)
+{
+    using Microsoft::WRL::Callback;
+    auto *core = chatview::NativeChatSurfaceTestAccess::core(surface);
+    EventRegistrationToken token{};
+    core->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>(
+        [](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
+            LPWSTR uri = nullptr; UINT64 id = 0U; BOOL cancelled = FALSE;
+            args->get_Uri(&uri); args->get_NavigationId(&id); args->get_Cancel(&cancelled);
+            std::cout << "Own document navigation: blank=" << (uri && wcscmp(uri, L"about:blank") == 0)
+                      << " id=" << id << " cancelled=" << cancelled << '\n';
+            CoTaskMemFree(uri); return S_OK;
+        }).Get(), &token);
+    core->add_WebMessageReceived(Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+        [](ICoreWebView2 *, ICoreWebView2WebMessageReceivedEventArgs *args) -> HRESULT {
+            LPWSTR uri = nullptr; LPWSTR value = nullptr;
+            args->get_Source(&uri); const auto result = args->TryGetWebMessageAsString(&value);
+            std::cout << "Own document message: blank=" << (uri && wcscmp(uri, L"about:blank") == 0)
+                      << " string=" << SUCCEEDED(result)
+                      << " ready=" << (value && wcsncmp(value, L"chat-ready:", 11U) == 0) << '\n';
+            CoTaskMemFree(uri); CoTaskMemFree(value); return S_OK;
+        }).Get(), &token);
+    core->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>(
+        [](ICoreWebView2 *sender, ICoreWebView2NavigationCompletedEventArgs *args) -> HRESULT {
+            BOOL success = FALSE; UINT64 id = 0U; args->get_IsSuccess(&success); args->get_NavigationId(&id);
+            std::cout << "Own document complete: success=" << success << " id=" << id << '\n';
+            // Fixed expression on this synthetic, initially empty document only.
+            sender->ExecuteScript(L"JSON.stringify({location:location.href,ready:document.readyState,bridge:typeof window.chrome.webview.postMessage,status:document.getElementById('status')?.textContent,scripts:document.scripts.length})",
+                Callback<ICoreWebView2ExecuteScriptCompletedHandler>([](HRESULT result, LPCWSTR json) -> HRESULT {
+                    std::wcout << L"Own document probe: hr=" << result << L" " << (json ? json : L"null") << L'\n';
+                    return S_OK;
+                }).Get());
+            return S_OK;
+        }).Get(), &token);
+}
 LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
     return DefWindowProcW(window, message, wparam, lparam);
@@ -57,6 +101,7 @@ int main()
         expect(host.initialize(window), "initialize production host");
         await([&] { return host.ready(); }, "WebView2 startup");
         expect(surface.open(host), "open embedded own chat");
+        trace_document(surface);
         await([&] { return surface.ready(); }, "own document handshake");
         expect(surface.publish(kMessage), "publish synthetic Unicode message");
         await([&] { return surface.rendered_frames() == 1U; }, "actual DOM render acknowledgement");

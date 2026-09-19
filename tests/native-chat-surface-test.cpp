@@ -26,7 +26,11 @@ void trace_document(chatview::NativeChatSurface &surface)
     core->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>(
         [](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
             LPWSTR uri = nullptr; UINT64 id = 0U; BOOL cancelled = FALSE;
-            args->get_Uri(&uri); args->get_NavigationId(&id); args->get_Cancel(&cancelled);
+            const auto uri_result = args->get_Uri(&uri);
+            args->get_NavigationId(&id); args->get_Cancel(&cancelled);
+            // This harness loads only a fixed synthetic document.
+            std::wcout << L"Own navigation URI prefix: hr=" << uri_result << L" ["
+                       << (uri ? std::wstring(uri).substr(0U, 96U) : L"null") << L"]\n";
             std::cout << "Own document navigation: blank=" << (uri && wcscmp(uri, L"about:blank") == 0)
                       << " id=" << id << " cancelled=" << cancelled << '\n';
             CoTaskMemFree(uri); return S_OK;

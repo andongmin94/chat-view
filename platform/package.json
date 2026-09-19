@@ -16,7 +16,7 @@
       "socket.io-parser": "3.3.6"
     },
     "parseqs": "0.0.6",
-    "parseuri": "2.0.0",
+    "parseuri": "3.0.2",
     "engine.io-client": { "xmlhttprequest-ssl": "1.6.3" }
   },
   "devDependencies": {

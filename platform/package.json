@@ -6,7 +6,7 @@
   "engines": { "node": ">=22.16.0" },
   "scripts": {
     "test": "node --experimental-strip-types --test tests/*.test.mts",
-    "typecheck": "tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext --allowImportingTsExtensions --allowJs --types node server/chzzk/*.mts tools/*.mts tests/*.mts",
+    "typecheck": "tsc --project tsconfig.json",
     "connect": "node --experimental-strip-types --env-file=.env tools/chzzk-connect.mts"
   },
   "dependencies": { "socket.io-client": "2.0.3" },

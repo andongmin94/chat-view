@@ -7,6 +7,8 @@ import { pathToFileURL } from 'node:url';
 import { ChzzkChatSession } from '../server/chzzk/session.mts';
 import type { SocketFactory } from '../server/chzzk/socket.mts';
 import { ChatPreview } from './chat-preview.mts';
+import { DisplayAccess, DisplayAccessError } from '../server/chat/display-access.mts';
+import { DisplayGateway } from '../server/chat/display-gateway.mts';
 import { authorizationUrl, ChzzkApi, ChzzkError } from '../server/chzzk/api.mts';
 import type { Channel, Credentials, Tokens } from '../server/chzzk/api.mts';
 
@@ -40,13 +42,19 @@ export async function startProbe({ credentials, port = 47831, api = new ChzzkApi
   let closed = false;
   let chat: ChzzkChatSession | undefined;
   const preview = new ChatPreview(() => chat?.snapshot() ?? { state: 'idle', received: 0, messages: [] });
+  let tokenDeadline = 0;
+  const displayAccess = new DisplayAccess(() => current && channel && now() < tokenDeadline
+    ? { id: channel.channelId, expiresAt: tokenDeadline } : undefined, now);
+  const display = new DisplayGateway(displayAccess, () => origin,
+    () => chat?.snapshot() ?? { state: 'idle', received: 0, messages: [] });
+  const revokeDisplays = () => { displayAccess.clear(); display.changed(); };
   let tokenExpiry: ReturnType<typeof setTimeout> | undefined;
   const expireTokens = () => {
-    current = undefined; channel = undefined; attempt = undefined;
+    current = undefined; channel = undefined; attempt = undefined; revokeDisplays();
     void chat?.stop(); notice = '인증이 만료됐습니다. 다시 로그인하세요.';
   };
   const armExpiry = (tokens: Tokens) => {
-    clearTimeout(tokenExpiry);
+    clearTimeout(tokenExpiry); tokenDeadline = now() + tokens.expiresIn * 1000;
     tokenExpiry = setTimeout(expireTokens, Math.min(tokens.expiresIn * 1000, 2147483647));
     tokenExpiry.unref();
   };
@@ -80,6 +88,8 @@ export async function startProbe({ credentials, port = 47831, api = new ChzzkApi
 <section><p>${escape(notice)}</p>${channel ? `<p>채널: <strong>${escape(channel.channelName)}</strong><br>채널 ID: ${escape(channel.channelId)}</p>` : ''}</section>
 ${!current ? action('/connect', '치지직 로그인') : action('/chat/start', '채팅 수신 시작 / 재연결') + action('/chat/stop', '채팅 수신 중지') + action('/refresh', '토큰 갱신 확인') + action('/revoke', '이 앱의 치지직 연결 권한 철회')}
 <p><a href="/chat">챗뷰 자체 채팅 화면 열기</a></p>
+${current ? action('/display/ticket', '표시 연결용 1회 키 발급') + action('/display/revoke', '표시 기기 연결만 모두 해제') : ''}
+<small>표시 연결은 채팅 읽기만 허용하는 개발 검증용입니다. 계정·광고·보상 제어 권한이 아니며 네이티브 HUD 연결 화면은 아직 제공하지 않습니다.</small>
 <small>권한 철회는 이 앱과 해당 계정의 모든 Access/Refresh Token을 취소합니다. 다른 기기의 연결도 영향을 받을 수 있습니다.</small>
 <p>비밀키·토큰·소켓 URL은 브라우저나 로그에 출력하지 않습니다. 종료 시 로컬 메모리만 비우며 원격 권한을 자동으로 철회하지 않습니다.</p></html>`;
   };
@@ -90,6 +100,7 @@ ${!current ? action('/connect', '치지직 로그인') : action('/chat/start', '
     if ((request.url ?? '').length > 12_000) { reply(response, 414, 'Request too long'); return; }
     const url = new URL(request.url!, origin);
     if (url.origin !== origin) { reply(response, 403, 'Invalid origin'); return; }
+    if (display.handle(request, response)) return;
     if (request.method === 'GET' && url.pathname === '/') {
       // Allow the authenticated OAuth return redirect, but never mint browser
       // state for an unsolicited cross-site navigation.
@@ -124,6 +135,7 @@ ${!current ? action('/connect', '치지직 로그인') : action('/chat/start', '
         const issued = await api.exchangeCode(code, state, lifetime.signal);
         const identified = await api.getUser(issued.accessToken, lifetime.signal);
         if (closed) return;
+        revokeDisplays();
         current = issued; channel = identified; armExpiry(issued);
         notice = '인증과 본인 채널 조회 성공. 채팅 수신을 시작한 뒤 자체 채팅 화면을 여세요.';
       } catch (error) {
@@ -143,6 +155,22 @@ ${!current ? action('/connect', '치지직 로그인') : action('/chat/start', '
       redirect(response, authorizationUrl(credentials.clientId, `${origin}/callback`, attempt.state));
       return;
     }
+    if (['/display/ticket', '/display/revoke'].includes(url.pathname)) {
+      if (url.pathname === '/display/revoke') {
+        if (!current || now() >= tokenDeadline) { reply(response, 401, 'Connect first'); return; }
+        revokeDisplays(); notice = '표시 기기 연결만 해제했습니다. 치지직 연결 권한은 유지됩니다.';
+        redirect(response, '/'); return;
+      }
+      try {
+        const ticket = displayAccess.issue();
+        // Only this authenticated/CSRF-checked response reveals the one-use
+        // display ticket. Never retain it in a notice, URL, chat frame or log.
+        response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store',
+          'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff' });
+        response.end(JSON.stringify(ticket));
+      } catch (error) { reply(response, error instanceof DisplayAccessError ? error.status : 500, 'Display access unavailable'); }
+      return;
+    }
     if (!current || !['/chat/start', '/chat/stop', '/refresh', '/revoke'].includes(url.pathname)) {
       reply(response, 400, 'Connect first'); return;
     }
@@ -155,9 +183,9 @@ ${!current ? action('/connect', '치지직 로그인') : action('/chat/start', '
           const candidate = new ChzzkChatSession(api, () => {
             if (chat !== candidate) return;
             if (candidate.snapshot().state === 'revoked') {
-              current = undefined; channel = undefined; clearTimeout(tokenExpiry);
+              current = undefined; channel = undefined; clearTimeout(tokenExpiry); revokeDisplays();
             }
-            preview.changed();
+            preview.changed(); display.changed();
           }, socketFactory);
           chat = candidate;
           await candidate.start(current.accessToken, channel!.channelId, lifetime.signal);
@@ -167,6 +195,7 @@ ${!current ? action('/connect', '치지직 로그인') : action('/chat/start', '
         const acknowledged = await chat?.stop();
         notice = acknowledged === false ? '로컬 채팅 수신은 중지했습니다. 원격 구독 취소는 확인하지 못했습니다.' : '채팅 수신을 중지했습니다.';
       } else if (url.pathname === '/refresh') {
+        revokeDisplays();
         await chat?.stop();
         // No parallel requests and no replay after an ambiguous one-use refresh.
         const previous = current;
@@ -175,6 +204,7 @@ ${!current ? action('/connect', '치지직 로그인') : action('/chat/start', '
         if (!closed) { current = refreshed; armExpiry(refreshed); }
         notice = 'Access/Refresh Token 갱신 성공. 새 토큰은 서버 메모리에만 보관합니다.';
       } else {
+        revokeDisplays();
         await chat?.stop();
         await api.revoke(current.accessToken, lifetime.signal);
         clearTimeout(tokenExpiry);
@@ -184,7 +214,7 @@ ${!current ? action('/connect', '치지직 로그인') : action('/chat/start', '
     } catch (error) {
       notice = error instanceof ChzzkError ? error.message : '요청 실패';
       if (url.pathname === '/refresh' || (error instanceof ChzzkError && [401, 403].includes(error.status))) {
-        current = undefined; channel = undefined; clearTimeout(tokenExpiry);
+        current = undefined; channel = undefined; clearTimeout(tokenExpiry); revokeDisplays();
         await chat?.stop();
         notice += ' · 다시 로그인하세요. 토큰을 자동 재사용하지 않습니다.';
       }
@@ -198,6 +228,7 @@ ${!current ? action('/connect', '치지직 로그인') : action('/chat/start', '
       else response.end();
     });
   });
+  server.on('upgrade', (request, socket, head) => display.upgrade(request, socket, head));
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', () => { server.off('error', reject); resolve(); });
@@ -208,7 +239,7 @@ ${!current ? action('/connect', '치지직 로그인') : action('/chat/start', '
   return {
     origin,
     async close() {
-      closed = true;
+      closed = true; display.close();
       const chatStopped = chat?.stop();
       lifetime.abort(); clearTimeout(tokenExpiry); preview.close();
       attempt = undefined; current = undefined; channel = undefined;

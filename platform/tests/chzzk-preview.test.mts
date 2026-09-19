@@ -5,7 +5,7 @@ import type { TestContext } from 'node:test';
 import { EventEmitter } from 'node:events';
 import { ChzzkApi } from '../server/chzzk/api.mts';
 import { startProbe } from '../tools/chzzk-connect.mts';
-import { renderChat } from '../web/chat.js';
+import { renderChat } from '../web/chat-renderer.js';
 
 async function fixture(t: TestContext, expiresIn = '86400') {
   const credentials = { clientId: 'app', clientSecret: 'PRIVATE_CLIENT' };
@@ -76,11 +76,13 @@ test('revocation clears the stream and local authorization; no automatic global 
 
 test('stream and assets reject unauthenticated/cross-origin access, and old issuance-only action is gone', async t => {
   const f = await fixture(t);
-  for (const path of ['/chat', '/chat.js', '/chat.css', '/chat/events']) {
+  for (const path of ['/chat', '/chat.js', '/chat-renderer.js', '/chat.css', '/chat/events']) {
     assert.equal((await fetch(f.probe.origin + path)).status, 403);
     assert.equal((await f.get(path, { Origin: 'https://attacker.invalid' })).status, 403);
     assert.equal((await f.get(path, { 'Sec-Fetch-Site': 'cross-site' })).status, 403);
   }
+  const renderer = await f.get('/chat-renderer.js'); assert.equal(renderer.status, 200);
+  assert.match(await renderer.text(), /export function renderChat/u);
   const page = await f.get('/chat'); assert.equal(page.status, 200);
   assert.match(page.headers.get('content-security-policy')!, /script-src 'self'/u);
   assert.doesNotMatch(page.headers.get('content-security-policy')!, /unsafe-inline/u);

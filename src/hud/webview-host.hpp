@@ -47,6 +47,7 @@ public:
     void focus() noexcept;
 
 private:
+    friend class NativeChatSurface;
     struct CallbackState {
         WebViewHost *owner = nullptr;
     };

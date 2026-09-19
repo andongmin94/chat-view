@@ -7,6 +7,7 @@ export const CHAT_CSP = "default-src 'none'; script-src 'self'; style-src 'self'
 const assets = new Map([
   ['/chat', ['chat.html', 'text/html; charset=utf-8']],
   ['/chat.js', ['chat.js', 'text/javascript; charset=utf-8']],
+  ['/chat-renderer.js', ['chat-renderer.js', 'text/javascript; charset=utf-8']],
   ['/chat.css', ['chat.css', 'text/css; charset=utf-8']],
 ]);
 
@@ -17,6 +18,7 @@ export class ChatPreview {
   #flush?: ReturnType<typeof setTimeout>;
   #heartbeat?: ReturnType<typeof setInterval>;
   constructor(snapshot: () => ChatSnapshot) { this.#snapshot = snapshot; }
+  handles(path: string): boolean { return path === '/chat/events' || assets.has(path); }
   async asset(path: string, response: ServerResponse): Promise<boolean> {
     const asset = assets.get(path);
     if (!asset) return false;

@@ -99,7 +99,7 @@ ${!current ? action('/connect', '치지직 로그인') : action('/chat/start', '
       return;
     }
     if (!authenticated(request)) { reply(response, 403, 'Open the local probe in the same browser'); return; }
-    if (request.method === 'GET' && ['/chat', '/chat.js', '/chat.css', '/chat/events'].includes(url.pathname)) {
+    if (request.method === 'GET' && preview.handles(url.pathname)) {
       if (request.headers['sec-fetch-site'] === 'cross-site' ||
           (request.headers.origin && request.headers.origin !== origin)) {
         reply(response, 403, 'Invalid preview origin'); return;

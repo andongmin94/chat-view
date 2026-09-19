@@ -603,3 +603,5 @@ install(FILES
     scripts/verify-package.ps1
     DESTINATION "."
 )
+
+include(cmake/native-chat.cmake)

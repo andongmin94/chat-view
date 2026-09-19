@@ -33,6 +33,11 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
+      - name: Inspect published parser versions and source repository
+        if: matrix.os == 'ubuntu-latest' && matrix.node == '24'
+        run: |
+          npm view parseuri versions repository dist --json
+          npm view socket.io-client@2 version dependencies --json
       - name: Install pinned transport and test dependencies without lifecycle scripts
         id: dependencies
         run: npm install --ignore-scripts --no-audit

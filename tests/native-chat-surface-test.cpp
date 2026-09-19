@@ -124,7 +124,22 @@ int main()
         ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(surface);
         const std::wstring first_url = source(core.Get());
         expect(first_url.starts_with(L"https://chatview.invalid/"), "host-owned memory document");
+        expect(evaluate(core.Get(), LR"JS(
+            globalThis.nativeMessageContract = null;
+            window.chrome.webview.addEventListener('message', event => {
+                if (event.data?.type === 'chat-snapshot') {
+                    globalThis.nativeMessageContract = {
+                        sourceMatches: event.source === window.chrome.webview,
+                        isTrusted: Boolean(event.isTrusted)
+                    };
+                }
+            });
+            true;
+        )JS") == L"true", "observe documented native bridge contract");
         expect(surface.publish(kMessage), "publish synthetic Unicode message");
+        await([&] { return evaluate(core.Get(), L"nativeMessageContract !== null") == L"true"; }, "native bridge event delivered");
+        std::wcout << L"Native bridge contract: " << evaluate(core.Get(), L"nativeMessageContract") << L'\n';
+        expect(evaluate(core.Get(), L"nativeMessageContract.sourceMatches") == L"true", "native event identifies its bridge");
         await([&] { return surface.rendered_frames() == 1U; }, "actual DOM render acknowledgement");
         expect(surface.rendered_messages() == 1U, "one rendered text row");
         expect(evaluate(core.Get(), LR"JS(

@@ -37,7 +37,9 @@ export function connectNativeChat(document, bridge, render, nonce, clock = globa
   let closed = false;
   let lastUpdate = clock.performance.now();
   const listener = event => {
-    if (closed || !event.isTrusted || event.source !== bridge) return;
+    // WebView2 documents source === chrome.webview, not DOM isTrusted.
+    // This receiver runs only in the immutable, nonce-bound native document.
+    if (closed || event.source !== bridge) return;
     // Host chrome has its own message type and does not count as chat liveness.
     if (!event.data || event.data.type !== 'chat-snapshot') return;
     try {

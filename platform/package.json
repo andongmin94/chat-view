@@ -13,10 +13,10 @@
   "overrides": {
     "socket.io-client": {
       "engine.io-client": "3.5.6",
-      "socket.io-parser": "3.3.4",
-      "parseqs": "0.0.6",
-      "parseuri": "0.0.6"
+      "socket.io-parser": "3.3.6"
     },
+    "parseqs": "0.0.6",
+    "parseuri": "2.0.0",
     "engine.io-client": { "xmlhttprequest-ssl": "1.6.3" }
   },
   "devDependencies": {

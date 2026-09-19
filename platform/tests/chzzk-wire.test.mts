@@ -16,7 +16,10 @@ test('documented client 2.0.3 + patched dependencies negotiates EIO3 over real W
   assert.equal(require('socket.io-client/package.json').version, '2.0.3');
   const clientRequire = createRequire(require.resolve('socket.io-client'));
   assert.equal(clientRequire('engine.io-client/package.json').version, '3.5.6');
-  assert.equal(clientRequire('socket.io-parser/package.json').version, '3.3.4');
+  assert.equal(clientRequire('socket.io-parser/package.json').version, '3.3.6');
+  assert.equal(clientRequire('parseuri/package.json').version, '2.0.0');
+  const engineRequire = createRequire(clientRequire.resolve('engine.io-client'));
+  assert.equal(engineRequire('parseuri/package.json').version, '2.0.0');
   const http = createServer();
   const io = new Server(http, { allowEIO3: true, transports: ['websocket'], serveClient: false, perMessageDeflate: false });
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
@@ -27,18 +30,21 @@ test('documented client 2.0.3 + patched dependencies negotiates EIO3 over real W
   io.on('connection', socket => {
     peer = socket;
     assert.equal(socket.conn.protocol, 3); assert.equal(socket.conn.transport.name, 'websocket');
+    assert.equal(socket.handshake.query.auth, 'PRIVATE_TICKET');
     socket.emit('SYSTEM', JSON.stringify({ type: 'connected', data: { sessionKey: 'PRIVATE_KEY' } }));
   });
   const actual = require('socket.io-client');
   const module = require.cache[require.resolve('socket.io-client')]!;
-  // Substitute the destination only in this test's module cache. Production
-  // keeps its strict NAVER URL validation and has no loopback-bypass option.
+  // Substitute only the origin in this test. Preserve the actual ticket query
+  // so URI parsing/encoding is exercised by both client and transport packages.
+  // Production has no loopback-bypass option.
   module.exports = (url: string, options: Record<string, unknown>) => {
-    assert.equal(new URL(url).hostname, 'ssio08.nchat.naver.com');
+    const ticket = new URL(url);
+    assert.equal(ticket.hostname, 'ssio08.nchat.naver.com');
     assert.equal(options.reconnection, false); assert.equal(options.forceNew, true);
     assert.equal(options.forceNode, true); assert.equal(options.rejectUnauthorized, true);
     assert.equal(options.autoConnect, false); assert.deepEqual(options.transports, ['websocket']);
-    return actual(origin, options);
+    return actual(`${origin}${ticket.pathname}${ticket.search}`, options);
   };
   t.after(() => { module.exports = actual; });
   let subscribed = 0; let unsubscribed = 0;

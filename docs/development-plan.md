@@ -1,95 +1,58 @@
 # Development plan and session handoff
 
-Updated: 2026-09-12. Product authority: [PRODUCT.md](../PRODUCT.md).
+Updated: 2026-09-19. Product authority: [PRODUCT.md](../PRODUCT.md).
 
-## Active work and owner decisions
+## Confirmed direction
 
-**OBS is the sole active development/integration branch.** main remains the original Electron product/UX reference and is not merged into the native tree. Do not keep using old work/probe branches as separate development lines.
+OBS is the sole development/integration branch. main is the original Electron product/UX reference, not a native merge target. CHZZK is first. Dual-PC operation must not require OBS on the gaming PC, including portable/hidden OBS or a projector workaround. Keep all five goals: single-screen private HUD, OBS integration and stream exclusion, dual-PC, own platform, and creator-selected ads with viewer-time-related HP/rewards. Do not ask these decisions again or turn the current implementation's limits into product scope.
 
-The owner confirmed CHZZK first and prohibited OBS installation/execution on the gaming PC in a dual-PC setup. The previously proposed gaming-PC OBS/projector video route is withdrawn. These are requirements, not questions for another session.
+## Current work: P1-01a, CHZZK authorization boundary
 
-## Code-quality gate requested before feature expansion
+Starting commit: `a7ea2e7082a84d220db7948371b02893ab7d3ed8`.
 
-Review baseline: `12ce12bd040368112db70d6c0880c4ec55aa4779`. See [code-quality-audit.md](code-quality-audit.md) for the original evidence and limitations, and [lifecycle-fixes.md](lifecycle-fixes.md) for the Q1-Q3 follow-up.
+This change adds the reusable TypeScript official HTTP client and a working local developer connection probe in [platform/README.md](../platform/README.md). It implements authorization-code exchange, refresh, explicit revoke, authenticated user lookup and socket-session URL issuance. The probe performs the browser callback/user lookup flow and exposes explicit session/refresh/revoke actions. No provider credentials/session URLs are exposed to its UI/logs. Refresh is serialized and an ambiguous one-use refresh is not retried.
 
-Cleanup `ba7176a` removed the unused diagnostics/report implementation and its unregistered test (three files), and fixed the reproduced posting-login-versus-readable-chat classification with eleven regression combinations. The active diagnostics exporter/redaction, registered native tests, IPC, capture safeguards, packaging and dependencies were preserved. No new branch or framework was introduced.
+**This is not actual chat ingestion or a deployed platform.** P1-01a's implementation and synthetic-provider tests are complete; real-account validation is still outstanding. P1-01 overall remains open until a real authorized channel supplies chat through a qualified socket transport. There are no empty service modules, public backend, account database, new runtime npm dependencies or changes to the native sources/CMake/installer. The loopback tool is developer-only, not an architecture to ship to ordinary streamers. The existing native HUD remains usable while this separate provider boundary is built.
 
-Checks for that cleanup: original script suite passed; new regression failed original code as expected; corrected script suite/regressions and syntax check passed; repository C++ page-health tests passed under GCC 14.2 with warnings-as-errors and ASan/UBSan. Windows build #273 at `ba7176a` and its Page health script workflow subsequently passed. That is baseline evidence for the next change, not its result.
+Local verification actually executed: 48 Node tests, including real local HTTP request/callback flows with a simulated upstream, passed on Node 22.16.0. Strict TypeScript checks passed on TypeScript 5.8.3 with Node types 25.1.0. Tests cover replay/expiry, wrong cookie/state, CSRF/Host checks, sensitive error suppression, escaped channel text, rejected session URLs, provider errors, token rotation and duplicate refresh. No live credentials, provider network, Windows desktop or physical capture setup was used locally.
 
-**Q1-Q3 follow-up:** the prepared patch is now integrated on top of `ba7176a`. Runtime stability uses elapsed monotonic age with process-liveness validation; Control Center requests idempotent interaction instead of directly showing the HUD; controller Windows-error logging no longer allocates a message string and contains logging exceptions. New CTest coverage and real-HUD smoke assertions accompany the change. The six timing and seventeen interaction scenarios and logging failure tests passed in the portable mocked harness, rerun during integration. The existing Windows workflow must validate the actual integration commit before closing this gate. Do not confuse the original audit's open Q1-Q3 findings with the subsequent implementation or reapply the old downloadable patch blindly.
+The new `CHZZK contract` CI targets Windows/Linux on Node 22/24 and a separate strict type check. Inspect its actual commit's result after integration. Native Windows build remains unchanged and runs independently. Do not reuse a successful baseline as proof of this commit's CI.
 
-## Consolidation record
+## Next executable milestone — P1-01b
 
-Merge `12ce12b` preserves the latest work tree at cfe9421084190b6fa09495d6b546ad7ccdd47e7f and existing OBS head f9ed23ea36744571fd2d495abb28c82202d20b7b as two histories. No force replacement or ancestry-erasing squash was used.
+Choose and verify the concrete official chat transport, connect the API-issued URL, receive SYSTEM connected/sessionKey, call chat subscription, receive a real CHAT event and display it in ChatView-owned UI. Test revoked/unsubscribed/disconnected states and cleanup. Reuse `platform/server/chzzk/api.mts`; do not start a second OAuth client or expand the loopback probe into a public account service.
 
-| Former branch/head | Disposition |
-| --- | --- |
-| obs-preflight-work / cfe9421 | Latest implementation plus product documents integrated into OBS |
-| obs-runtime-telemetry-work / 251f278 | Ancestor already included in latest work |
-| telemetry-staging-probe / 63610b2 | Common ancestor; no separate work lost |
-| __schema_probe__ / 65b9392 | Ancestor; no independent work lost |
-| OBS / f9ed23e | Obsolete one-shot telemetry patch tooling excluded; history retained |
-| main / 496d474 | Original product preserved unchanged |
+Official docs rechecked 2026-09-19 still specify Socket.IO-client 1.0.0 through 2.0.3. No such dependency was introduced here. Investigate dependency/security and protocol compatibility, including actual authorized-channel evidence, before selecting a client. Do not quietly use an unsupported newer version, write a home-grown wire protocol, or call fixtures live verification. Current session-URL validation accepts only HTTPS NAVER nchat subdomains and must be requalified if an official endpoint changes.
 
-At the start of the quality audit the remote branch list contained only OBS and main. Branch deletion was not performed by that audit. Always re-read refs before writing.
+Real-account verification needs the owner's registered developer application and channel consent. Credentials go into private runtime configuration only, never the conversation or repository. Account access is needed to test real behavior, not to repeat the agreed goals.
 
-## Evidence and known failures
+## Dual-PC and advertising gates remain active
 
-Native baseline c82fce0 was preserved through consolidation. Earlier Windows build #271 failed official OBS capture qualification after passing its native tests:
-https://github.com/andongmin94/chat-view/actions/runs/34626547210
+P1-02: investigate an OBS-free native clean-video route and qualify representative hardware. Device pairing is not clean video. Keep the HUD readable on the gaming monitor while excluding it from the recorded feed. Record OS/GPU, capture card/output wiring, window mode, HDR/refresh/DPI, latency/resources and transition/reconnect behavior. No hardware support was demonstrated in this change. Do not return to requiring gaming-PC OBS.
 
-Windows build #272 at `12ce12b` subsequently **passed all workflow stages**, including native tests, package checks, official OBS installation/runtime qualification and artifact upload:
-https://github.com/andongmin94/chat-view/actions/runs/34677416613
+P2: finish one authorized CHZZK channel -> service -> own renderer -> existing transparent HUD, with disconnect/revocation/bounded buffers and a real recording proving private HUD exclusion. Remove replaced external-page/DOM paths only with a working replacement; do not add permanent fallback architectures.
 
-Windows build #273 at `ba7176a` also **passed all workflow stages**, including official OBS qualification and package upload:
-https://github.com/andongmin94/chat-view/actions/runs/34680162067
+P3: extend the existing native runtime to authenticated gaming/streaming roles without local OBS dependency on the gaming PC. Test pairing revocation/expiry/duplicate devices and the actual clean feed. Connect one approved ad end to end: selection -> separate public OBS banner -> evidence -> server-side HP/reward record. Keep synthetic/non-payable evidence out of financial records.
 
-The later passes are not a diagnosed fix for #271. Keep the history and investigate repeatability if it recurs; do not weaken assertions or report #271 as the latest run. Inspect the Windows checks attached to the Q1-Q3 integration commit; neither #272 nor #273 validates that follow-up.
+P4: a bounded paid pilot requires agreed HP/unit/rate/budget/payout rules, provider/data permissions, exposure/fraud review and idempotent accounting/budget caps. Check preview-only sources, cropping/occlusion, expired evidence, simultaneous creators and duplicated reports. A concurrent viewer count is not measured individual ad attention. Public ads and private HUD are separate outputs.
 
-Implemented assets: native plugin and private HUD, rendering/input/placement, native configuration, local transport, recovery/telemetry, active redacted diagnostics, installers/package checks and tests. Not implemented: platform service/accounts, own CHZZK ingestion/UI, OBS-independent gaming-PC session, demonstrated OBS-free dual-PC clean feed, campaign/public-ad/HP/reward system. Missing future modules do not make existing modules unusable.
+## Closed quality gate and historical CI
 
-## Milestones and acceptance
+`ba7176a` removed the unused diagnostics path and corrected read-versus-posting classification. See [code-quality-audit.md](code-quality-audit.md). `a7ea2e7` implemented Q1-Q3 (elapsed stability, HUD-owned interaction, non-allocating error formatter); see [lifecycle-fixes.md](lifecycle-fixes.md). **Windows build #274 at a7ea2e7 passed the complete workflow**: 23 native tests plus five repeats, package checks, official OBS qualification and artifact upload. This was re-fetched at session start; the Q1-Q3 gate is closed, not waiting for a patch to be applied again.
 
-### P0. Product direction and branch consolidation
+- #271, c82fce0: failed capture qualification after native tests. https://github.com/andongmin94/chat-view/actions/runs/34626547210
+- #272, 12ce12b: all stages passed. https://github.com/andongmin94/chat-view/actions/runs/34677416613
+- #273, ba7176a: all stages passed. https://github.com/andongmin94/chat-view/actions/runs/34680162067
+- #274, a7ea2e7: all stages passed. https://github.com/andongmin94/chat-view/actions/runs/34683514443
 
-Five goals and confirmed constraints are in PRODUCT.md; existing development is integrated in OBS with ancestry preserved. Source/test/build preservation was verified at merge. Quality fixes are bounded follow-ups, not another architecture rewrite.
+Later passes do not diagnose the earlier intermittent failure. Preserve assertions and investigate repeatability if it recurs. Q4/Q5 are focused follow-up findings, not permission for another indefinite diagnostics/cleanup project. The broad native READY TO STREAM claim remains to narrow when that UI changes.
 
-### P1. Resolve product-defining feasibility while retaining the native product
+## Branch history preserved
 
-P1-01: implement the smallest official CHZZK authorization/subscription path and verify one real authorized channel. Check protocol/client dependencies, limits, audience-data access and permitted use for the HP proposal. Fixture tests can proceed without credentials but are not live verification.
+Merge 12ce12b retained both OBS f9ed23e and latest work cfe9421. Telemetry 251f278, staging 63610b2 and schema probe 65b9392 were ancestors; their product work was not lost. Obsolete one-shot patch tooling was excluded, not restored. Current remote refs checked at session start: OBS a7ea2e7 and main 496d474 only. Never force-push or delete an advanced ref based on this snapshot.
 
-P1-02: qualify a single-PC capture path and investigate a dual-PC clean feed with OBS absent from the gaming PC. Pairing and private-HUD rendering alone do not pass. Do not return to the rejected gaming-PC OBS proposal or silently require another broadcasting suite. Record hardware, OS, capture/HDMI path, game/window mode, latency/resources, local visibility and recorded exclusion.
+## Outstanding owner details, not blockers to unrelated work
 
-After Windows validation of the bounded code-quality gate above, fix only further blockers to explicit acceptance tests. Do not replace all diagnostics/recovery or spend successive milestones extending them alone. The UI's broad READY TO STREAM claim still needs narrowing when its presentation is changed.
+Representative OBS-free two-PC hardware; HP ownership/unit/display/rate/payout conditions; existing hosting/backend resources; developer application/channel authorization. CHZZK-first and no gaming-PC OBS are already decided. No real-money operation or universal capture guarantee is authorized by this handoff.
 
-### P2. First-party CHZZK chat on the existing HUD
-
-One authorized channel -> provider event -> ChatView service -> ChatView-owned renderer -> existing native transparent HUD. Add the minimum real server/UI, not empty scaffolding. Test reconnect/revocation, bounded buffers, attribution and credential privacy. Keep the current product working until replacement is complete, then remove superseded paths together.
-
-The demo includes actual chat on a game/work screen and a recording showing private HUD exclusion in the selected single-PC configuration.
-
-### P3. OBS-independent gaming companion and one ad loop
-
-Extend the native runtime with a gaming-PC role without local OBS. Pair with the streaming PC through the authenticated session; test revocation, duplicates, expiration and reconnect. Prove clean video on the selected OBS-free gaming-PC path before claiming dual-PC completion.
-
-Connect one approved campaign: selection -> separate public OBS banner -> evidence interval -> server progress -> HP/reward record. Campaign registration can initially be an operator action. Label demo/non-payable data and exclude it from real accounting. Public ad placement and private chat remain separate.
-
-### P4. Bounded paid pilot and expansion
-
-Before real money, agree HP/unit/rate/budget and payout rules; validate provider permissions, evidence quality, fraud review, idempotency and budget caps. Cover hiding/cropping/occlusion, preview-only state, stale evidence, simultaneous creators and duplicate deliveries. Separate estimates, confirmed rewards and actual payments. Expand providers from a working CHZZK path.
-
-## Remaining owner input, not repeated questions
-
-| Item | State |
-| --- | --- |
-| First provider | Decided: CHZZK |
-| Gaming-PC OBS | Decided: prohibited, including OBS video/projector workarounds |
-| Representative OBS-free two-PC hardware | Capture card/ports/display routing, game/window mode and measured resource budget remain to select/test |
-| HP/reward specifics | Global/per-creator HP, unit/rate, display audience, earning and payout conditions remain unspecified |
-| Hosting/backend assets | No separate platform repo/deployment confirmed; modular monolith remains a proposal |
-
-Provider registration and channel authorization are needed for real integration; secrets belong in secure configuration, never chat or commits. Label missing evidence without redefining the product.
-
-## Next session
-
-Read AGENTS.md, the audit follow-up and current OBS refs/CI. First inspect Windows results for the integrated Q1-Q3 changes; once passing, resume CHZZK and OBS-free gaming-PC feasibility. Preserve native assets and avoid another indefinite telemetry/preflight project. End with exact changed/tested commits, honest failures and the next product acceptance test.
+At session end, record actual changed/tested SHA and CI, unverified parts and the next executable acceptance check. Treat the result as P1-01a, not the final platform or P1-01 completion.

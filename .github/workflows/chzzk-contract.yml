@@ -1,0 +1,46 @@
+name: CHZZK contract
+
+on:
+  push:
+    branches: [OBS]
+    paths: ['platform/**', '.github/workflows/chzzk-contract.yml']
+  pull_request:
+    branches: [OBS]
+    paths: ['platform/**', '.github/workflows/chzzk-contract.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-2025-vs2026]
+        node: ['22', '24']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - name: Test HTTP contract and real loopback flow with a simulated provider
+        run: node --experimental-strip-types --test platform/tests/*.test.mts
+      - name: Install pinned type-check tools (not runtime dependencies)
+        run: npm install --prefix .ci/chzzk-types --ignore-scripts --no-save --no-package-lock typescript@5.9.3 @types/node@25.1.0
+      - name: Type check the provider boundary and probe
+        run: >-
+          node .ci/chzzk-types/node_modules/typescript/bin/tsc
+          --noEmit --strict --target es2022 --module nodenext
+          --allowImportingTsExtensions --erasableSyntaxOnly --skipLibCheck
+          --typeRoots .ci/chzzk-types/node_modules/@types
+          platform/server/chzzk/api.mts platform/tools/chzzk-connect.mts
+          platform/tests/chzzk-api.test.mts platform/tests/chzzk-connect.test.mts

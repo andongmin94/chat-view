@@ -355,6 +355,7 @@ void WebViewHost::close() noexcept
     }
 
     ready_ = false;
+    setup_document_url_.clear();
     current_url_.clear();
     local_document_url_.clear();
     local_document_utf8_.clear();
@@ -468,18 +469,24 @@ bool WebViewHost::reload() noexcept
         return false;
     }
     if (current_url_.empty()) {
-        std::wstring document_url;
-        return navigate_local_document(kSetupPage, document_url);
+        return navigate_local_document(kSetupPage, setup_document_url_);
     }
     return SUCCEEDED(webview_->Navigate(current_url_.c_str()));
 }
 
 void WebViewHost::show_setup_page() noexcept
 {
+    // Configuration notifications and Windows resume can request the same
+    // static page repeatedly. Preserve its document instead of growing browser
+    // navigation/history resources. A new chat document still gets a fresh URL;
+    // reload() deliberately bypasses this check for error recovery.
+    if (!local_document_url_.empty() &&
+        local_document_url_ == setup_document_url_) {
+        return;
+    }
     current_url_.clear();
     if (ready_ && webview_) {
-        std::wstring document_url;
-        if (!navigate_local_document(kSetupPage, document_url)) {
+        if (!navigate_local_document(kSetupPage, setup_document_url_)) {
             post_failure(E_FAIL);
         }
     }

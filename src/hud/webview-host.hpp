@@ -82,6 +82,7 @@ private:
     bool editing_ = false;
     std::wstring current_url_;
     std::wstring local_document_url_;
+    std::wstring setup_document_url_;
     std::string local_document_utf8_;
     std::wstring status_text_;
     std::wstring status_tone_ = L"#aeb0b2";

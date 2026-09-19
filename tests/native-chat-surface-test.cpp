@@ -165,9 +165,36 @@ int main()
         expect(surface.publish(LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"revoked","received":1,"messages":[]}})JSON"), "revoke frame");
         await([&] { return surface.rendered_frames() == 3U; }, "revoke applied");
         expect(surface.rendered_messages() == 0U, "revoke clears DOM");
-        host.show_setup_page();
+        const auto setup_navigations = std::make_shared<unsigned int>(0U);
+        EventRegistrationToken setup_navigation_token{};
+        expect(SUCCEEDED(core->add_NavigationStarting(
+            Callback<ICoreWebView2NavigationStartingEventHandler>(
+                [setup_navigations](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *) -> HRESULT {
+                    ++*setup_navigations;
+                    return S_OK;
+                }).Get(), &setup_navigation_token)), "observe setup navigation churn");
+        for (unsigned int request = 0U; request < 12U; ++request) host.show_setup_page();
         expect(!surface.ready() && !surface.publish(kMessage), "setup immediately invalidates private delivery");
         await([&] { return evaluate(core.Get(), L"document.querySelector('h1')?.textContent === 'ChatView needs a chat URL'") == L"true"; }, "setup page actually loads");
+        const std::wstring setup_url = source(core.Get());
+        const std::wstring setup_history = evaluate(core.Get(), L"history.length");
+        expect(evaluate(core.Get(), L"globalThis.setupCanary = true") == L"true", "setup document canary");
+        for (unsigned int request = 0U; request < 12U; ++request) {
+            host.show_setup_page();
+            expect(evaluate(core.Get(), L"globalThis.setupCanary === true") == L"true", "setup DOM survives repeated requests");
+            expect(source(core.Get()) == setup_url, "setup identity is stable");
+        }
+        core->remove_NavigationStarting(setup_navigation_token);
+        expect(*setup_navigations == 1U, "one setup navigation for pending and loaded requests");
+        expect(evaluate(core.Get(), L"history.length") == setup_history, "setup notifications do not grow navigation history");
+        expect(host.reload(), "explicit recovery still reloads setup");
+        await([&] { return source(core.Get()) != setup_url &&
+            evaluate(core.Get(), L"document.querySelector('h1')?.textContent === 'ChatView needs a chat URL'") == L"true"; }, "fresh setup after explicit recovery");
+        expect(evaluate(core.Get(), L"globalThis.setupCanary === undefined") == L"true", "explicit recovery replaces the document");
+        const std::wstring reloaded_setup = source(core.Get());
+        host.show_setup_page();
+        expect(evaluate(core.Get(), L"globalThis.setupCanary === undefined") == L"true" &&
+            source(core.Get()) == reloaded_setup, "recovered setup remains idempotent");
         surface.close(); surface.close();
         expect(surface.open(host), "new own document after close");
         await([&] { return surface.ready(); }, "fresh document handshake");

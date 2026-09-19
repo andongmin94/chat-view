@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { EventEmitter } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import type { TestContext } from 'node:test';
 import { ChzzkApi } from '../server/chzzk/api.mts';
@@ -17,8 +18,21 @@ const standard: Fetch = async url => url.endsWith('/users/me') ?
 
 async function fixture(t: TestContext, provider: Fetch = standard, now?: () => number) {
   const calls: { url: string; init: RequestInit }[] = [];
-  const api = new ChzzkApi(credentials, async (url, init) => { calls.push({ url, init }); return provider(url, init); });
-  const probe = await startProbe({ credentials, port: 0, api, now });
+  class Socket extends EventEmitter {
+    connect() { queueMicrotask(() => this.emit('SYSTEM', { type: 'connected', data: { sessionKey: 'PRIVATE_KEY' } })); }
+    disconnect() {}
+  }
+  let socket: Socket;
+  const api = new ChzzkApi(credentials, async (url, init) => {
+    calls.push({ url, init });
+    if (url.includes('/subscribe/chat?')) queueMicrotask(() => socket.emit('SYSTEM', {
+      type: 'subscribed', data: { channelId: 'my-channel', eventType: 'CHAT' },
+    }));
+    return provider(url, init);
+  });
+  const probe = await startProbe({ credentials, port: 0, api, now,
+    socketFactory: () => { socket = new Socket(); return socket; },
+  });
   t.after(() => probe.close());
   const first = await fetch(`${probe.origin}/`);
   const cookie = first.headers.get('set-cookie')!.split(';')[0];
@@ -58,12 +72,12 @@ test('loopback browser flow reaches authenticated user and session API without l
   assert.match(response.headers.get('content-security-policy')!, /frame-ancestors 'none'/u);
   assert.match(response.headers.get('content-security-policy')!, /form-action 'self' https:\/\/chzzk.naver.com/u);
   assert.equal(response.headers.get('access-control-allow-origin'), null);
-  assert.equal((await f.post('/session')).status, 303);
+  assert.equal((await f.post('/chat/start')).status, 303);
   const sessionPage = await (await f.get('/')).text();
-  assert.match(sessionPage, /소켓 연결용 URL 발급 성공/u);
-  assert.match(sessionPage, /아직 하지 않았습니다/u);
+  assert.match(sessionPage, /채팅 구독 확인 완료/u);
+  assert.match(sessionPage, /실제 수신 여부/u);
   assert.doesNotMatch(sessionPage, /PRIVATE_SESSION|nchat\.naver/u);
-  assert.equal(f.calls.length, 3);
+  assert.equal(f.calls.length, 4);
 });
 
 test('invalid state, cookie and duplicated callback parameters never exchange tokens', async t => {
@@ -128,11 +142,11 @@ test('token rotation is used for subsequent requests and revocation is explicit'
   });
   await f.login();
   assert.equal((await f.post('/refresh')).status, 303);
-  assert.equal((await f.post('/session')).status, 303);
+  assert.equal((await f.post('/chat/start')).status, 303);
   assert.equal(new Headers(f.calls.at(-1)!.init.headers).get('Authorization'), 'Bearer ROTATED_ACCESS');
   assert.equal((await f.post('/revoke')).status, 303);
   assert.equal(JSON.parse(String(f.calls.at(-1)!.init.body)).token, 'ROTATED_ACCESS');
-  assert.equal((await f.post('/session')).status, 400);
+  assert.equal((await f.post('/chat/start')).status, 400);
   assert.doesNotMatch(await (await f.get('/')).text(), /my-channel|ROTATED_|PRIVATE_/u);
 });
 
@@ -144,7 +158,7 @@ test('ambiguous refresh failure discards local credentials rather than retrying 
   await f.login();
   await f.post('/refresh');
   assert.equal((await f.post('/refresh')).status, 400);
-  assert.equal((await f.post('/session')).status, 400);
+  assert.equal((await f.post('/chat/start')).status, 400);
   assert.match(await (await f.get('/')).text(), /다시 로그인/u);
   assert.equal(f.calls.length, 3);
 });

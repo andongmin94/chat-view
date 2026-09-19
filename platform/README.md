@@ -1,59 +1,61 @@
-# CHZZK connection slice — P1-01a
+# CHZZK chat slice — P1-01b
 
-This is an executable developer probe plus the reusable TypeScript CHZZK HTTP client. It is **not** the public platform server, a completed chat integration, or a native HUD replacement. No runtime npm packages, database or new desktop framework are required. The public Express/React/PostgreSQL architecture remains a proposal; the loopback test tool is not its authentication architecture.
+A reusable official API client and a developer-only local chat preview now connect authorization -> session ticket -> Socket.IO -> SYSTEM connected -> POST subscription -> matching SYSTEM subscribed -> CHAT -> ChatView-owned text UI.
 
-## Run locally
+**This is not a deployed multi-user platform, native HUD integration, dual-PC support or an advertising meter.** The old native external-page HUD remains unchanged. Do not enter the probe URL into the native settings; that viewer does not authorize loopback pages.
 
-Use a supported Node.js 22 or 24 release. Register an application in the CHZZK developer center with `유저 정보 조회` and, for the next chat step, `채팅 메시지 조회`. The redirect URI must match exactly:
+## Run
+
+Use Node 22.16+ or Node 24. Register a CHZZK application with `유저 정보 조회` and `채팅 메시지 조회`, with this exact redirect:
 
 ```text
 http://127.0.0.1:47831/callback
 ```
 
-Copy `platform/.env.example` to `platform/.env` on your own machine and enter the application credentials there. It is ignored by Git. Never send the file or its values in chat, commits, screenshots, logs, or diagnostics. These are developer application credentials, not something ordinary streamers should configure.
-
-From the repository root:
+Copy `.env.example` to `.env` in this directory and configure developer credentials privately. Ordinary streamers will not need client secrets. Never commit, paste or screenshot secrets. Do not set `DEBUG`: the upstream library can log sensitive tickets/messages, and the socket factory rejects that configuration.
 
 ```sh
-node --experimental-strip-types --env-file=platform/.env platform/tools/chzzk-connect.mts
+cd platform
+npm install --ignore-scripts
+npm run connect
 ```
 
-Open the printed local address in your system browser, follow the local link, and choose **치지직 로그인**. After consent the page shows only your channel ID/name. The other explicit actions check session-URL issuance, rotate the access/refresh tokens, and revoke the application's tokens. Session URLs are validated but deliberately never sent to the browser or connected by this slice.
+Open the printed loopback address in the system browser. Log in and grant access, choose **채팅 수신 시작 / 재연결**, then open **챗뷰 자체 채팅 화면**. Keep your authorized channel available and send a message using the normal CHZZK client. The preview separately reports subscription confirmation and the first received message; a quiet channel is not automatically a broken connection.
 
-**권한 철회 affects all tokens for the same application/user, potentially disconnecting other devices.** It is an explicit action, never an automatic exit cleanup. Ctrl+C closes the probe and drops its in-memory token references; it does not claim secure memory erasure or server-side revocation. Do not deploy this tool, proxy it onto the internet, bind it to a LAN address, or package the developer client secret in the gaming-PC companion.
+Stopping unsubscribes only this CHAT session and closes its socket. Reconnect uses a new API-issued URL; duplicate start does not create a duplicate subscription. Refresh stops chat before rotating the one-use token. Token expiration or upstream CHAT revocation stops delivery. **권한 철회** is different: it explicitly revokes all this application's tokens for the user and may disconnect other devices. Exiting never performs global revocation.
 
-## What actually works in this slice
+## Boundaries and limits
 
-Authorization URL construction -> one-use, browser-bound callback -> JSON token exchange -> authenticated user lookup -> explicit session ticket issuance/refresh/revoke. The code uses the documented endpoints, camelCase fields, Bearer header and common response envelope. Refresh requests are serialized by the probe and never retried automatically: CHZZK refresh tokens are one-use. An ambiguous refresh failure discards local credentials and requires reauthorization.
+- Only the same authenticated loopback browser can load the preview, assets and event stream. Host, Origin, OAuth state, one-use callbacks, CSRF and cookie checks remain enforced. No access token, session key or ticket is returned to the renderer.
+- The text-only renderer uses text nodes, not HTML insertion or provider-page DOM scraping. It makes no remote media requests. Nickname, content, native channel identifiers, role, verified flag and timestamp are parsed; badges/emojis are not rendered yet. The documented CHAT payload does not provide a unique message ID, so repeated identical messages are not incorrectly deduplicated and no provider ID is invented.
+- At most 100 messages are retained in process memory, with field/serialized-payload bounds. This is not a pre-decoding WebSocket frame-size guarantee. Nothing is written to chat logs, a database or an advertising ledger. Disconnect, unsubscribe, revoke and stop clear the history; the browser also clears on delivery loss.
+- Browser delivery uses same-origin Server-Sent Events, at most four readers, coalesced bursts and slow-reader disconnection. It is a developer preview, not the target public delivery architecture. No LAN binding, proxy exposure, pairing, payout or native privileged IPC is added.
 
-The API client has a fixed HTTPS origin, no redirect following, response size/time bounds and safe error categories. It has no logger or credential getters. The probe binds only to 127.0.0.1; it validates Host, Origin, an action nonce, same-browser cookie and expiring OAuth state. Returned channel text is HTML-escaped. Pages are no-store, use no third-party assets/scripts, and explicitly distinguish session issuance from actual chat reception. Tests use synthetic secrets only.
-
-## Checks
+## Tests and dependency decision
 
 ```sh
-node --experimental-strip-types --test platform/tests/*.test.mts
+npm test
+npm run typecheck
+npm audit --omit=dev --audit-level=low
 ```
 
-The `CHZZK contract` workflow runs the tests on Windows/Linux and Node 22/24 and performs strict TypeScript checking. Its compiler/type tools are installed at pinned top-level versions in an isolated CI directory, not as product runtime dependencies. Node type stripping is execution, not a substitute for the separate type check.
+CHZZK documents Socket.IO-client **1.0.0 through 2.0.3**, WebSocket transport and no automatic reconnect. We select 2.0.3 with explicit upstream security-maintained dependency substitutions: engine.io-client 3.5.6, socket.io-parser 3.3.4, parseqs/parseuri 0.0.6 and xmlhttprequest-ssl 1.6.3. The Engine.IO package brings patched ws 7.5.10. These are library dependencies, not a home-grown framing implementation or a fallback to a newer incompatible Socket.IO protocol.
 
-## Next boundary: socket and messages
+This is a customized dependency graph, **not a claim that NAVER has certified these substitutions**. CI audits it and runs the actual installed client against an actual Socket.IO test server with EIO3 enabled, on Windows/Linux and Node 22/24. It checks the negotiated protocol, subscription, Unicode message delivery and cleanup. The destination is substituted only inside the test's module cache; production has no arbitrary-endpoint switch. Confirm this exact graph with a real authorized CHZZK channel before release.
 
-Official Session documentation checked on 2026-09-19 specifies Socket.IO-client 1.0.0 through 2.0.3, WebSocket transport, `SYSTEM connected` with a sessionKey, then POST chat subscription. Do not assume a current 4.x client works, implement Socket.IO framing yourself, or install an old client into the public service without dependency/security review and a real authorized-channel test. No Socket.IO dependency is installed by this commit.
+Local verification at authoring: 41 tests (existing authentication tests, new session/preview tests), strict type check and renderer syntax check passed. The local runtime cannot download npm packages; actual-library transport and remaining unchanged API tests are delegated to the repository CI. Inspect the latest commit's results in `docs/development-plan.md`. **No real developer credentials or hardware were available; live authorization, real CHZZK events and native-HUD display are not verified.**
 
-P1-01b must select and qualify a concrete transport, then connect the issued URL, subscribe using the received sessionKey, receive CHAT events, and handle unsubscribe/revoke/disconnect. That work, actual message rendering, and native HUD integration are **not complete** here. No synthetic event is presented as a real provider message.
+## Next
 
-Official Live API currently supplies paginated live listings (up to 20 per page) and concurrentUserCount; it does not document individual ad watch time or a per-channel viewer-time billing endpoint. Do not use this probe as proof of HP/ad accounting feasibility. Permissions, sampling and the reward rules remain a separate acceptance gate.
+Use a real authorized channel to verify the exact client/dependency graph. Then connect the reusable session and renderer to the platform/native HUD with narrowly scoped authorization, not by shipping this developer loopback tool or its client secret. Keep the no-gaming-PC-OBS constraint and separate clean-video qualification. Ads, audience measurement, HP and rewards remain separate goals and receive no credit from this preview.
 
-## Sources and evidence
+## Primary references, checked 2026-09-19
 
-Primary documentation rechecked 2026-09-19:
-
-- https://chzzk.gitbook.io/chzzk/chzzk-api/authorization
-- https://chzzk.gitbook.io/chzzk/chzzk-api/tips
-- https://chzzk.gitbook.io/chzzk/chzzk-api/user
 - https://chzzk.gitbook.io/chzzk/chzzk-api/session
-- https://chzzk.gitbook.io/chzzk/chzzk-api/live
+- https://chzzk.gitbook.io/chzzk/chzzk-api/authorization
 - https://socket.io/docs/v2/client-api/
-- https://nodejs.org/docs/latest-v22.x/api/typescript.html
-
-Local evidence: 48 tests passed with Node 22.16.0; strict type checking passed with TypeScript 5.8.3 and Node types 25.1.0. The tests execute real local HTTP requests but **simulate the upstream CHZZK service**. No application credentials were available, so live authorization, real session issuance, live chat and hardware testing were not performed. See `docs/development-plan.md` for the latest remote CI status and next session handoff.
+- https://socket.io/docs/v4/client-installation/#version-compatibility
+- https://github.com/socketio/socket.io-client/blob/2.0.3/package.json
+- https://github.com/socketio/engine.io-client/blob/3.5.6/package.json
+- https://github.com/socketio/socket.io-parser/blob/3.3.4/package.json
+- https://github.com/websockets/ws/security/advisories/GHSA-3h5v-q93c-6h6q

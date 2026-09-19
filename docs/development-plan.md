@@ -1,58 +1,43 @@
 # Development plan and session handoff
 
-Updated: 2026-09-19. Product authority: [PRODUCT.md](../PRODUCT.md).
+Updated: 2026-09-19. Read AGENTS.md and PRODUCT.md first.
 
-## Confirmed direction
+## Non-negotiable direction
 
-OBS is the sole development/integration branch. main is the original Electron product/UX reference, not a native merge target. CHZZK is first. Dual-PC operation must not require OBS on the gaming PC, including portable/hidden OBS or a projector workaround. Keep all five goals: single-screen private HUD, OBS integration and stream exclusion, dual-PC, own platform, and creator-selected ads with viewer-time-related HP/rewards. Do not ask these decisions again or turn the current implementation's limits into product scope.
+Develop on OBS only; preserve main as original UX reference. CHZZK first. The gaming PC must not require OBS, portable/hidden OBS or an OBS projector. Preserve the five goals: single-screen private HUD, OBS integration with stream exclusion, dual-PC, own platform, creator-selected public ads with viewer-time-related HP/rewards. Pairing is not clean video; a heartbeat/message count is not viewer exposure; an estimate is not a payout.
 
-## Current work: P1-01a, CHZZK authorization boundary
+## Current work: P1-01b implementation, not live certification
 
-Starting commit: `a7ea2e7082a84d220db7948371b02893ab7d3ed8`.
+Starting remote commit: `6d65177acfcc336e67801236ac8f4f31b9dc095d`.
 
-This change adds the reusable TypeScript official HTTP client and a working local developer connection probe in [platform/README.md](../platform/README.md). It implements authorization-code exchange, refresh, explicit revoke, authenticated user lookup and socket-session URL issuance. The probe performs the browser callback/user lookup flow and exposes explicit session/refresh/revoke actions. No provider credentials/session URLs are exposed to its UI/logs. Refresh is serialized and an ambiguous one-use refresh is not retried.
+The prior P1-01a authorization client is extended, not replaced. New code connects the issued ticket using Socket.IO, handles SYSTEM connected/sessionKey, POST chat subscription and matching subscribed acknowledgement, receives/validates CHAT and displays it in ChatView's own text renderer. The existing developer loopback tool now starts/stops that session and serves authenticated SSE/preview assets. The obsolete issuance-only `/session` action is removed. API/renderer/session/preview concerns are separate, without a multi-provider framework, database or new desktop runtime.
 
-**This is not actual chat ingestion or a deployed platform.** P1-01a's implementation and synthetic-provider tests are complete; real-account validation is still outstanding. P1-01 overall remains open until a real authorized channel supplies chat through a qualified socket transport. There are no empty service modules, public backend, account database, new runtime npm dependencies or changes to the native sources/CMake/installer. The loopback tool is developer-only, not an architecture to ship to ordinary streamers. The existing native HUD remains usable while this separate provider boundary is built.
+User-visible result after developer authorization: start chat -> subscription confirmed -> first message distinguished -> own chat list. Duplicate starts do not duplicate upstream; reconnect requests a fresh ticket. Stop, disconnect, unsubscribe, CHAT revocation and token expiry stop delivery/clear memory. Refresh stops the old chat before rotating tokens. Global token revoke remains explicit. The renderer treats content as text, has no provider secrets/native IPC and renders no remote media. History is capped at 100 messages; at most four preview clients and bounded/coalesced delivery prevent unbounded consumer queues.
 
-Local verification actually executed: 48 Node tests, including real local HTTP request/callback flows with a simulated upstream, passed on Node 22.16.0. Strict TypeScript checks passed on TypeScript 5.8.3 with Node types 25.1.0. Tests cover replay/expiry, wrong cookie/state, CSRF/Host checks, sensitive error suppression, escaped channel text, rejected session URLs, provider errors, token rotation and duplicate refresh. No live credentials, provider network, Windows desktop or physical capture setup was used locally.
+The concrete client is Socket.IO-client 2.0.3 with explicit patched transitive dependencies, as explained in platform/README.md. CI must audit and exercise the actual installed graph against a real EIO3-enabled Socket.IO test server. A simulator is not NAVER: there are still no real credentials or actual CHZZK messages in the available evidence. Do not claim P1-01 is closed or the public backend/native HUD now supports first-party chat.
 
-The new `CHZZK contract` CI targets Windows/Linux on Node 22/24 and a separate strict type check. Inspect its actual commit's result after integration. Native Windows build remains unchanged and runs independently. Do not reuse a successful baseline as proof of this commit's CI.
+## Verification and source scope
 
-## Next executable milestone — P1-01b
+Local: 41 authentication/session/real-loopback-preview tests passed; strict TypeScript checks and renderer syntax check passed. Old authentication scenarios were retained while the obsolete session-only action assertions became start-chat assertions. Runtime/API exceptions and raw tickets are not returned to the renderer. New tests cover ordering, duplicate events, wrong channel, late callbacks, handshake deadlines, stop/revoke/expiry, payload bounds, SSE authorization and text-node rendering.
 
-Choose and verify the concrete official chat transport, connect the API-issued URL, receive SYSTEM connected/sessionKey, call chat subscription, receive a real CHAT event and display it in ChatView-owned UI. Test revoked/unsubscribed/disconnected states and cleanup. Reuse `platform/server/chzzk/api.mts`; do not start a second OAuth client or expand the loopback probe into a public account service.
+The local environment cannot resolve external hosts or install the new npm graph. Actual-library transport tests and the unchanged API suite must be checked in CHZZK contract CI (Windows/Linux x Node 22/24); do not confuse local mocks with these checks. Dependency manifest generation/audit is part of that run. No new code has been Windows-desktop-tested locally.
 
-Official docs rechecked 2026-09-19 still specify Socket.IO-client 1.0.0 through 2.0.3. No such dependency was introduced here. Investigate dependency/security and protocol compatibility, including actual authorized-channel evidence, before selecting a client. Do not quietly use an unsupported newer version, write a home-grown wire protocol, or call fixtures live verification. Current session-URL validation accepts only HTTPS NAVER nchat subdomains and must be requalified if an official endpoint changes.
+This slice leaves `src/`, native `tests/`, CMake, installation/packaging, capture policy and Windows build workflow unchanged. It adds platform implementation/tests and updates documents/CHZZK CI only. The native source is still the validated a7ea2e7 tree. Neither synthetic chat nor native CI establishes hardware privacy.
 
-Real-account verification needs the owner's registered developer application and channel consent. Credentials go into private runtime configuration only, never the conversation or repository. Account access is needed to test real behavior, not to repeat the agreed goals.
+## CI evidence at session start
 
-## Dual-PC and advertising gates remain active
+- Windows #274 / a7ea2e7: all stages passed, including 23 tests + five repeats, official OBS qualification and package upload. Q1-Q3 quality gate is CLOSED; never reapply the old downloadable patch.
+- Windows #275 / 6d65177: all stages passed, re-fetched at this session's start. https://github.com/andongmin94/chat-view/actions/runs/35447087516
+- CHZZK contract #1 / 6d65177: four Windows/Linux and Node 22/24 jobs passed. https://github.com/andongmin94/chat-view/actions/runs/35447087630
 
-P1-02: investigate an OBS-free native clean-video route and qualify representative hardware. Device pairing is not clean video. Keep the HUD readable on the gaming monitor while excluding it from the recorded feed. Record OS/GPU, capture card/output wiring, window mode, HDR/refresh/DPI, latency/resources and transition/reconnect behavior. No hardware support was demonstrated in this change. Do not return to requiring gaming-PC OBS.
+These validate the baseline, not this new commit. Inspect and record the actual new commit's runs before declaring its CI passed. Older #271 failed intermittent capture qualification; later successes did not diagnose it. Do not weaken assertions or reopen unlimited preflight work.
 
-P2: finish one authorized CHZZK channel -> service -> own renderer -> existing transparent HUD, with disconnect/revocation/bounded buffers and a real recording proving private HUD exclusion. Remove replaced external-page/DOM paths only with a working replacement; do not add permanent fallback architectures.
+## Next acceptance gates
 
-P3: extend the existing native runtime to authenticated gaming/streaming roles without local OBS dependency on the gaming PC. Test pairing revocation/expiry/duplicate devices and the actual clean feed. Connect one approved ad end to end: selection -> separate public OBS banner -> evidence -> server-side HP/reward record. Keep synthetic/non-payable evidence out of financial records.
+1. Inspect the P1-01b commit's npm audit, actual Socket.IO test, all HTTP/UI tests, strict types and native CI. Resolve genuine failures and lock the tested dependency graph before further feature changes.
+2. Real authorized CHZZK app/channel: login -> actual connected/subscribed events -> actual Unicode message in own UI -> unsubscribe/reconnect/revoke. Confirm the exact dependency substitutions with NAVER's endpoint. Only private environment configuration may contain credentials.
+3. P2: production account/device authorization and first-party chat into the existing native HUD, without widening arbitrary external-page privileges or bundling client secrets. Keep the current native feature working until its replacement works end to end; remove superseded page/DOM paths together.
+4. P1-02/P3: OBS-independent gaming companion plus an actually qualified HUD-free feed. No gaming-PC OBS workaround. Record hardware/OS/GPU/capture wiring/window mode/HDR/refresh/latency/resources and simultaneous local readability/recorded exclusion.
+5. P3/P4: one selected public ad -> evidence -> server HP -> reward record, then a bounded paid pilot after metric permissions, budget/idempotency/fraud and payout rules are agreed. Do not use chat counts as audience or synthetic events as payable exposure.
 
-P4: a bounded paid pilot requires agreed HP/unit/rate/budget/payout rules, provider/data permissions, exposure/fraud review and idempotent accounting/budget caps. Check preview-only sources, cropping/occlusion, expired evidence, simultaneous creators and duplicated reports. A concurrent viewer count is not measured individual ad attention. Public ads and private HUD are separate outputs.
-
-## Closed quality gate and historical CI
-
-`ba7176a` removed the unused diagnostics path and corrected read-versus-posting classification. See [code-quality-audit.md](code-quality-audit.md). `a7ea2e7` implemented Q1-Q3 (elapsed stability, HUD-owned interaction, non-allocating error formatter); see [lifecycle-fixes.md](lifecycle-fixes.md). **Windows build #274 at a7ea2e7 passed the complete workflow**: 23 native tests plus five repeats, package checks, official OBS qualification and artifact upload. This was re-fetched at session start; the Q1-Q3 gate is closed, not waiting for a patch to be applied again.
-
-- #271, c82fce0: failed capture qualification after native tests. https://github.com/andongmin94/chat-view/actions/runs/34626547210
-- #272, 12ce12b: all stages passed. https://github.com/andongmin94/chat-view/actions/runs/34677416613
-- #273, ba7176a: all stages passed. https://github.com/andongmin94/chat-view/actions/runs/34680162067
-- #274, a7ea2e7: all stages passed. https://github.com/andongmin94/chat-view/actions/runs/34683514443
-
-Later passes do not diagnose the earlier intermittent failure. Preserve assertions and investigate repeatability if it recurs. Q4/Q5 are focused follow-up findings, not permission for another indefinite diagnostics/cleanup project. The broad native READY TO STREAM claim remains to narrow when that UI changes.
-
-## Branch history preserved
-
-Merge 12ce12b retained both OBS f9ed23e and latest work cfe9421. Telemetry 251f278, staging 63610b2 and schema probe 65b9392 were ancestors; their product work was not lost. Obsolete one-shot patch tooling was excluded, not restored. Current remote refs checked at session start: OBS a7ea2e7 and main 496d474 only. Never force-push or delete an advanced ref based on this snapshot.
-
-## Outstanding owner details, not blockers to unrelated work
-
-Representative OBS-free two-PC hardware; HP ownership/unit/display/rate/payout conditions; existing hosting/backend resources; developer application/channel authorization. CHZZK-first and no gaming-PC OBS are already decided. No real-money operation or universal capture guarantee is authorized by this handoff.
-
-At session end, record actual changed/tested SHA and CI, unverified parts and the next executable acceptance check. Treat the result as P1-01a, not the final platform or P1-01 completion.
+Remaining owner input is real developer authorization, representative dual-PC hardware, HP/rate/payout details and hosting resources. The five goals, first provider and gaming-PC OBS prohibition are not open questions. This slice does not authorize real-money operations or universal capture guarantees.

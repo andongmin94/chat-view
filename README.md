@@ -8,11 +8,11 @@
 
 ## Current implementation
 
-The native Windows branch provides an OBS controller, separate Win32/WebView2 transparent HUD, configuration/diagnostics, external chat URL normalization, click-through/edit modes, DPI/placement persistence, bounded recovery and tests. The latest reviewed native source baseline a7ea2e7 passed Windows build #274 including 23 tests and repeats, official OBS qualification and package upload. Inspect the actual current commit's CI before selecting a package; see the handoff for older failure history.
+The native Windows branch provides an OBS controller, separate Win32/WebView2 transparent HUD, configuration/diagnostics, external chat URL normalization, click-through/edit modes, DPI/placement persistence, bounded recovery and tests. The unchanged native source passed Windows builds #274 and #275 including native tests/repeats, official OBS qualification and package upload. Inspect the actual current commit's CI before selecting a package; see the handoff for older failure history.
 
-New: [CHZZK connection probe and HTTP client](platform/README.md), a developer-only first authorization slice. It exercises login/callback, own-channel lookup, session-URL issuance, token refresh and explicit revocation. It has synthetic-provider tests; **real channel authorization and actual chat reception are not yet verified**. It does not replace the native external-page HUD or constitute the public platform backend.
+New: [CHZZK socket session and own chat preview](platform/README.md). The existing developer-only authentication tool now connects a session, subscribes to CHAT events and delivers bounded, validated text to a ChatView-owned browser renderer. Tests separate HTTP responses, actual Socket.IO library transport and rendering. **Real CHZZK authorization/messages remain unverified without developer credentials.** This loopback preview is not the public backend or the native private HUD.
 
-Still missing: the qualified live-chat socket/own renderer path, platform accounts/backend, authenticated gaming companion, demonstrated OBS-free dual-PC clean video, public ad campaigns, HP accounting and payouts. Safety checks and CI passes are not evidence of those future capabilities.
+Still missing: real-provider qualification, first-party chat inside the native HUD, production accounts/backend, authenticated gaming companion, demonstrated OBS-free dual-PC clean video, public ad campaigns, HP accounting and payouts. Safety checks and CI passes are not evidence of those future capabilities.
 
 ## Install a validated native package
 
@@ -44,7 +44,7 @@ https://weflab.com/page/...
 
 Saving normalizes and applies supported HTTPS/host/path/identifier combinations without restarting OBS. Navigation is bound to the configured chat document and new windows are suppressed. This is the existing usable layer, not the final own-platform architecture.
 
-The current **READY TO STREAM / BLOCKED** label describes local ChatView checks, not audio/encoding/service delivery or actual viewer exposure. Complete provider login inside the restricted external viewer is not guaranteed. The new developer authorization probe is separate and is not enabled by entering its loopback URL here.
+The current **READY TO STREAM / BLOCKED** label describes local ChatView checks, not audio/encoding/service delivery or actual viewer exposure. Complete provider login inside the restricted external viewer is not guaranteed. The new developer chat preview is separate and is not enabled by entering its loopback URL here.
 
 ## Move, resize and lock
 
@@ -75,6 +75,6 @@ ctest --test-dir build/windows-x64 --build-config RelWithDebInfo --output-on-fai
 cmake --install build/windows-x64 --config RelWithDebInfo
 ```
 
-The install tree is `dist/`; `.github/workflows/windows-build.yml` defines packaging/installer/official-OBS checks. Native CTest alone is not a complete package workflow. The separate `CHZZK contract` workflow tests only the new provider/probe boundary, not live access or capture safety.
+The install tree is `dist/`; `.github/workflows/windows-build.yml` defines packaging/installer/official-OBS checks. Native CTest alone is not a complete package workflow. The separate `CHZZK contract` workflow tests the provider/session/preview and library transport, not real CHZZK access or capture safety.
 
-Source layout: `src/common`, `src/plugin`, `src/hud`, `src/config`, `src/diagnostics`, `src/preflight`; native tests in `tests/`; dependency/installation scripts in `scripts/`; new CHZZK client/probe/tests in `platform/`; product and handoff documents in the root and `docs/`.
+Source layout: `src/common`, `src/plugin`, `src/hud`, `src/config`, `src/diagnostics`, `src/preflight`; native tests in `tests/`; dependency/installation scripts in `scripts/`; CHZZK client/session/probe/own web renderer/tests in `platform/`; product and handoff documents in the root and `docs/`.

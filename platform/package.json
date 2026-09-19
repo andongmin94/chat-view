@@ -1,0 +1,27 @@
+{
+  "name": "chatview-platform",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=22.16.0" },
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.mts",
+    "typecheck": "tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext --allowImportingTsExtensions --allowJs --types node server/chzzk/*.mts tools/*.mts tests/*.mts",
+    "connect": "node --experimental-strip-types --env-file=.env tools/chzzk-connect.mts"
+  },
+  "dependencies": { "socket.io-client": "2.0.3" },
+  "overrides": {
+    "socket.io-client": {
+      "engine.io-client": "3.5.6",
+      "socket.io-parser": "3.3.4",
+      "parseqs": "0.0.6",
+      "parseuri": "0.0.6"
+    },
+    "engine.io-client": { "xmlhttprequest-ssl": "1.6.3" }
+  },
+  "devDependencies": {
+    "socket.io": "4.8.3",
+    "typescript": "5.9.3",
+    "@types/node": "22.15.30"
+  }
+}

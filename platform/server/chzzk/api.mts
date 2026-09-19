@@ -75,7 +75,7 @@ export function authorizationUrl(clientId: string, redirectUri: string, state: s
 
 // An API-issued session URL is short-lived and confidential. Accept only the
 // documented NAVER chat service, never an arbitrary endpoint/redirect.
-function sessionUrl(value: unknown): string {
+export function validateSessionUrl(value: unknown): string {
   const raw = text(value, 8192, 'response');
   let url: URL;
   try { url = new URL(raw); } catch { throw new ChzzkError('response'); }
@@ -122,14 +122,14 @@ export class ChzzkApi {
     this.#fetch = fetcher;
   }
 
-  async #request(path: string, accessToken?: string, body?: Record<string, string>, signal?: AbortSignal): Promise<unknown> {
+  async #request(path: string, accessToken?: string, body?: Record<string, string>, signal?: AbortSignal, method: 'GET' | 'POST' = body ? 'POST' : 'GET'): Promise<unknown> {
     const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/json' };
     if (accessToken !== undefined) headers.Authorization = `Bearer ${secret(accessToken)}`;
     const deadline = AbortSignal.timeout(10_000);
     let response: Response;
     try {
       response = await this.#fetch(`${API_ORIGIN}${path}`, {
-        method: body ? 'POST' : 'GET', headers,
+        method, headers,
         body: body ? JSON.stringify(body) : undefined,
         redirect: 'error',
         signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
@@ -178,6 +178,17 @@ export class ChzzkApi {
 
   async createUserSession(accessToken: string, signal?: AbortSignal): Promise<string> {
     const data = record(await this.#request('/open/v1/sessions/auth', accessToken, undefined, signal));
-    return sessionUrl(data.url);
+    return validateSessionUrl(data.url);
+  }
+
+  // CHZZK documents sessionKey as a request parameter, not a JSON body.
+  async subscribeChat(accessToken: string, sessionKey: string, signal?: AbortSignal): Promise<void> {
+    const query = new URLSearchParams({ sessionKey: secret(sessionKey) });
+    await this.#request(`/open/v1/sessions/events/subscribe/chat?${query}`, accessToken, undefined, signal, 'POST');
+  }
+
+  async unsubscribeChat(accessToken: string, sessionKey: string, signal?: AbortSignal): Promise<void> {
+    const query = new URLSearchParams({ sessionKey: secret(sessionKey) });
+    await this.#request(`/open/v1/sessions/events/unsubscribe/chat?${query}`, accessToken, undefined, signal, 'POST');
   }
 }

@@ -88,7 +88,11 @@ export class DisplayGateway {
       // implement framing, ticket parsing, or an alternate transport ourselves.
       this.#server.handleUpgrade(request, socket, head, peer => {
         this.#clients.set(grant.id, peer);
-        const expiry = setTimeout(() => peer.terminate(), this.#access.remaining(grant.id));
+        // A deadline close also retires the grant. Fractional timer rounding
+        // must never leave a just-closed bearer briefly reusable.
+        const expiry = setTimeout(() => {
+          this.#access.revoke(grant.id); peer.terminate();
+        }, Math.ceil(this.#access.remaining(grant.id)));
         expiry.unref();
         peer.on('error', () => peer.terminate());
         // This channel is receive-only. Even valid JSON is not a control API.

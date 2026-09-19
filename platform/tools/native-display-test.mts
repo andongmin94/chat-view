@@ -69,7 +69,7 @@ for (const mode of ['gateway', 'cancel', 'local-expiry', 'redirect', 'wrong-scop
     child.stdout!.setEncoding('utf8');
     child.stdout!.on('data', (chunk: string) => {
       output = (output + chunk).slice(-4096);
-      if (output.includes('rendered\n') && !rendered) {
+      if (/(^|\n)rendered\r?\n/u.test(output) && !rendered) {
         rendered = true; access.revoke(issued.id); gateway.changed();
       }
     });

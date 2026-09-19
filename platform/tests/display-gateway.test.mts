@@ -92,7 +92,7 @@ test('real HTTP ticket exchange and WebSocket deliver only the bounded native di
 
 for (const [headers, status] of [
   [{ Origin: 'https://attacker.invalid' }, 403], [{ 'Sec-Fetch-Site': 'cross-site' }, 403],
-  [{ Host: 'attacker.invalid' }, 403], [{ Authorization: 'Bearer ' + 'a'.repeat(64) }, 401],
+  [{ Authorization: 'Bearer ' + 'a'.repeat(64) }, 401],
 ] as const) {
   test(`exchange rejects forged context ${Object.keys(headers)[0]}`, async t => {
     const f = await fixture(t); const ticket = f.access.issue(); const response = await f.exchange(ticket.ticket, headers);
@@ -100,6 +100,19 @@ for (const [headers, status] of [
     assert.equal((await f.exchange(ticket.ticket)).status, 200); // Failed validation never consumes a valid ticket.
   });
 }
+
+test('exchange rejects an actual forged Host header before consuming the ticket', async t => {
+  const f = await fixture(t); const ticket = f.access.issue();
+  // fetch may replace Host. Use HTTP directly so the wire request actually
+  // carries the forged authority we intend to test, rather than testing fetch.
+  await new Promise<void>((resolve, reject) => {
+    const req = httpRequest(f.origin + '/display/exchange', { method: 'POST', headers: {
+      Host: 'attacker.invalid', Authorization: `ChatView-Ticket ${ticket.ticket}`,
+    } }, res => { res.resume(); try { assert.equal(res.statusCode, 403); resolve(); } catch (e) { reject(e); } });
+    req.on('error', reject); req.end();
+  });
+  assert.equal((await f.exchange(ticket.ticket)).status, 200);
+});
 
 test('exchange rejects request bodies and duplicate authorization headers', async t => {
   const f = await fixture(t); const ticket = f.access.issue();

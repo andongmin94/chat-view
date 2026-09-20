@@ -118,9 +118,9 @@ int wmain(int argc, wchar_t **argv)
         Child child(argv[1]);
         choose(await_window(child, kConsentTitle), IDYES);
         const HWND panel = await_window(child, kPanelTitle);
-        expect(GetDlgItem(panel, 101) && GetDlgItem(panel, 102) && GetDlgItem(panel, 104),
+        expect(GetDlgItem(panel, 101) && GetDlgItem(panel, 107) && GetDlgItem(panel, 104),
                "existing authenticated connection controls available");
-        expect(GetWindowTextLengthW(GetDlgItem(panel, 102)) == 0, "no saved credential in connection panel");
+        expect(GetDlgItem(panel, 102) == nullptr, "no manual credential field in connection panel");
         await_window(child, L"ChatView HUD");
         expect_no_obs_module(child.pid);
         {

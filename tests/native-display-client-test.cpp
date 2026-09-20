@@ -66,7 +66,7 @@ void validate_inputs(const std::wstring &origin, const std::wstring &ticket)
     expect(!client.start(origin, ticket), "plain loopback requires explicit opt-in");
     expect(!client.start(origin, L"not-a-ticket", true), "bad ticket rejected before I/O");
 }
-void gateway_ui(const std::wstring &origin, const std::wstring &ticket)
+void gateway_ui(const std::wstring &origin)
 {
     wchar_t temporary[MAX_PATH]{}; expect(GetTempPathW(MAX_PATH, temporary) != 0, "temporary directory");
     const std::wstring profile = std::wstring(temporary) + L"ChatView-Delivery-" + std::to_wstring(GetCurrentProcessId());
@@ -75,15 +75,20 @@ void gateway_ui(const std::wstring &origin, const std::wstring &ticket)
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     chatview::HudWindow hud;
     expect(hud.create(GetModuleHandleW(nullptr), ready.get()), "create production HUD");
-    chatview::NativeChatConnection connection(hud);
+    chatview::NativeChatConnection connection(hud, [](HWND, const wchar_t *url) {
+        const std::wstring value(url);
+        expect(value.starts_with(L"http://127.0.0.1:") && value.find(L"/login/") != std::wstring::npos,
+               "browser launch uses only the validated service login URL");
+        std::cout << "browser-opened\n" << std::flush; return true;
+    });
     hud.show_ready();
     await([&] { return WaitForSingleObject(ready.get(), 0) == WAIT_OBJECT_0; }, "HUD startup", &connection);
     HWND dialog = chatview::NativeChatConnectionTestAccess::dialog(connection);
     expect(dialog != nullptr, "open native connection panel");
-    SetDlgItemTextW(dialog, 101, origin.c_str()); SetDlgItemTextW(dialog, 102, ticket.c_str());
+    SetDlgItemTextW(dialog, 101, origin.c_str());
     SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
     SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(104, BN_CLICKED), 0);
-    expect(GetWindowTextLengthW(GetDlgItem(dialog, 102)) == 0, "connection key cleared from panel");
+    expect(GetDlgItem(dialog, 102) == nullptr && GetDlgItem(dialog, 107) != nullptr, "login panel has no manual key input");
     auto &surface = chatview::NativeChatConnectionTestAccess::surface(connection);
     await([&] { return surface.rendered_messages() == 1U; }, "WinHTTP gateway frame rendered", &connection);
     Microsoft::WRL::ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(surface);
@@ -92,7 +97,6 @@ void gateway_ui(const std::wstring &origin, const std::wstring &ticket)
         document.querySelector('#messages li .content').textContent === '안녕 😀 <img onerror=evil()>' &&
         document.querySelectorAll('#messages img,#messages script').length === 0
     )JS", connection) == L"true", "real DOM Unicode/inert markup");
-    // The fixture revokes the grant only after observing this acknowledgement.
     std::cout << "rendered\n" << std::flush;
     await([&] { return !chatview::NativeChatConnectionTestAccess::active(connection); }, "grant revoke ends native delivery", &connection);
     await([&] { return evaluate(core.Get(), L"document.querySelectorAll('#messages li').length === 0", connection) == L"true"; },
@@ -145,7 +149,7 @@ int main(int argc, char **argv)
         validate_inputs(origin, ticket);
         if (std::string(argv[1]) == "gateway") {
             expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM startup");
-            try { gateway_ui(origin, ticket); } catch (...) { CoUninitialize(); throw; }
+            try { gateway_ui(origin); } catch (...) { CoUninitialize(); throw; }
             CoUninitialize();
         } else transport(origin, ticket, argv[1]);
         std::cout << "Native display scenario passed\n"; return 0;

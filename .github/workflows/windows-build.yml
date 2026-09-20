@@ -58,7 +58,7 @@ jobs:
           native=false
           while IFS= read -r -d '' file; do
             case "$file" in
-              src/*|tests/*|cmake/*|scripts/*|data/*|CMakeLists.txt|CMakePresets.json|.github/workflows/windows-build.yml|platform/package.json|platform/package-lock.json|platform/server/chat/*|platform/web/chat-renderer.js|platform/web/native-chat.js|platform/tools/native-display-test.mts)
+              src/*|tests/*|cmake/*|scripts/*|data/*|CMakeLists.txt|CMakePresets.json|.github/workflows/windows-build.yml|platform/package.json|platform/package-lock.json|platform/server/chat/*|platform/web/chat-renderer.js|platform/web/native-chat.js|platform/tools/native-display-test.mts|platform/tools/session-display-test.mts)
                 native=true ;;
             esac
           done < "$RUNNER_TEMP/chatview-changes"

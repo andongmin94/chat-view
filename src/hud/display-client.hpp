@@ -5,34 +5,34 @@
 #include <thread>
 
 namespace chatview {
-enum class DisplayStatus { Idle, Connecting, Receiving, Ended, Failed };
+enum class DisplayStatus { Idle, Connecting, AwaitingLogin, Receiving, Reconnecting, Denied, SignedOut, Ended, Failed };
+enum class DisplayAuthentication { OneTime, Remember, Saved, SignOut, Browser, BrowserRemember };
 struct DisplayUpdate {
     DisplayStatus status = DisplayStatus::Idle;
     std::wstring envelope;
     bool subscribed = false;
 };
-
-// Owner-thread API, worker-owned asynchronous WinHTTP transport. No HWND,
-// WebView, OBS callback, provider credential, or persistent token storage.
+// Owner-thread API, worker-owned asynchronous WinHTTP. Remembered session credentials are
+// separate from short display tokens and never enter the renderer or OBS.
 class DisplayClient final {
 public:
     DisplayClient() = default;
     ~DisplayClient();
     DisplayClient(const DisplayClient &) = delete;
     DisplayClient &operator=(const DisplayClient &) = delete;
-    // HTTPS origin only, except explicit literal 127.0.0.1 developer opt-in.
-    // The ticket is consumed once; no automatic exchange replay or renewal.
-    [[nodiscard]] bool start(std::wstring origin, std::wstring ticket,
-                             bool developer_loopback = false) noexcept;
-    // Signals cancellation and clears pending content; never waits for network.
+    [[nodiscard]] bool start(std::wstring origin, std::wstring credential,
+                             bool developer_loopback = false,
+                             DisplayAuthentication authentication = DisplayAuthentication::OneTime) noexcept;
     void stop() noexcept;
-    // One latest snapshot only, with owner-thread monotonic expiry enforcement.
+    // One browser URL, built from the validated origin and a fixed login path.
+    [[nodiscard]] bool take_login_url(std::wstring &url) noexcept;
     [[nodiscard]] bool take(DisplayUpdate &update) noexcept;
     [[nodiscard]] bool running() const noexcept;
 private:
     struct State;
     static void run(const std::shared_ptr<State> &state, std::wstring origin,
-                    std::wstring ticket, bool developer_loopback) noexcept;
+                    std::wstring credential, bool developer_loopback,
+                    DisplayAuthentication authentication) noexcept;
     std::shared_ptr<State> state_;
     std::thread worker_;
 };

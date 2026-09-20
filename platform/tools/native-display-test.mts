@@ -42,6 +42,7 @@ for (const mode of ['gateway', 'cancel', 'local-expiry', 'redirect', 'wrong-scop
       assert.equal(request.headers.cookie, undefined);
       if (request.url === '/display/login') loginStarts++;
       else if (request.url === `/display/login/${loginId}`) loginPolls++;
+      else if (request.url === '/display/refresh') { /* revoked renewal must fail through the session gateway */ }
       else assert.fail('native login must not submit a manual display ticket');
       assert(sessionGateway.handle(request, response)); return;
     }

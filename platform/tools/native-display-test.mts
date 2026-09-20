@@ -90,7 +90,7 @@ for (const mode of ['gateway', 'cancel', 'local-expiry', 'redirect', 'wrong-scop
         assert(loginId); browserOpened = true; sessionGateway.login.approve(loginId);
       }
       if (/(^|\n)rendered\r?\n/u.test(output) && !rendered) {
-        rendered = true; assert(grantId); access.revoke(grantId); gateway.changed();
+        rendered = true; assert(grantId); access.revokeSessions(); gateway.changed();
       }
     });
     let errors = '';

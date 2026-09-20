@@ -56,6 +56,7 @@ export class DisplaySessionGateway {
       if (request.headers['transfer-encoding'] !== undefined ||
           (request.headers['content-length'] !== undefined && request.headers['content-length'] !== '0'))
         throw new DisplayAccessError(400);
+      // Persistence is a native-client choice. This hint only shapes the browser consent text.
       const remember = request.headers['x-chatview-remember'];
       if (remember !== undefined && (request.url !== '/display/login' || remember !== '1'))
         throw new DisplayAccessError(400);

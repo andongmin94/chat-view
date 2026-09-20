@@ -17,9 +17,9 @@ The existing C++/Win32/WebView2/DirectComposition runtime and the separate OBS/H
 
 ## One runtime, two lifecycle roles
 
-OBS-controlled launch validates its parent and local shared memory/events and exits with that parent. Explicit `--companion` skips local OBS transport, shows a development/privacy warning, opens the existing connection panel after readiness and provides local quit/single-instance handling. Invalid OBS arguments do not fall back to companion. Both roles reuse the same HUD, input, placement, recovery and authenticated display code. The companion currently has no remote OBS capture-state authority or automatic device renewal.
+OBS-controlled launch validates its parent and local shared memory/events and exits with that parent. Explicit `--companion` skips local OBS transport, shows a development/privacy warning, opens the existing connection panel after readiness and provides local quit/single-instance handling. Invalid OBS arguments do not fall back to companion. Both roles reuse the same HUD, input, placement, recovery and authenticated display code. The companion now has renewable private-chat login continuity, but it still has no streaming-PC role/session authority or remote OBS capture-state authority.
 
-In a target dual-PC session, the gaming companion and the streaming PC's runtime connect outbound to the platform with distinct revocable device roles. Only the assigned streaming side reports OBS output state; extra HUDs are not additional audience or reward sources. Pairing approval is short-lived and one-use, while device credentials and renewal must be scoped, revocable and persist safely. Reuse the existing display lease contract rather than exposing provider tokens or building a second generic authentication framework.
+In a target dual-PC session, the gaming companion and the streaming PC's runtime connect outbound to the same creator/broadcast session with distinct revocable roles. Only the assigned streaming side reports OBS output state; extra HUDs are not additional audience or reward sources. Extend the existing browser-login and renewable ChatView session rather than creating a separate mandatory hardware-registration product or exposing provider tokens. Cross-PC role approval still needs scoped revocation and safe persistence.
 
 ## Control data is not game video
 
@@ -36,7 +36,7 @@ Streaming PC: OBS + ChatView plugin
 
 The OBS-free clean-video mechanism is still an engineering/hardware feasibility requirement. Do not claim a selected or proven implementation. A composited HDMI clone already containing HUD pixels cannot be cleaned by receiving-side window metadata. Windows capture affinity is not physical-HDMI exclusion. Investigate maintained native OS capture/output facilities before introducing capture hooks, drivers, custom encoders or another broadcasting suite.
 
-Support requires simultaneously readable local chat and HUD-free recorded output on a documented topology with no gaming-PC OBS. Record GPU, wiring/capture device, window mode, DPI/HDR/refresh rate, latency and resource use. Device registration may proceed while hardware is unavailable; that does not close this requirement. Current protective HUD suppression remains until a verified supported path replaces it, and is never counted as success of the readable-HUD goal.
+Support requires simultaneously readable local chat and HUD-free recorded output on a documented topology with no gaming-PC OBS. Record GPU, wiring/capture device, window mode, DPI/HDR/refresh rate, latency and resource use. Creator/session and two-PC role work may proceed while hardware is unavailable; that does not close this requirement. Current protective HUD suppression remains until a verified supported path replaces it, and is never counted as success of the readable-HUD goal.
 
 ## First-party chat and service growth
 

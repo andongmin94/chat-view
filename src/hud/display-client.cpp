@@ -54,7 +54,8 @@ std::wstring login_verifier()
 std::wstring login_challenge(const std::wstring &verifier)
 {
     require(key(verifier));
-    std::string ascii(verifier.begin(), verifier.end());
+    std::string ascii; ascii.reserve(verifier.size());
+    for (const wchar_t value : verifier) ascii.push_back(static_cast<char>(value));
     std::array<unsigned char, 32> bytes{};
     const auto status = BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0,
         reinterpret_cast<PUCHAR>(ascii.data()), static_cast<ULONG>(ascii.size()), bytes.data(), static_cast<ULONG>(bytes.size()));

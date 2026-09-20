@@ -7,32 +7,41 @@
 
 namespace chatview {
 class HudWindow;
-// Owner-thread coordinator. Networking, immutable display and HWND safety stay
-// separate; this object never changes HUD visibility or broadcasts commands.
 class NativeChatConnection final {
 public:
-    explicit NativeChatConnection(HudWindow &hud) noexcept;
+    using BrowserLauncher = bool (*)(HWND, const wchar_t *);
+    explicit NativeChatConnection(HudWindow &hud, BrowserLauncher browser = nullptr) noexcept;
     ~NativeChatConnection();
     NativeChatConnection(const NativeChatConnection &) = delete;
     NativeChatConnection &operator=(const NativeChatConnection &) = delete;
     bool dispatch(MSG &message) noexcept;
     void open_dialog() noexcept;
     void tick() noexcept;
-    [[nodiscard]] DWORD wait_timeout() const noexcept { return active_ ? 100U : INFINITE; }
+    [[nodiscard]] DWORD wait_timeout() const noexcept { return active_ || auto_connect_pending_ || forget_pending_ || signing_out_ ? 100U : INFINITE; }
     void close() noexcept;
 private:
     friend struct NativeChatConnectionTestAccess;
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
     void connect() noexcept;
+    void begin(std::wstring origin, std::wstring credential, bool local, DisplayAuthentication mode) noexcept;
+    bool open_surface() noexcept;
+    void forget() noexcept;
     void end(const wchar_t *notice, bool preserve_host = false) noexcept;
     void notice(const wchar_t *text) noexcept;
     HudWindow &hud_;
+    BrowserLauncher browser_;
     DisplayClient client_;
     NativeChatSurface surface_;
     HWND dialog_ = nullptr;
     bool hotkey_ = false;
     bool active_ = false;
     bool ready_ = false;
+    bool awaiting_login_ = false;
+    bool auto_connect_pending_ = true;
+    bool remembered_ = false;
+    bool reconnecting_ = false;
+    bool forget_pending_ = false;
+    bool signing_out_ = false;
     bool pending_subscribed_ = false;
     bool in_flight_subscribed_ = false;
     bool displayed_subscribed_ = false;

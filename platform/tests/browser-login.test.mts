@@ -43,7 +43,10 @@ test('unrelated app, public URL id and malformed verifier cannot claim or consum
       assert.throws(() => s.login.poll(request.id, invalid), denied(401));
     const result = s.login.poll(request.id, s.verifier);
     assert.equal(result.status, 'approved');
-    if (result.status === 'approved') assert.equal(result.lease.sessionToken, undefined);
+    if (result.status === 'approved') {
+      assert.equal(result.lease.sessionScope, 'chat:renew');
+      assert.equal(typeof result.lease.sessionToken, 'string');
+    }
   } finally { s.access.close(); }
 });
 test('denial, expiry and changed channel never deliver private chat', () => {

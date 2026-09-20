@@ -20,6 +20,7 @@ for (const mode of ['gateway', 'cancel', 'local-expiry', 'redirect', 'wrong-scop
   const access = new DisplayAccess(() => ({ id: 'synthetic-owner', expiresAt: performance.now() + 60000 }));
   const issued = access.issue();
   const token = randomBytes(32).toString('hex');
+  const renewal = randomBytes(32).toString('hex');
   const gateway = new DisplayGateway(access, () => origin, () => snapshot);
   const sessionGateway = new DisplaySessionGateway(access, () => origin, () => gateway.changed());
   let loginId = '', grantId = '', browserOpened = false, loginStarts = 0, loginPolls = 0;
@@ -54,7 +55,8 @@ for (const mode of ['gateway', 'cancel', 'local-expiry', 'redirect', 'wrong-scop
     response.setHeader('Content-Type', 'application/json');
     response.end(JSON.stringify({ id: issued.id, token,
       expiresInMs: mode === 'local-expiry' ? 1000 : 30000,
-      scope: mode === 'wrong-scope' ? 'account:admin' : 'chat:read' }));
+      scope: mode === 'wrong-scope' ? 'account:admin' : 'chat:read',
+      sessionToken: renewal, sessionExpiresInMs: 60000, sessionScope: 'chat:renew' }));
   });
   server.on('upgrade', (request, socket, head) => {
     upgrades++;

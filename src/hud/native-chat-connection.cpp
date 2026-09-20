@@ -231,7 +231,7 @@ void NativeChatConnection::tick() noexcept
                     if (dialog_ && IsWindowVisible(dialog_)) SetForegroundWindow(dialog_);
                 }
                 reconnecting_ = false; pending_ = std::move(update.envelope); pending_subscribed_ = update.subscribed;
-                notice(update.subscribed ? (remembered_ ? L"채팅 연결을 유지하고 있습니다. 읽기 권한은 자동 갱신됩니다." : L"임시 읽기 연결입니다. 권한 만료 시 종료됩니다.") : L"서비스에 연결됐습니다. 채팅 구독을 기다립니다.");
+                notice(update.subscribed ? (remembered_ ? L"채팅 연결을 유지하고 있습니다. 읽기 권한은 자동 갱신됩니다." : L"현재 실행 중 읽기 권한을 자동 갱신합니다. 다음 실행에는 다시 로그인합니다.") : L"서비스에 연결됐습니다. 채팅 구독을 기다립니다.");
             }
         }
         if (awaiting_login_) {

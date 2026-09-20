@@ -4,20 +4,27 @@ Updated: 2026-09-20. This documents the implemented service boundary, not projec
 
 ## Implemented path and authority
 
-`platform/server/chat/display-access.mts` and `display-gateway.mts` share one creator-authorized upstream session with bounded read-only displays. The local developer probe invokes these modules; the native WinHTTP consumer and connection panel are already connected to them. Do not implement those layers again. This is not persistent machine identity, account/device enrollment, public deployment or verified audience exposure.
+`DisplayAccess`, `DisplaySessionGateway` and `DisplayGateway` share one creator-authorized upstream session with bounded read-only displays. The session gateway owns browser-login, renewal and logout HTTP operations; the display gateway owns the read-only WebSocket stream. The local developer probe composes both with the CHZZK session; the native WinHTTP consumer and connection panel are connected to them. Do not rebuild these layers as a separate device-registration product.
 
-## Existing protocol
+This is not a deployed multi-user account service, persistent hardware identity, physical two-PC capture proof or verified audience exposure. A remembered ChatView login authorizes private chat only; it is not a provider credential, viewer identity or advertising/reward authority.
+
+## Browser login and session protocol
 
 | Operation | Authentication and effect |
 | --- | --- |
-| Probe `POST /display/ticket?csrf=...` | Cookie-authenticated/CSRF-checked management action; returns a random 256-bit, one-use ticket valid at most 60 seconds; only the digest is retained. |
-| `POST /display/exchange` | Empty body; `Authorization: ChatView-Ticket <ticket>`. Consumes once and returns `{id, token, expiresInMs, scope:"chat:read"}`. Lost response needs new approval, not ticket replay. |
-| Upgrade `/display/events` | `Authorization: Bearer <token>`; standard WebSocket text snapshots. One connection per grant, four pending/active grants per creator context. |
-| Probe `POST /display/revoke?csrf=...` | Authenticated management action; revokes displays without globally revoking CHZZK tokens. The module also supports an individual grant. |
+| `POST /display/login` | Native sends `Authorization: ChatView-Challenge <sha256(verifier)>`; optional `X-ChatView-Remember: 1` affects consent/persistence intent only. Returns a random request id and exact `/login/<id>` verification path. |
+| Browser `/login/<id>` | Same-browser protected CHZZK consent resolves the creator/channel, starts the authorized chat session and requires explicit approval. The URL id cannot collect the resulting credential. |
+| `POST /display/login/<id>` | Native polls with `Authorization: ChatView-Login <verifier>`. Approval is one-use and bound to the same owner and authorization generation; revoke/reauthorize invalidates uncollected approval. |
+| `POST /display/refresh` | `Authorization: ChatView-Session <renewal>`. Mints a fresh short `chat:read` lease without replaying browser approval. |
+| `POST /display/signout` | Revokes that remembered/current ChatView renewal session. It does not globally revoke CHZZK unless the creator separately chooses provider revocation. |
+| Upgrade `/display/events` | `Authorization: Bearer <short display token>`; standard WebSocket text snapshots. One connection per grant. |
+| Legacy/developer `POST /display/exchange` | One-use `ChatView-Ticket` compatibility path. It is not the normal native UX and must not reappear as a manual-key requirement. |
 
-A lease lasts at most five minutes and never exceeds the creator authorization. It is a confidential transferable capability, not proof of a physical device. The short development lease must evolve into safely renewed device access, not final-user manual five-minute reconnection. Keep credentials out of query strings, WebSocket subprotocols, diagnostics, renderer messages and process arguments.
+Every explicit browser approval receives a renewable ChatView session for the current app run, so a long broadcast does not require reapproval every five minutes. The native **remember this PC** choice controls only whether that renewal credential is persisted across restarts. Server persistence stores only a hash; Windows persistence uses user-scoped protection. Provider tokens and chat content are not part of remembered display state.
 
-TLS is required outside explicit literal-loopback development. The gateway checks actual request TLS rather than trusting arbitrary forwarding headers. Public deployment needs an explicit trust configuration; the loopback probe must not simply be exposed to the internet.
+Short display leases still bound individual WebSocket exposure. The renewal session is separately revocable and cannot be used as a display bearer, provider token, account-management credential or financial credential. Keep all credential classes out of query strings, WebSocket subprotocols, diagnostics, renderer messages and process arguments.
+
+TLS is required outside explicit literal-loopback development. The session/display gateways check actual request TLS rather than trusting arbitrary forwarding headers. Public deployment needs explicit reverse-proxy trust and multi-user account/channel isolation; the loopback probe must not simply be exposed to the internet.
 
 ## Display data and bounds
 
@@ -29,10 +36,12 @@ The gateway reuses `nativeChatSnapshot` from `platform/web/native-chat.js` to wh
 
 Only bounded state/count, nickname/content/time reach the display; provider secrets, sender identifiers, unknown fields, window commands and financial actions do not. Non-subscribed/invalid snapshots clear old text. Incoming application commands close the read-only peer.
 
-The existing ws dependency owns framing/upgrades. Frames are bounded to 2 MiB UTF-8 and the shared validator accepts at most 100 text rows. Updates coalesce over 50 ms; a peer with an outstanding buffered frame is disconnected instead of queued indefinitely. Five-second status frames maintain delivery liveness independently of new chat. The server enforces expiry before sends and at deadlines; expiry invalidates the grant as well as closing the socket.
+The existing ws dependency owns framing/upgrades. Frames are bounded to 2 MiB UTF-8 and the shared validator accepts at most 100 text rows. Updates coalesce over 50 ms; a peer with an outstanding buffered frame is disconnected instead of queued indefinitely. Status frames maintain delivery liveness independently of new chat. The server and native client enforce lease/session expiry and stop old display authorization before continuing with a replacement.
 
-Authorization expiry/change, upstream revocation and shutdown clear grants. Explicit display revocation leaves the creator's provider subscription intact. The native consumer also clears content and enforces its own deadline on transport/authorization loss. Window/capture policy belongs to the HUD, not this protocol.
+Authorization expiry/change, upstream revocation and logout clear affected grants. Native transport loss clears old chat and uses bounded retry only while a renewable ChatView session remains valid. Window/capture policy belongs to the HUD, not this protocol.
 
 ## Verification boundary
 
-Contract tests use actual local HTTP/WebSocket/library traffic, shared-renderer validation and synthetic creator/provider data. They cover credential separation, replay, CSRF/Host/Origin, Unicode, duplicates, expiry, revocation and invalid input. A backpressure case controls buffered-byte observation. Actual Windows transport/DOM tests are separate. Neither suite proves live NAVER approval, deployed account security, physical two-PC capture or payable advertising exposure. Exact results and open defects live only in development-plan.md.
+Contract tests use actual local HTTP/WebSocket/library traffic, shared-renderer validation, SQLite session persistence and synthetic creator/provider data. They cover verifier/challenge separation, explicit consent, approval replay, revocation generation, renewal/logout, credential separation, CSRF/Host/Origin, Unicode, expiry and invalid input. Windows native tests separately exercise WinHTTP, protected persistence and actual WebView2 DOM.
+
+Neither suite proves live NAVER approval, deployed multi-user account security, physical two-PC capture or payable advertising exposure. Exact current results and open defects live only in development-plan.md.

@@ -57,14 +57,14 @@ export class DisplaySessionGateway {
           (request.headers['content-length'] !== undefined && request.headers['content-length'] !== '0'))
         throw new DisplayAccessError(400);
       const remember = request.headers['x-chatview-remember'];
-      if (remember !== undefined && (!['/display/login', '/display/exchange'].includes(request.url!) || remember !== '1'))
+      if (remember !== undefined && (request.url !== '/display/login' || remember !== '1'))
         throw new DisplayAccessError(400);
       const result = polling ? this.login.poll(polling[1]!, authorization(request, 'ChatView-Login'))
         : request.url === '/display/login' ? this.login.start(authorization(request, 'ChatView-Challenge'), remember === '1')
         : request.url === '/display/refresh' ? this.#access.resume(authorization(request, 'ChatView-Session'))
         : request.url === '/display/signout'
           ? (this.#access.signout(authorization(request, 'ChatView-Session')), { signedOut: true })
-          : this.#access.exchange(authorization(request, 'ChatView-Ticket'), remember === '1');
+          : this.#access.exchange(authorization(request, 'ChatView-Ticket'));
       this.#changed();
       response.writeHead(200);
       response.end(JSON.stringify(result));

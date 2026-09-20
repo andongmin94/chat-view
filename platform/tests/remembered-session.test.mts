@@ -46,9 +46,11 @@ test('temporary connect stores no remembered login; stopping a lease does not lo
   const access = new DisplayAccess(() => ({ id: 'a', expiresAt: 999999 }), () => 0);
   try {
     const temporary = access.exchange(access.issue().ticket);
-    assert.equal(temporary.sessionToken, undefined);
-    assert.equal(temporary.sessionScope, undefined);
+    assert.equal(temporary.sessionScope, 'chat:renew');
+    assert.equal(typeof temporary.sessionToken, 'string');
     assert.equal(temporary.expiresInMs, 300000);
+    // The server permits in-run renewal; persistence remains a native-client choice.
+    assert.equal(access.active(access.resume(temporary.sessionToken).id), true);
     const login = access.exchange(access.issue().ticket, true);
     access.revoke(login.id);
     assert.equal(access.active(login.id), false);

@@ -58,12 +58,14 @@ export class DisplayAccess {
     const entry = [...this.#entries.values()].find(value => value.kind === 'ticket' && value.digest === hash);
     if (!entry) throw new DisplayAccessError(401);
     this.#entries.delete(entry.id);
-    const session = remember ? this.#sessions.create(owner.id) : undefined;
+    // Every explicit approval gets a renewable app-session for the current run.
+    // `remember` decides only whether the native client persists that session.
+    const session = this.#sessions.create(owner.id);
     const token = secret();
-    const expiresAt = Math.min(owner.expiresAt, now + DISPLAY_LEASE_MS, now + (session?.expiresInMs ?? DISPLAY_LEASE_MS));
+    const expiresAt = Math.min(owner.expiresAt, now + DISPLAY_LEASE_MS, now + session.expiresInMs);
     this.#entries.set(entry.id, { ...entry, digest: hashSecret(token), kind: 'lease', expiresAt, session: session?.id });
     return { id: entry.id, token, expiresInMs: Math.floor(expiresAt - now), scope: DISPLAY_SCOPE,
-      ...(session ? { sessionToken: session.token, sessionExpiresInMs: session.expiresInMs, sessionScope: 'chat:renew' } : {}) };
+      sessionToken: session.token, sessionExpiresInMs: session.expiresInMs, sessionScope: 'chat:renew' };
   }
   resume(token: unknown) {
     const session = this.#sessions.find(token);

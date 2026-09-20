@@ -243,7 +243,9 @@ bool DisplayClient::start(std::wstring origin, std::wstring credential, bool loc
         const bool browser = authentication == DisplayAuthentication::Browser || authentication == DisplayAuthentication::BrowserRemember;
         require(browser ? credential.empty() : key(credential)); (void)endpoint(origin, local);
         auto state = std::make_shared<State>(); require(static_cast<bool>(state->cancel));
-        state->reusable = authentication == DisplayAuthentication::Saved || authentication == DisplayAuthentication::Remember || authentication == DisplayAuthentication::BrowserRemember; state_ = state;
+        // Every successful login/exchange receives an in-run renewal session.
+        // Remember/BrowserRemember additionally persist it on this Windows user.
+        state->reusable = authentication != DisplayAuthentication::SignOut; state_ = state;
         worker_ = std::thread(&DisplayClient::run, state, std::move(origin), std::move(credential), local, authentication);
         return true;
     } catch (...) { if (state_) { state_->finish(DisplayStatus::Failed); state_->finished.store(true); } return false; }
@@ -331,15 +333,16 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
             }
             authentication = keep ? DisplayAuthentication::Remember : DisplayAuthentication::OneTime;
         }
-        bool remembered = authentication == DisplayAuthentication::Saved;
+        bool renewable = authentication == DisplayAuthentication::Saved;
+        bool persisted = authentication == DisplayAuthentication::Saved;
         unsigned int failures = 0;
         while (WaitForSingleObject(state->cancel.get(), 0) == WAIT_TIMEOUT) {
             bool authorizing_session = true;
             try {
                 const auto started = approved_lease ? approved_started : GetTickCount64();
                 const auto lease = approved_lease ? *approved_lease : post(connection.value, flags,
-                    remembered ? L"/display/refresh" : L"/display/exchange",
-                    remembered ? L"ChatView-Session" : L"ChatView-Ticket", credential, state->cancel.get(), started + kOperationMs,
+                    renewable ? L"/display/refresh" : L"/display/exchange",
+                    renewable ? L"ChatView-Session" : L"ChatView-Ticket", credential, state->cancel.get(), started + kOperationMs,
                     authentication == DisplayAuthentication::Remember);
                 approved_lease.reset();
                 authorizing_session = false;
@@ -347,24 +350,27 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                 std::wstring token = lease.GetNamedString(L"token").c_str(); SecretWipe wipe_token{token}; require(key(token));
                 const double duration = lease.GetNamedNumber(L"expiresInMs");
                 require(std::isfinite(duration) && duration > 0 && duration <= static_cast<double>(kLeaseMs) && std::floor(duration) == duration);
-                if (authentication == DisplayAuthentication::Remember) {
+                if (!renewable) {
                     require(lease.GetNamedString(L"sessionScope") == L"chat:renew");
                     std::wstring login = lease.GetNamedString(L"sessionToken").c_str(); SecretWipe wipe_login{login};
                     require(key(login));
                     const double lifetime = lease.GetNamedNumber(L"sessionExpiresInMs");
                     require(std::isfinite(lifetime) && lifetime > 0 && lifetime <= 2592000000.0 && std::floor(lifetime) == lifetime);
                     network(WaitForSingleObject(state->cancel.get(), 0) == WAIT_TIMEOUT);
-                    require(save_connection({origin, login, local}));
-                    if (WaitForSingleObject(state->cancel.get(), 0) != WAIT_TIMEOUT) {
-                        forget_matching_connection(login); throw NetworkFailure{};
+                    persisted = authentication == DisplayAuthentication::Remember;
+                    if (persisted) {
+                        require(save_connection({origin, login, local}));
+                        if (WaitForSingleObject(state->cancel.get(), 0) != WAIT_TIMEOUT) {
+                            forget_matching_connection(login); throw NetworkFailure{};
+                        }
                     }
                     erase(credential); credential = std::move(login);
-                    authentication = DisplayAuthentication::Saved; remembered = true;
+                    renewable = true;
+                    { std::lock_guard lock(state->mutex); state->reusable = true; }
                 }
                 const auto expires = started + static_cast<ULONGLONG>(duration);
-                const auto renew = remembered ? started + static_cast<ULONGLONG>(duration * 0.8) : expires;
+                const auto renew = started + static_cast<ULONGLONG>(duration * 0.8);
                 network(GetTickCount64() < renew);
-                if (!remembered) erase(credential);
                 AsyncHandle request(WinHttpOpenRequest(connection.value, L"GET", L"/display/events", nullptr,
                     WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags));
                 std::wstring header = L"Authorization: Bearer " + token + L"\r\n"; SecretWipe wipe_header{header};
@@ -376,12 +382,12 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                 std::string frame;
                 for (;;) {
                     network(WaitForSingleObject(state->cancel.get(), 0) == WAIT_TIMEOUT);
-                    if (remembered && GetTickCount64() >= renew) break;
+                    if (renewable && GetTickCount64() >= renew) break;
                     socket.prepare();
                     network(WinHttpWebSocketReceive(socket.get(), socket.result().buffer.data(),
                         static_cast<DWORD>(socket.result().buffer.size()), nullptr, nullptr) == NO_ERROR);
                     try { socket.wait(state->cancel.get(), deadline, WINHTTP_CALLBACK_STATUS_READ_COMPLETE); }
-                    catch (const NetworkFailure &) { if (remembered && GetTickCount64() >= renew) break; throw; }
+                    catch (const NetworkFailure &) { if (renewable && GetTickCount64() >= renew) break; throw; }
                     const auto kind = socket.result().kind.load();
                     if (kind == WINHTTP_WEB_SOCKET_CLOSE_BUFFER_TYPE) throw NetworkFailure{};
                     require(kind == WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE || kind == WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE);
@@ -401,12 +407,13 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                 // RAII closes the old socket before minting its replacement.
                 continue;
             } catch (const HttpFailure &error) {
-                if (remembered && authorizing_session && (error.status == 401 || error.status == 403)) {
-                    forget_matching_connection(credential); state->finish(DisplayStatus::Denied); break;
+                if (renewable && authorizing_session && (error.status == 401 || error.status == 403)) {
+                    if (persisted) forget_matching_connection(credential);
+                    state->finish(DisplayStatus::Denied); break;
                 }
-                if (!remembered || (error.status != 429 && error.status < 500 &&
+                if (!renewable || (error.status != 429 && error.status < 500 &&
                     (authorizing_session || (error.status != 401 && error.status != 403)))) throw;
-            } catch (const NetworkFailure &) { if (!remembered) throw; }
+            } catch (const NetworkFailure &) { if (!renewable) throw; }
             if (WaitForSingleObject(state->cancel.get(), 0) != WAIT_TIMEOUT) break;
             state->finish(DisplayStatus::Reconnecting);
             const DWORD delay = std::min<DWORD>(30000U, 1000U << std::min(failures++, 5U));

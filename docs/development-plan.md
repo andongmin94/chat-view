@@ -1,55 +1,98 @@
-# Current development state and next flow
+# ChatView 작업 목표 체크리스트
 
-Updated: 2026-09-20 (Asia/Seoul). Read [AGENTS.md](../AGENTS.md), [PRODUCT.md](../PRODUCT.md), [development-workflow.md](development-workflow.md) and [architecture.md](architecture.md). This is the only current work queue; technical contracts and past run reports do not override it.
+갱신: 2026-09-20 (Asia/Seoul). 상태 확인 기준: `OBS @ 8573f10728ddecf60ad4323e6b704fbed497d073`.
+이 파일이 유일한 현재 작업 목록이다. 최상위 목표는 [PRODUCT.md](../PRODUCT.md), 구현·검증 운영은 [development-workflow.md](development-workflow.md), 책임 구분은 [architecture.md](architecture.md)를 따른다.
 
-## Latest implementation
+> 최종 제품: 스트리머가 한 화면에서 채팅을 읽고, 개인 HUD는 시청자에게 노출하지 않으며, 게임 PC에 OBS가 없는 투컴을 지원하는 챗뷰 자체 플랫폼. 스트리머가 선택한 공개 광고의 시청시간 기반 실적을 HP 진행과 광고 수익으로 연결한다.
 
-**f0543603b4f6b8cb5154d45b044679ca55238e25**, on OBS, applies the previously local cadence/companion patch. Same native executable, explicit `--companion`, no local OBS parent/mapping, development consent, existing connection panel, single-instance guard and quit. Existing OBS-controlled behavior and privacy safeguards remain. Test registration is in existing cmake/native-chat.cmake, not a second application or rewritten root build.
+## 체크 규칙과 현재 위치
 
-Routine Windows CI now scopes native changes, runs relevant native tests once and does not package. Full repeated/resource/official-OBS/install/package qualification remains explicit. No limit or old assertion was weakened. New launch parser test passed 40 assertions locally with C++20/Werror/ASan/UBSan. Windows development **#295 / 35467657607 at this exact SHA completed successfully**: native compilation/linking and **26/26 routine CTests passed**, including actual companion executable launch/consent/connection-panel/no-OBS-library/duplicate/exit checks, native launch-option parsing, the existing native chat surface and HTTP/WebSocket-to-HUD delivery. The resource test was excluded by its qualification label, and full repeats, official OBS/install/package checks and upload were intentionally not run. This routine pass does not diagnose the historical intermittent first-render/resource failures. No new full qualification, live CHZZK or physical two-PC result is claimed.
+`[x]`는 **해당 항목에 명시한 좁은 구현 범위**가 OBS에 반영되고 관련 동작 근거가 있다는 뜻이다. 전체 제품·실계정·실제 방송·배포 완료를 뜻하지 않는다. `[ ]`에는 `부분 구현`, `작성본·미반영`, `미구현`, `실환경 미확인` 등을 함께 적는다. 미반영 ZIP, 문서, 테스트 개수는 완료된 제품 기능으로 세지 않는다. 항목의 크기가 다르므로 체크 개수로 전체 완성도 퍼센트를 계산하지 않는다.
 
-Run: https://github.com/andongmin94/chat-view/actions/runs/35467657607
+현재는 **개인 HUD와 자체 채팅 전달의 개발용 기반을 구현한 상태**다. 일반 사용자용 로그인 흐름, 투컴 영상 경로, 광고·HP·수익은 미완성이다. 아래 다섯 최상위 목표 중 제품 수준의 전체 완료를 선언한 것은 없다.
 
-## Product progress, not a percentage
+**다음 작업 묶음: G4-03 + G4-04 — 로그인해서 채팅을 보고, 연결을 유지하고, 다시 실행해 이어 쓰고, 로그아웃한다.** 별도 기기 등록 절차나 관리 시스템을 먼저 만드는 것이 아니다. 내부 승인 저장·갱신은 이 사용 흐름의 구현 수단으로만 둔다.
 
-| Goal | Existing implementation | Still required |
+## G1. 한 스크린에서 게임·작업과 채팅을 함께 본다
+
+완료 기준: 실제 지원 게임/창 모드에서 채팅이 읽히고 게임 조작을 방해하지 않는다. 기존 main의 핵심 사용 경험을 계승하되 Electron 코드를 유지할 의무는 없다.
+
+- [x] **G1-01 — 투명 개인 HUD와 자체 텍스트 채팅 화면.** 네이티브 렌더링과 시험용 메시지 표시 경로를 구현했다. 실제 치지직 채널 확인은 G4-06이다. 근거: E1/E2.
+- [x] **G1-02 — 클릭 통과, 이동·크기 조절, 위치·DPI 저장, 단축키.** 기존 네이티브 구현과 관련 Windows 검사가 있다. 근거: E1.
+- [ ] **G1-03 — 실제 게임에서의 가독성과 조작감 완성.** [실환경 미확인] 채팅을 읽는 동안 포커스/마우스/키보드를 빼앗지 않는지 확인하고 필요한 표시·조작 개선을 적용한다.
+
+## G2. OBS 플러그인으로 연동하고 개인 HUD만 송출에서 제외한다
+
+완료 기준: **스트리머에게는 HUD가 계속 보이고, 시청자 영상에는 개인 HUD가 없다.** HUD 자체를 숨겨 성공으로 처리하지 않는다. 공개 광고는 G5의 별도 출력이다.
+
+- [x] **G2-01 — OBS 플러그인, 설정 진입, HUD 실행·종료 연동.** OBS/HUD 프로세스 분리와 기존 제어 경로를 구현했다. 근거: E1/E3.
+- [ ] **G2-02 — 원컴에서 읽을 수 있는 HUD와 송출 제외를 동시에 달성.** [부분 구현] 캡처 제외 설정·보호 정책은 있지만, 위험 시 HUD를 숨기는 현재 제한을 지원 영상 경로로 해결해야 한다.
+- [ ] **G2-03 — 방송 시작·장면 전환·복귀와 지원 조건 안내.** [부분 구현·실환경 미확인] 지원 캡처 방식/창 모드에서 G2-02를 유지하고, 확인한 상태와 미지원 상태를 정확히 표시한다. `READY TO STREAM`을 방송 전체 보장으로 사용하지 않는다.
+
+## G3. 게임 PC에 OBS 없는 투컴 방송에서 사용한다
+
+완료 기준: 게임 PC에는 게임과 챗뷰만, 송출 PC에는 OBS와 챗뷰 플러그인이 있으며, 게임 PC의 개인 HUD는 계속 보이고 송출 영상에는 섞이지 않는다.
+
+- [x] **G3-01 — 동일 HUD의 OBS 비종속 개발 실행.** 명시적 `--companion`, 기존 연결창, 중복 실행 방지·종료를 구현했다. 로컬 OBS 부모 인수 없이 실행하는 검사는 통과했다. 일반 사용자 설치나 깨끗한 HDMI 출력 완료는 아니다. 근거: E1.
+- [ ] **G3-02 — 두 PC를 같은 사용자의 채팅·방송 세션에 연결.** [미구현] 기존 수신기를 활용해 송출 역할과 표시 역할을 연결한다. 별도 하드웨어 등록을 사용자 필수 절차로 추가하지 않는다.
+- [ ] **G3-03 — 게임 PC의 OBS 없이 개인 HUD가 빠진 영상 전달 경로.** [미구현·방식 미확정] 캡처카드/출력 구성을 포함해 실제 가능한 경로를 선정하고 구현한다. OBS 숨김 실행·프로젝터·다른 방송 프로그램 필수 설치로 조건을 우회하지 않는다.
+- [ ] **G3-04 — 투컴 설치·실사용 연결과 실제 영상 확인.** [미구현·하드웨어 확인 필요] 게임 PC에 OBS가 없는 구성에서 설치/실행, 채팅, 재연결, 종료와 지연·자원 사용, HUD 없는 녹화 결과를 함께 확인한다. 페어링이나 경고 동의만으로 체크하지 않는다.
+
+## G4. 치지직부터 챗뷰 자체 채팅 플랫폼을 만든다
+
+완료 기준: 사용자는 개발자 비밀키나 수동 표시 키가 아니라 로그인·연결 동의로 자기 채팅을 보고, 방송 중 유지하며, 재실행 후 이어 쓰고 로그아웃할 수 있다. 외부 채팅 웹페이지를 보여주는 것에서 끝나지 않는다.
+
+- [x] **G4-01 — 치지직 공식 인증·채널 조회·채팅 구독 모듈.** 코드와 시험용 제공자/실제 소켓 라이브러리 검사가 있다. 실계정 성공을 뜻하지 않는다. 근거: E2.
+- [x] **G4-02 — 서버에서 챗뷰 자체 네이티브 화면까지 메시지 전달.** 실제 로컬 HTTP/WebSocket → WinHTTP → HUD/WebView2 경로를 합성 메시지로 확인했다. 간헐적 첫 표시 결함은 D1에 남아 있어 안정화 완료는 아니다. 근거: E1/E2.
+- [ ] **G4-03 — 로그인 버튼 → 브라우저 동의 → 앱 복귀 → 내 채팅 표시.** [부분 구현] 공식 인증 모듈은 있으나 일반 사용자 흐름이 없다. 개발자용 일회 키 입력을 최종 UX로 남기지 않는다.
+- [ ] **G4-04 — 이 PC에서 연결 유지, 자동 갱신·재연결, 로그아웃.** [작성본·미반영] 최신 참고 작성본은 `chatview-remembered-connection.zip`. 필요한 코드만 기존 경로에 연결하고 OBS에 반영한 뒤 관련 동작을 확인한다. 별도 기기 등록 화면/기기 목록/하드웨어 식별은 목표가 아니다.
+- [ ] **G4-05 — 여러 스트리머가 사용하는 운영 서비스.** [미구현] 계정·채널 분리, 안전한 서버측 승인/토큰 저장과 갱신, 채팅 권한 격리, 실제 배포를 연결한다. 개발용 loopback 도구를 그대로 공개하지 않는다.
+- [ ] **G4-06 — 실제 치지직 계정으로 전체 사용 확인.** [비공개 앱/채널 승인 필요] 동의 → 실제 메시지 표시 → 유지/재연결 → 중지/권한 철회를 확인한다. 자격 증명이 없다고 독립적인 구현을 중단하거나 시험용 데이터를 실계정 성공으로 세지 않는다.
+
+## G5. 광고 선택 → 시청 실적 → HP → 광고 수익을 연결한다
+
+완료 기준: 스트리머가 선택한 광고가 시청자에게 노출되고, 허용된 시청시간 관련 근거에 따라 HP와 수익 기록이 변한다. 개인 HUD 트래픽이나 시험용 수치를 지급 가능한 실적으로 세지 않는다.
+
+- [ ] **G5-01 — 광고 배너/캠페인 목록·선택·중지.** [미구현] 우선 한 광고가 끝까지 동작하면 된다. 초기 캠페인은 운영자가 등록할 수 있으며 대규모 광고주 포털은 선행 조건이 아니다.
+- [ ] **G5-02 — 선택 광고의 별도 OBS 공개 출력.** [미구현] 스트리머가 확인한 위치/크기로 표시하고 변경·중지할 수 있게 한다. 개인 채팅 HUD와 분리한다.
+- [ ] **G5-03 — 시청시간 관련 실적 수집·집계.** [미구현·계측/사용 권한 확인 필요] 방송 시간, 추정 시청자 시간, 실측 광고 시청시간을 구분한다. 시청자 데이터와 광고 표시 구간의 근거를 결합하고 누락·중복·중단을 처리한다.
+- [ ] **G5-04 — 서버 계산 HP와 수익 내역 표시.** [미구현·세부 규격 미정] 광고 진행/잔량과 예상·확정 수익을 구분한다. 우선 비지급 시험 흐름을 완성하되, 임시 수치를 실제 보상으로 표시하지 않는다. HP 0에서만 지급한다는 조건을 임의로 만들지 않는다.
+- [ ] **G5-05 — 실제 유료 운영·정산.** [미구현·운영 규칙 결정 필요] 단가·예산·배분·지급 조건, 중복/예산 초과 방지, 부정 실적 검토와 개인정보·광고 고지·지급 기록을 갖춘다. HP 애니메이션만으로 완료 처리하지 않는다.
+
+## R. 기능 통합 후 배포를 마무리한다
+
+이 목록은 반복 검증만으로 제품 개발을 대체하기 위한 것이 아니다. 구현 중에는 빌드 가능성과 직접 바꾼 경로의 최소 확인을 유지하고, 기능 묶음을 연결한 뒤 통합 검증·수정을 한다. 전체 반복·자원·설치 검증은 배포 후보에서 수행한다.
+
+- [ ] **R-01 — 첫 채팅 표시·연결 유지의 재현 결함과 방송 안정성 정리.** 알려진 실패를 해당 사용 흐름 안에서 해결하고 필요한 통합 검증을 한다. 관련 없는 기능 전체를 멈추지 않는다.
+- [ ] **R-02 — 반복/자원/OBS 설치·캡처/패키지 전체 qualification.** 기준과 실패 이력을 유지한다. 일반 개발 검사 성공을 배포 성공으로 바꾸지 않는다.
+- [ ] **R-03 — 원컴·투컴 설치본과 사용 안내를 실제 사용자에게 제공할 상태로 통합.** 각 지원 범위를 검증한 버전만 배포하고, 미지원/실험 기능과 예상/확정/지급 수익을 명확히 구분한다.
+
+## 작업 순서와 목표 변경 방지
+
+현재 진행 단위는 G4-03/G4-04이다. 먼저 작성된 연결 유지 코드를 무작정 전부 적용하지 말고, 브라우저 로그인과 이어지는 사용자 흐름에 필요한 부분만 활용한다. 작성본의 옛 development-plan.md로 이 체크리스트를 덮어쓰지 않는다. 이전 `chatview-device-enrollment.zip`의 별도 등록 시스템을 다시 선행 목표로 삼지 않는다.
+
+그다음 서비스 연결(G4-05)과 두 PC 세션(G3-02)을 기존 구성에 붙인다. 영상 경로(G2-02/G3-03)는 아키텍처를 좌우하는 과제로 초기에 착수하며, 계정·하드웨어 등 한쪽의 외부 준비가 막히면 다른 기존 항목의 구현을 진행한다. 로그인이나 전체 자원 검사가 완벽해질 때까지 광고(G5-01~G5-04)를 무기한 미루지 않는다. 이 순서는 기술 의존성에 따른 작업 묶음이며, 다섯 목표 중 하나를 삭제하는 우선순위가 아니다.
+
+세션 시작 때 진행할 ID를 지정한다. 끝날 때는 **진행 ID / 사용자에게 달라진 동작 / 원격 반영 커밋 또는 미반영 / 필요한 확인과 알려진 한계 / 다음 ID**만 이 파일에 갱신한다. 완료한 ID를 재번호화하거나 지우지 않는다. 새 기능을 추가할 때 어느 기존 목표에 필요한지 먼저 연결하며, 제품 범위를 바꾸는 선택은 사용자의 명시적인 결정으로만 한다. 진단·기기 관리·CI 개선을 독립된 최종 제품 목표로 승격하지 않는다.
+
+## 남은 결함과 영향 범위
+
+| ID | 관측 근거 | 차단 범위 |
 | --- | --- | --- |
-| G1: one-screen private chat | Native transparent HUD, own text renderer, click-through/edit/placement | Reliable actual-channel use and target-game UX |
-| G2: OBS integration and private exclusion | Controller/HUD separation, bounded recovery, capture interlock | Readable local HUD and excluded output together on declared supported paths; hiding it is not completion |
-| G3: two PCs, no gaming-PC OBS | Explicit independent developer launch on the same native implementation | Creator/device session with streaming side; real OBS-free clean-video mechanism/topology and qualification |
-| G4: CHZZK-first own platform | Auth/API/session, own renderer, scoped gateway, WinHTTP consumer and native controls | Revocable enrollment, secure persistence/renewal, usable multi-user service and actual authorized channel acceptance |
-| G5: chosen ads, audience-time HP/rewards | Product boundaries only | Public ad selection/output, permitted evidence, server HP/reward records; paid pilot rules later |
+| D1 | 82f36a6 / Windows #294 반복 3: 첫 gateway frame 표시 미확인. 원인 미확정. | G4의 신뢰성 완료/R-01. 독립적인 서비스 구현 전체를 차단하지 않음. |
+| D2 | #292 후반 핸들 +104 > 64; #294 초기 +284 > 256, 후반 +8. 원인 미확정. | R-02 배포 qualification. 제한 완화나 성공할 때까지 재실행하지 않음. |
+| D3 | READY TO STREAM 문구가 ChatView 내부 조건보다 넓은 보장처럼 보임. | G2-03의 정확한 상태 표시. |
+| D4 | 설정 화면 책임 혼합과 캡처 시험 종료 순서(Q4/Q5) 검토가 남음. | 해당 코드 변경 시 필요한 범위. 전면 재작성 선행 조건이 아님. |
 
-## Next user-visible flow
+상세 미해결 수치는 [resource-growth-investigation.md](resource-growth-investigation.md)에 한 번만 유지한다.
 
-**One creator approval -> registered display device -> automatically renewed chat-read access -> reconnect -> revoke that device**, usable by the same OBS-controlled HUD and companion. Extend the existing display protocol/service/WinHTTP/renderer; do not recreate them, expose provider secrets, or promote the developer loopback tool directly into a public backend. Registration, persistence, native secure storage and expiry/revocation must work together before claiming durable device access. Do not add empty modules or spend another milestone writing a generic authentication framework.
+## 완료 표시의 근거와 이번 인수인계
 
-Address the known first-render defect within the affected connection flow before calling it reliable. Independent service/account implementation need not wait for resource-soak or hardware access. The separate no-OBS gaming-PC clean-video feasibility remains an early engineering task, not something pairing magically solves. When private CHZZK app/channel authorization is available, exercise real consent/subscription/message/stop/reconnect/revoke; never substitute synthetic data for that evidence.
+- **E1:** 코드 `f0543603b4f6b8cb5154d45b044679ca55238e25`, Windows development #295 / run `35467657607`: 빌드와 일반 CTest 26/26 성공. 독립 실행과 기존 네이티브 전달 포함. 자원·추가 반복·공식 OBS 설치·패키지·업로드는 이 실행 범위가 아니었다.
+- **E2:** 코드 `436e8ec`, CHZZK #13 / run `35462872875`: Windows/Linux × Node22/24, 합성 제공자 기반 135개 검사와 타입/의존성 검사 성공. 실계정 인증 근거는 아니다.
+- **E3:** `a7ea2e7` / Windows #274에서 Q1~Q3 수정과 전체 검증 성공. 구형 패치는 재적용하지 않는다. 이후의 전체 qualification 성공 `f065857` / #293도 더 최신 코드의 배포 승인으로 사용하지 않는다.
+- **실패 유지:** `82f36a6` / #294는 최초 25/25 이후 반복 23/25로 실패했고 배포 단계가 실행되지 않았다. 새 일반 검사 성공으로 D1/D2를 해결 처리하지 않는다.
+- **미반영 작성본:** `chatview-remembered-connection.zip`의 연결 유지·갱신·재연결·로그아웃 코드는 원격 기준 `8573f10`에 없다. 서버 집중 검사 보고와 Windows 미검증을 구분한다. 작성본은 참고 자산이지 저장소에 반영된 기능이 아니다.
+- **이번 변경:** 기존 개발 계획을 고정 ID 체크리스트로 교체한 문서 작업이다. 제품 목표, 실행 코드, 의존성, CI 설정과 기존 검사 결과는 바꾸지 않았다. 새로운 런타임 기능이나 검사 성공을 추가하지 않는다.
 
-After the usable creator/device flow, connect one approved campaign end to end: creator selection -> separate public OBS banner -> eligible evidence -> server HP -> non-payable reward record. Operator-entered campaigns are enough initially. Do not wait for a full advertiser portal; do not invent real payout terms. Paid operation requires agreed units/rates/budgets, permitted metrics, idempotency, fraud/disclosure/privacy/payout handling.
-
-## Known defects and scope
-
-| Item | Evidence/status | What it blocks |
-| --- | --- | --- |
-| Intermittent native first render | 82f36a6 / #294 repeat 3: gateway frame not observed; source of failure open | Reliable-display acceptance and affected distribution; not independent account work |
-| Resource growth variability | #292 late +104 > 64; #294 initial +284 > 256 but late +8 <= 64; no diagnosed cause | Full distribution qualification; not all feature implementation |
-| Misleading readiness wording | READY TO STREAM evaluates local ChatView conditions | Broad broadcast-readiness claim; correct in next relevant UI work |
-| Control Center cohesion and capture-test unload ordering | Remaining Q4/Q5 audit concerns, not demonstrated general corruption | Review when changing those responsibilities; not a blanket rewrite gate |
-
-Detailed unresolved samples are retained once in [resource-growth-investigation.md](resource-growth-investigation.md). Do not rerun unchanged until green, relax budgets, or label historical failures resolved by a new routine pass.
-
-## Evidence worth retaining
-
-- a7ea2e7 / Windows #274: Q1-Q3 timing/visibility-owner/error-logging changes were integrated and passed. Do not reapply old downloadable patches or treat those findings as open.
-- 436e8ec / CHZZK #13 / 35462872875: all four Windows/Linux x Node22/24 jobs, 135 tests, audit/types/manifests passed using synthetic providers. Dependencies/platform source unchanged by this handoff.
-- f065857 / Windows #293 / 35464221001: earlier unchanged-runtime instrumentation passed full qualification; it does not validate later code.
-- 82f36a6 / Windows #294 / 35464979632: initial 25/25 and setup-surface repeats passed; repeated suite 23/25 failed. This remains historical failure evidence.
-
-Tests, synthetic gateways, actual native DOM checks, live-provider access, physical capture and paid accounting are distinct. A later documentation commit is not newly tested native code. Record only results actually observed for the correct SHA.
-
-## Documentation cleanup in this handoff
-
-Reviewed all 13 Markdown files in the starting OBS tree, plus the pending cadence/companion text. Removed obsolete closed-audit/repair narratives; retained Q4/Q5 above, the options-only Socket.IO dependency constraint in platform/README, and merged the host-owned document contract into native-display-client.md. Corrected already-implemented chat/worker/companion items mislabelled as future work. Removed full-CI-first global stops and duplicate task queues. PRODUCT.md's five owner-confirmed goals are unchanged. No extra per-session audit file is needed.
-
-Outstanding owner inputs remain private live-provider authorization, representative two-PC hardware, HP/rate/payout semantics and hosting assets. Do not ask again about CHZZK-first, gaming-PC OBS prohibition or the five goals. Update this page in the same coherent implementation change; keep older detail in Git history.
+확정하지 않은 입력: 비공개 치지직 앱/채널 승인, 대표 투컴 배선·기기, HP 단위·귀속·표시 위치·보상 조건, 실제 서비스 인프라. 비밀키는 대화/공개 저장소에 넣지 않는다. 이 입력의 부재를 목표 변경이나 무관한 구현 중단의 이유로 삼지 않는다.

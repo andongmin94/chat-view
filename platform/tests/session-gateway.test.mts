@@ -22,7 +22,7 @@ test('existing connect remembers without enrollment; refresh and signout are sep
     fetch(origin + path, { method: 'POST', headers: { Authorization: `${scheme} ${token}`, ...extra } });
   try {
     const ticket = access.issue();
-    const response = await post('/display/exchange', 'ChatView-Ticket', ticket.ticket, { 'X-ChatView-Remember': '1' });
+    const response = await post('/display/exchange', 'ChatView-Ticket', ticket.ticket);
     assert.equal(response.status, 200);
     const login = await response.json();
     assert.equal(login.scope, 'chat:read'); assert.equal(login.sessionScope, 'chat:renew');
@@ -40,8 +40,8 @@ test('existing connect remembers without enrollment; refresh and signout are sep
     assert.equal((await post('/display/signout', 'ChatView-Session', login.sessionToken)).status, 200);
     assert.equal((await post('/display/enroll', 'ChatView-Ticket', ticket.ticket)).status, 404);
     const invalid = access.issue();
-    assert.equal((await post('/display/exchange', 'ChatView-Ticket', invalid.ticket, { 'X-ChatView-Remember': 'yes' })).status, 400);
-    const foreign = await post('/display/exchange', 'ChatView-Ticket', invalid.ticket, { Origin: 'https://elsewhere.invalid', 'X-ChatView-Remember': '1' });
+    assert.equal((await post('/display/exchange', 'ChatView-Ticket', invalid.ticket, { 'X-ChatView-Remember': '1' })).status, 400);
+    const foreign = await post('/display/exchange', 'ChatView-Ticket', invalid.ticket, { Origin: 'https://elsewhere.invalid' });
     assert.equal(foreign.status, 403);
   } finally {
     sessions.close(); gateway.close(); server.closeAllConnections();

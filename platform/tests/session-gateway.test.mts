@@ -5,12 +5,16 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { DisplayAccess } from '../server/chat/display-access.mts';
 import { DisplayGateway } from '../server/chat/display-gateway.mts';
+import { DisplaySessionGateway } from '../server/chat/display-session-gateway.mts';
 
 test('existing connect remembers without enrollment; refresh and signout are separate from stream access', async () => {
   const access = new DisplayAccess(() => ({ id: 'owner', expiresAt: performance.now() + 600000 }));
   let origin = '';
   const gateway = new DisplayGateway(access, () => origin, () => ({ state: 'idle', received: 0, messages: [] }));
-  const server = createServer((request, response) => { if (!gateway.handle(request, response)) response.writeHead(404).end(); });
+  const sessions = new DisplaySessionGateway(access, () => origin, () => gateway.changed());
+  const server = createServer((request, response) => {
+    if (!sessions.handle(request, response) && !gateway.handle(request, response)) response.writeHead(404).end();
+  });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const address = server.address(); assert(address && typeof address !== 'string');
   origin = `http://127.0.0.1:${address.port}`;
@@ -40,7 +44,7 @@ test('existing connect remembers without enrollment; refresh and signout are sep
     const foreign = await post('/display/exchange', 'ChatView-Ticket', invalid.ticket, { Origin: 'https://elsewhere.invalid', 'X-ChatView-Remember': '1' });
     assert.equal(foreign.status, 403);
   } finally {
-    gateway.close(); server.closeAllConnections();
+    sessions.close(); gateway.close(); server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });

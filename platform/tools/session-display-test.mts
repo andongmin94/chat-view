@@ -25,8 +25,8 @@ const server = createServer((request, response) => {
     let lease;
     if (request.url === '/display/exchange') {
       exchanges++; assert.equal(header, `ChatView-Ticket ${ticket.ticket}`);
-      assert.equal(request.headers['x-chatview-remember'], '1');
-      lease = access.exchange(ticket.ticket, true);
+      assert.equal(request.headers['x-chatview-remember'], undefined);
+      lease = access.exchange(ticket.ticket);
     } else {
       assert(header.startsWith('ChatView-Session '));
       lease = access.resume(header.slice('ChatView-Session '.length));

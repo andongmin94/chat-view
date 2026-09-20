@@ -342,8 +342,7 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                 const auto started = approved_lease ? approved_started : GetTickCount64();
                 const auto lease = approved_lease ? *approved_lease : post(connection.value, flags,
                     renewable ? L"/display/refresh" : L"/display/exchange",
-                    renewable ? L"ChatView-Session" : L"ChatView-Ticket", credential, state->cancel.get(), started + kOperationMs,
-                    authentication == DisplayAuthentication::Remember);
+                    renewable ? L"ChatView-Session" : L"ChatView-Ticket", credential, state->cancel.get(), started + kOperationMs);
                 approved_lease.reset();
                 authorizing_session = false;
                 require(lease.GetNamedString(L"scope") == L"chat:read");

@@ -73,7 +73,7 @@ export class PlatformApplication {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Referrer-Policy', 'no-referrer');
     response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+    response.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://chzzk.naver.com; frame-ancestors 'none'; base-uri 'none'");
     if (this.#origin.startsWith('https:')) response.setHeader('Strict-Transport-Security', 'max-age=31536000');
   }
   #json(response: ServerResponse, value: unknown) {

@@ -102,6 +102,7 @@ async function fixture() {
     await page(pending.verificationPath, b);
     const redirect = await post(`/login/${pending.id}/connect`, b);
     assert.equal(redirect.status, 303);
+    assert.match(redirect.headers.get('content-security-policy')!, /form-action 'self' https:\/\/chzzk\.naver\.com;/u);
     const state = new URL(redirect.headers.get('location')!).searchParams.get('state')!;
     const old = b.cookie;
     const response = await request(`/callback?code=${owner}&state=${state}`, { headers: { Cookie: old } });

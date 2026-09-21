@@ -2,20 +2,22 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { DisplayAccess, DisplayAccessError } from './display-access.mts';
 import { hashSecret, validSecret } from './session-store.mts';
+import type { ConnectionRole } from './session-store.mts';
 
 export const LOGIN_WINDOW_MS = 300_000;
 export const LOGIN_POLL_MS = 1000;
 const MAX_PENDING = 16;
 type Pending = { challenge: string; remember: boolean; expires: number; polled: number;
-  state: 'pending' | 'approved' | 'denied'; owner?: string; generation?: number };
+  state: 'pending' | 'approved' | 'denied'; owner?: string; generation?: number;
+  access?: DisplayAccess; role?: ConnectionRole };
 
-// A request-bound browser handoff for the existing chat connection, not a new
-// account/device directory. The URL id cannot poll or obtain display secrets.
+// The URL id cannot poll or obtain display secrets. A service binds the target
+// creator only AFTER browser authentication and explicit channel/role consent.
 export class BrowserLogin {
   #requests = new Map<string, Pending>();
-  #access: DisplayAccess;
+  #access?: DisplayAccess;
   #now: () => number;
-  constructor(access: DisplayAccess, now: () => number = () => performance.now()) {
+  constructor(access?: DisplayAccess, now: () => number = () => performance.now()) {
     this.#access = access; this.#now = now;
   }
   #prune() {
@@ -43,14 +45,14 @@ export class BrowserLogin {
     if (entry.state !== 'pending') throw new DisplayAccessError(409);
     return { remember: entry.remember, code: id.slice(-6).toUpperCase() };
   }
-  // Only the authenticated browser route, after explicit consent and CSRF,
-  // invokes approve. The native polling capability never grants this action.
-  approve(id: string) {
+  approve(id: string, access = this.#access, role?: ConnectionRole) {
     const entry = this.#get(id);
     if (entry.state !== 'pending') throw new DisplayAccessError(409);
-    const owner = this.#access.ownerId();
-    if (!owner) throw new DisplayAccessError(401);
-    entry.owner = owner; entry.generation = this.#access.generation; entry.state = 'approved';
+    if (role !== undefined && role !== 'gaming' && role !== 'streaming') throw new DisplayAccessError(400);
+    const owner = access?.ownerId();
+    if (!access || !owner) throw new DisplayAccessError(401);
+    entry.access = access; entry.role = role;
+    entry.owner = owner; entry.generation = access.generation; entry.state = 'approved';
   }
   deny(id: string) {
     const entry = this.#get(id);
@@ -65,13 +67,12 @@ export class BrowserLogin {
     if (now - entry.polled < LOGIN_POLL_MS) throw new DisplayAccessError(429);
     entry.polled = now;
     if (entry.state === 'pending') return { status: 'pending' as const };
-    // Consume before returning credentials, also on denial/changed ownership.
     this.#requests.delete(id);
     if (entry.state === 'denied') throw new DisplayAccessError(403);
-    // Revocation/reauthorization also invalidates approvals awaiting collection.
-    if (entry.generation !== this.#access.generation || entry.owner !== this.#access.ownerId()) throw new DisplayAccessError(401);
+    const access = entry.access;
+    if (!access || entry.generation !== access.generation || entry.owner !== access.ownerId()) throw new DisplayAccessError(401);
     return { status: 'approved' as const,
-      lease: this.#access.exchange(this.#access.issue().ticket, entry.remember) };
+      lease: access.exchange(access.issue().ticket, entry.remember, entry.role) };
   }
   clear() { this.#requests.clear(); }
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { randomBytes, randomUUID } from 'node:crypto';
-import { SessionStore, hashSecret, validSecret } from './session-store.mts';
+import { SessionStore, SessionRoleError, hashSecret, validSecret } from './session-store.mts';
+import type { ConnectionRole } from './session-store.mts';
 
 export const DISPLAY_SCOPE = 'chat:read';
 export const DISPLAY_TICKET_MS = 60_000;
@@ -16,8 +17,7 @@ export class DisplayAccessError extends Error {
 }
 const secret = () => randomBytes(32).toString('hex');
 
-// One authenticated creator context. App sessions never confer provider,
-// account-management, device-registration, or financial privileges.
+// One authenticated creator context. Display leases confer only private chat.
 export class DisplayAccess {
   #entries = new Map<string, Entry>();
   #owner: () => DisplayOwner | undefined;
@@ -51,21 +51,24 @@ export class DisplayAccess {
     this.#entries.set(id, { id, owner: owner.id, digest: hashSecret(ticket), kind: 'ticket', expiresAt });
     return { id, ticket, expiresInMs: Math.floor(expiresAt - now), scope: DISPLAY_SCOPE };
   }
-  exchange(ticket: unknown, remember = false) {
+  exchange(ticket: unknown, remember = false, role?: ConnectionRole) {
     const { now, owner } = this.#current();
     if (!owner || !validSecret(ticket)) throw new DisplayAccessError(401);
     const hash = hashSecret(ticket);
     const entry = [...this.#entries.values()].find(value => value.kind === 'ticket' && value.digest === hash);
     if (!entry) throw new DisplayAccessError(401);
     this.#entries.delete(entry.id);
-    // Every explicit approval gets a renewable app-session for the current run.
-    // `remember` decides only whether the native client persists that session.
-    const session = this.#sessions.create(owner.id);
+    // Every explicit approval is renewable during this run. `remember` is only
+    // the native persistence choice. Roles require separate browser consent.
+    let session: ReturnType<SessionStore['create']>;
+    try { session = this.#sessions.create(owner.id, role); }
+    catch (error) { if (error instanceof SessionRoleError) throw new DisplayAccessError(409); throw error; }
     const token = secret();
     const expiresAt = Math.min(owner.expiresAt, now + DISPLAY_LEASE_MS, now + session.expiresInMs);
-    this.#entries.set(entry.id, { ...entry, digest: hashSecret(token), kind: 'lease', expiresAt, session: session?.id });
+    this.#entries.set(entry.id, { ...entry, digest: hashSecret(token), kind: 'lease', expiresAt, session: session.id });
     return { id: entry.id, token, expiresInMs: Math.floor(expiresAt - now), scope: DISPLAY_SCOPE,
-      sessionToken: session.token, sessionExpiresInMs: session.expiresInMs, sessionScope: 'chat:renew' };
+      sessionToken: session.token, sessionExpiresInMs: session.expiresInMs, sessionScope: 'chat:renew',
+      ...(session.membership ? { membership: session.membership } : {}) };
   }
   resume(token: unknown) {
     const session = this.#sessions.find(token);
@@ -78,7 +81,8 @@ export class DisplayAccess {
     const id = randomUUID(), access = secret();
     const expiresAt = Math.min(owner.expiresAt, now + DISPLAY_LEASE_MS, now + session.remainingMs);
     this.#entries.set(id, { id, owner: owner.id, digest: hashSecret(access), kind: 'lease', expiresAt, session: session.id });
-    return { id, token: access, expiresInMs: Math.floor(expiresAt - now), scope: DISPLAY_SCOPE };
+    return { id, token: access, expiresInMs: Math.floor(expiresAt - now), scope: DISPLAY_SCOPE,
+      ...(session.membership ? { membership: session.membership } : {}) };
   }
   signout(token: unknown) {
     if (!validSecret(token)) throw new DisplayAccessError(401);

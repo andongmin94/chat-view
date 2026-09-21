@@ -7,7 +7,8 @@
   "scripts": {
     "test": "node --experimental-strip-types --test tests/*.test.mts",
     "typecheck": "tsc --project tsconfig.json",
-    "connect": "node --experimental-strip-types --env-file=.env tools/chzzk-connect.mts"
+    "connect": "node --experimental-strip-types --env-file=.env tools/chzzk-connect.mts",
+    "serve": "node --experimental-strip-types --env-file=.env server/main.mts"
   },
   "dependencies": { "socket.io-client": "2.0.3", "ws": "8.21.3" },
   "overrides": {

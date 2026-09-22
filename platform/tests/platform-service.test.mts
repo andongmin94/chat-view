@@ -1,140 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Synthetic provider + real HTTP routes/SQLite. Not a CHZZK, WebSocket wire,
-// TLS certificate, native HUD, or dual-PC hardware acceptance test.
+// Synthetic provider + real HTTP routes/SQLite. Not live CHZZK or native OBS.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
-import { Creators } from '../server/service/creators.mts';
 import { PlatformApplication } from '../server/service/application.mts';
-import { SessionStore, hashSecret } from '../server/chat/session-store.mts';
-import { DisplayAccessError } from '../server/chat/display-access.mts';
 import type { Tokens } from '../server/chzzk/api.mts';
-import type { ChatSnapshot } from '../server/chzzk/session.mts';
-const nonce = () => randomBytes(32).toString('hex');
-const denied = (code: number) => (e: unknown) => e instanceof DisplayAccessError && e.status === code;
-const tokens = (owner: string, generation = 0): Tokens => ({
-  accessToken: `access:${owner}:${generation}`, refreshToken: `refresh:${owner}:${generation}`, expiresIn: 3600,
-});
-const ownerOf = (token: string) => token.split(':')[1]!;
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>(yes => { resolve = yes; });
-  return { promise, resolve };
-}
-
-async function fixture() {
-  const store = new SessionStore();
-  const chats = new Map<string, { publish: (message: string) => void }>();
-  const gateways: { snapshot: () => unknown; changed: number }[] = [];
-  const active = new Map<string, number>();
-  let refreshCalls = 0, refreshHook: ((token: string) => Promise<Tokens>) | undefined;
-  let exchangeHook: ((code: string) => Promise<Tokens>) | undefined;
-  let revokeFails = false;
-  const api = {
-    exchangeCode: async (code: string) => exchangeHook ? exchangeHook(code) : tokens(code),
-    getUser: async (access: string) => ({ channelId: ownerOf(access), channelName: `channel <${ownerOf(access)}>` }),
-    refresh: async (token: string) => { refreshCalls++; return refreshHook ? refreshHook(token) : tokens(ownerOf(token), refreshCalls); },
-    revoke: async () => { if (revokeFails) throw new Error('private upstream error body'); },
-  };
-  const creators = new Creators({ api, sessions: store,
-    createChat(changed) {
-      let owner = '', snapshot: ChatSnapshot = { state: 'idle', received: 0, messages: [] }, running = false;
-      return {
-        snapshot: () => snapshot,
-        async start(_token: string, channel: string) {
-          owner = channel; running = true;
-          active.set(owner, (active.get(owner) ?? 0) + 1);
-          assert.equal(active.get(owner), 1, 'only one active upstream per creator');
-          snapshot = { state: 'subscribed', received: 0, messages: [] }; changed();
-          chats.set(owner, { publish(message) {
-            // Text snapshots are intentionally synthetic, not provider evidence.
-            snapshot = { state: 'subscribed', received: snapshot.received + 1, messages: [] };
-            Object.defineProperty(snapshot, 'fixtureText', { value: message, enumerable: true }); changed();
-          } });
-        },
-        async stop() {
-          if (running) { running = false; active.set(owner, active.get(owner)! - 1); }
-          snapshot = { state: 'stopped', received: 0, messages: [] }; changed(); return true;
-        },
-      };
-    },
-    createDisplay(_access, snapshot) {
-      const capture = { snapshot, changed: 0 }; gateways.push(capture);
-      return { changed() { capture.changed++; }, close() {},
-        upgrade() { throw new Error('Synthetic fixture does not claim a WebSocket handshake'); } };
-    },
-  });
-  let app: PlatformApplication;
-  const server = createServer((request, response) => { void app.handle(request, response); });
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Missing HTTP fixture port');
-  const origin = `http://127.0.0.1:${address.port}`;
-  app = new PlatformApplication(creators, origin, state => `https://chzzk.naver.com/account-interlock?state=${state}`);
-  const request = (path: string, init: RequestInit = {}) => fetch(origin + path, { ...init, redirect: 'manual' });
-  const native = (path: string, scheme: string, token: string) => request(path, {
-    method: 'POST', headers: { Authorization: `${scheme} ${token}` },
-  });
-  const browser: { cookie: string; csrf: string } = { cookie: '', csrf: '' };
-  const cookie = (response: Response) => response.headers.get('set-cookie')?.split(';')[0] ?? '';
-  async function page(path: string, b = browser) {
-    let response = await request(path, { headers: { Cookie: b.cookie } });
-    if (response.status === 303) {
-      b.cookie = cookie(response);
-      response = await request(path, { headers: { Cookie: b.cookie } });
-    }
-    assert.equal(response.status, 200);
-    const html = await response.text(); b.csrf = /name="csrf" value="([a-f0-9]{64})"/u.exec(html)?.[1] ?? '';
-    return html;
-  }
-  const post = (path: string, b = browser) => request(path, { method: 'POST',
-    headers: { Cookie: b.cookie, Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ csrf: b.csrf }),
-  });
-  async function start() {
-    const verifier = nonce(), response = await native('/display/login', 'ChatView-Challenge', hashSecret(verifier));
-    assert.equal(response.status, 200);
-    const data = await response.json() as { id: string; verificationPath: string };
-    return { ...data, verifier };
-  }
-  async function authenticate(owner: string, pending: Awaited<ReturnType<typeof start>>, b = browser) {
-    await page(pending.verificationPath, b);
-    const redirect = await post(`/login/${pending.id}/connect`, b);
-    assert.equal(redirect.status, 303);
-    assert.match(redirect.headers.get('content-security-policy')!, /form-action 'self' https:\/\/chzzk\.naver\.com;/u);
-    const state = new URL(redirect.headers.get('location')!).searchParams.get('state')!;
-    const old = b.cookie;
-    const response = await request(`/callback?code=${owner}&state=${state}`, { headers: { Cookie: old } });
-    assert.equal(response.status, 303); b.cookie = cookie(response); assert.notEqual(b.cookie, old);
-    await page(pending.verificationPath, b);
-  }
-  async function approve(pending: Awaited<ReturnType<typeof start>>, role: 'gaming' | 'streaming', b = browser) {
-    await page(pending.verificationPath, b);
-    const response = await post(`/login/${pending.id}/approve/${role}`, b);
-    assert.equal(response.status, 200);
-    const polled = await native(`/display/login/${pending.id}`, 'ChatView-Login', pending.verifier);
-    assert.equal(polled.status, 200);
-    return (await polled.json() as { lease: { id: string; token: string; sessionToken: string;
-      membership: { role: string; connectionId: string; broadcastSessionId: string } } }).lease;
-  }
-  async function connect(owner: string, role: 'gaming' | 'streaming') {
-    const b = { cookie: '', csrf: '' }, pending = await start();
-    await authenticate(owner, pending, b);
-    return { b, lease: await approve(pending, role, b) };
-  }
-  return { store, creators, app, origin, request, native, page, post, start, authenticate, approve, connect, browser,
-    chats, gateways, active, get refreshCalls() { return refreshCalls; },
-    setRefresh(hook: typeof refreshHook) { refreshHook = hook; },
-    setExchange(hook: typeof exchangeHook) { exchangeHook = hook; },
-    failRevoke() { revokeFails = true; },
-    async close() {
-      app.close(); server.closeAllConnections();
-      const stopped = new Promise<void>(resolve => server.close(() => resolve()));
-      await creators.close(); await stopped; store.close();
-    },
-  };
-}
+import { fixture, tokens, nonce, denied, deferred } from './fixtures/service.mts';
 
 test('HTTP login of two creators/two PCs routes only each owner chat and role', async () => {
   const f = await fixture();
@@ -305,7 +176,7 @@ test('independent PC browsers join the same creator without revoking the first H
     assert.equal(f.active.get('alice'), 1);
     await f.page('/account', gaming.b);
     await f.post('/logout', gaming.b);
-    assert.ok(f.creators.gateway(gaming.lease.token)); // Browser logout is not device/provider revoke.
+    assert.ok(f.creators.gateway(gaming.lease.token));
     assert.ok(f.creators.gateway(streaming.lease.token));
   } finally { await f.close(); }
 });

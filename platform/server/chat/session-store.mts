@@ -28,6 +28,7 @@ export class SessionStore {
       if (path !== ':memory:') chmodSync(path, 0o600);
       this.#db.exec(`PRAGMA busy_timeout=1000;
         PRAGMA foreign_keys=ON;
+        PRAGMA synchronous=FULL;
         CREATE TABLE IF NOT EXISTS chat_sessions (
           id TEXT PRIMARY KEY, owner TEXT NOT NULL, digest TEXT NOT NULL UNIQUE,
           expires_at INTEGER NOT NULL
@@ -44,6 +45,12 @@ export class SessionStore {
         CREATE UNIQUE INDEX IF NOT EXISTS one_streaming_role
           ON connection_roles(owner) WHERE role = 'streaming';`);
     } catch (error) { this.#db.close(); throw error; }
+  }
+  // Service repositories share this connection for atomic account revocation.
+  // Its lifetime remains owned by SessionStore, never by an HTTP request.
+  get database(): DatabaseSync {
+    if (this.#closed) throw new Error('Session unavailable');
+    return this.#db;
   }
   #membership(id: string): Membership | undefined {
     const row = this.#db.prepare(`SELECT b.id, r.role FROM connection_roles r

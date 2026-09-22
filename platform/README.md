@@ -1,10 +1,12 @@
 # CHZZK integration and private-display service modules
 
-The implemented development path is authorization -> API session URL -> Socket.IO connected -> subscription acknowledgement -> CHAT -> ChatView-owned renderer. The scoped gateway shares that session with the implemented native WinHTTP consumer. An HTTPS creator service now composes these modules with isolated browser/account contexts and shared gaming/streaming session roles. **This is development code, not a deployed multi-user service, clean two-PC video or an advertising meter.** [Current status](../docs/development-plan.md) is the only work queue; [PRODUCT.md](../PRODUCT.md) and [development-workflow.md](../docs/development-workflow.md) govern goals/cadence.
+The development path is authorization -> API session URL -> Socket.IO connected -> subscription acknowledgement -> CHAT -> ChatView-owned renderer. The gateway shares one creator's upstream with the native WinHTTP consumers. The HTTPS service adds isolated accounts, gaming/streaming roles and protected provider persistence across restarts. **This is development code, not deployed multi-user, live CHZZK, clean two-PC video or advertising certification.** [Current status](../docs/development-plan.md) is the only work queue; [PRODUCT.md](../PRODUCT.md) and [development-workflow.md](../docs/development-workflow.md) govern goals/cadence.
 
 ## Private developer setup
 
-Use the Node version range declared in package.json (currently Node 22.16+ or 24). Register a CHZZK application with user-info/chat-read scopes and the exact callback below. Keep credentials in the Git-ignored .env copied from .env.example. Ordinary streamers must never supply developer secrets or run this probe as a public server. Leave DEBUG unset because upstream diagnostics may expose secrets/messages and the production socket factory rejects it.
+Use the Node version range in package.json (Node 22.16+ or 24). Register a CHZZK application with user-info/chat-read scopes. Keep credentials in the Git-ignored .env copied from .env.example. Ordinary streamers never supply developer secrets or run this probe publicly. Leave DEBUG unset: upstream diagnostics may expose secrets/messages and the production socket factory rejects it.
+
+For the local probe, register this exact callback:
 
 ```text
 http://127.0.0.1:47831/callback
@@ -16,13 +18,21 @@ npm ci --ignore-scripts
 npm run connect
 ```
 
-Open the printed loopback URL in the system browser, authorize the channel, choose **채팅 수신 시작 / 재연결**, and open **챗뷰 자체 채팅 화면** for browser preview. Use the normal CHZZK client to send a real test message. Subscription readiness and first-message receipt differ; a quiet channel need not be broken. Without actual app/channel authorization this real-provider check remains unverified, not simulated success.
+Open the printed loopback address, authorize the channel, choose **채팅 수신 시작 / 재연결**, and open **챗뷰 자체 채팅 화면**. Send a real message using the normal CHZZK client. Subscription readiness is not first-message receipt; a quiet channel need not be broken. Without actual app/channel authorization the real-provider check remains unverified.
 
-Stop unsubscribes this CHAT session; reconnect obtains a fresh session URL. Duplicate start does not duplicate subscriptions. Refresh stops chat before rotating the token. Expiry/upstream revocation stop delivery. **권한 철회** globally revokes the app/user tokens and may affect other devices; simply exiting does not perform global revocation.
+Stop removes this CHAT subscription, not the user's provider authorization. Reconnect obtains a fresh session URL. Duplicate start does not duplicate subscriptions. Probe refresh stops chat before rotation; expiry/revocation stops delivery. **권한 철회** is an explicit global app/user action and may affect other devices. The probe remains loopback-only and keeps provider tokens in memory; it is not the HTTPS service or its persistence path.
 
-## HTTPS creator service (development)
+## HTTPS creator service
 
-`server/main.mts` is separate from the local probe and reuses the same provider/chat/display modules. Set the server-only values shown in `.env.example`: a canonical HTTPS `CHATVIEW_ORIGIN` without a trailing slash, TLS key/certificate files, an absolute `CHATVIEW_SESSION_DATABASE` path, and protected CHZZK application credentials. Register exactly `CHATVIEW_ORIGIN` plus `/callback` with CHZZK. Key files and the database must be restricted to the service account and kept outside repository/distribution assets. The server listens on the origin's port (443 by default) and `CHATVIEW_BIND_ADDRESS`.
+`server/main.mts` reuses the provider/chat/display modules. Set the server-only values in `.env.example`: canonical HTTPS `CHATVIEW_ORIGIN` without a trailing slash, TLS key/certificate files, absolute `CHATVIEW_SESSION_DATABASE`, absolute `CHATVIEW_PROVIDER_KEY_FILE`, and CHZZK application credentials. Register exactly `CHATVIEW_ORIGIN` plus `/callback`. Restrict files and their parent directories to the service account and keep them outside repository/distribution assets. The listener uses the origin's port (443 by default) and `CHATVIEW_BIND_ADDRESS`.
+
+The provider encryption key is **32 raw random bytes**, not a password, hex string, display key or streamer setup step. Provision it once through the host's secret-management process. For a local operator-controlled deployment, this command creates a new file and refuses to overwrite an existing key:
+
+```sh
+node --input-type=module -e 'import {randomBytes} from "node:crypto"; import {writeFileSync} from "node:fs"; writeFileSync(process.argv[1], randomBytes(32), {flag:"wx", mode:0o600});' /secure/path/chatview-provider.key
+```
+
+Use an existing private parent directory and point `CHATVIEW_PROVIDER_KEY_FILE` at that file. POSIX group/world permissions are rejected; on Windows enforce a service-account-only ACL separately. Keep the same key across restarts, separate from the SQLite volume and its backups. A missing, malformed or wrong key stops startup; it never creates a replacement key or discards the database. Key loss prevents decryption. Key rotation and restoring old backups require an operator procedure and fresh authorization where refresh state is uncertain; do not restart against a stale database snapshot and assume its one-use tokens remain valid.
 
 ```sh
 cd platform
@@ -30,29 +40,27 @@ npm ci --ignore-scripts
 npm run serve
 ```
 
-This listener terminates TLS directly. A reverse proxy must not turn public HTTPS into an implicitly trusted plaintext backend: `X-Forwarded-Proto` is not authorization. Use a valid certificate accepted by the native client; do not disable certificate checking. Certificates, hosting, ingress abuse controls, backup/recovery and live-provider acceptance are not provisioned by this command. Do not log callback query strings, authorization/cookie headers, provider responses or private chat. The loopback-only HTTP route adapter exists for synthetic tests, not public operation.
+Run **one service instance per database**. This is not a replicated backend. SQLite transactions fence stale refresh results and atomic revocation within this service, not distributed live gateway state. The listener terminates TLS directly; `X-Forwarded-Proto` cannot authorize a plaintext backend. Use a certificate trusted by the native client and never disable certificate checks. Hosting, certificates, ingress abuse controls, backup/recovery and live acceptance are not provisioned by this command. Do not log callback queries, authorization/cookie headers, provider responses, keys or private chat.
 
-In the existing HUD connection panel, use the configured HTTPS origin, leave the local-HTTP permission off and choose **로그인 / 연결**. The system browser authenticates the creator and asks for channel confirmation and either **게임 PC · 개인 HUD로 연결** or **송출 PC · OBS 역할로 연결**. A separate browser on the other PC can approve the same channel and join the same logical session; a different creator cannot join by submitting a channel ID. No hardware ID, pairing product, or manual display key is required.
+## Login, roles and restart continuity
 
-The account page lists that creator's connections. **이 연결 해제** revokes only the selected renewable approval. **모든 PC 연결 및 치지직 권한 철회** first stops that creator's local approvals/delivery, then reports whether the provider revoke succeeded. **이 브라우저만 로그아웃** does not revoke native sessions. One streaming role is allowed; revoke its previous connection before approving a replacement. Native launch-role detection, role-status UI and OBS output observation are not yet wired to these server roles. The session ID groups approved connections; it is not a measured broadcast interval. `/broadcast/session` accepts the existing renewal credential, returns only its own membership and explicitly reports `captureState: unverified`.
+In the existing HUD connection panel (**Ctrl+Alt+Shift+C**), use the HTTPS service origin, leave local HTTP permission off and choose **로그인 / 연결**. The system browser authenticates the creator and asks for channel confirmation and **게임 PC · 개인 HUD로 연결** or **송출 PC · OBS 역할로 연결**. Independent browser logins of the same channel join one logical session/upstream. A submitted channel ID cannot join another creator. No hardware identifier, pairing product or manual display key is required. For the local probe use its loopback origin and explicitly allow local HTTP instead.
 
-Provider credentials stay in server memory in this slice. Server restart requires CHZZK reauthorization; saved app-approval hashes and roles remain in SQLite and can resume after the same creator reauthorizes. Ambiguous provider refresh failure suspends the affected account rather than replaying a one-use token. Bounded upstream reconnect is distinct from provider token refresh. These limits must not be presented as uninterrupted operational service.
+Every approved connection is renewable during its current run. **이 PC에서 연결 유지** only controls Windows user-scoped persistence across app restarts. Native **로그아웃** clears that local credential and revokes its ChatView approval; these are not provider tokens. Short display bearers remain chat-read-only and are reissued after service restart through the existing renewal route.
 
-## Native display
+The service stores CHZZK channel/token/absolute-expiry records using AES-256-GCM, with a fresh nonce and authenticated owner/revision binding. It does not persist chat messages or browser login cookies. On a valid native renewal after restart, it loads only that creator, checks provider identity/authorization, and shares one upstream among its approved PCs. Expired provider access is refreshed once for concurrent requests, not given a new lifetime by loading it. Native app-approval expiry still applies.
 
-Start an OBS-managed HUD, or use the explicit developer `--companion` entry point without local OBS. For the local probe, in **Ctrl+Alt+Shift+C**, enter `http://127.0.0.1:47831`, explicitly allow the local server and choose **로그인 / 연결**. For the HTTPS service use its origin as above. ChatView creates a request-bound verifier, opens the system browser, and delivers chat only after the creator explicitly approves the displayed channel. No display key needs to be copied into the HUD.
+Before refreshing, the service commits an unavailable/in-flight record; only the matching successful result can install a new encrypted grant. A crash or ambiguous refresh response does **not** replay the previous token after restart. That creator must reauthorize, after which still-valid native roles can resume. Confirmed provider denial/revocation removes the provider grant and all dependent PC approvals atomically, so those revoked approvals cannot return after reconsent. A temporary identity lookup or chat transport outage does not by itself delete a valid provider grant.
 
-Every approved connection receives a renewable ChatView read session so a long broadcast does not require a new approval every five minutes. **이 PC에서 연결 유지** controls only persistence across app restarts: when selected, the renewal credential is stored with Windows user-scoped protection; when not selected it remains memory-only. **로그아웃** removes the local remembered approval and asks the service to revoke that ChatView session. These are ChatView display credentials, never CHZZK developer secrets or provider access tokens.
+The account page lists only that creator's connections. **이 연결 해제** revokes one approval; **모든 PC 연결 및 치지직 권한 철회** first invalidates local authority, then reports provider-revoke success separately. **이 브라우저만 로그아웃** leaves native approvals intact. One streaming role is permitted; revoke its old connection before approving a replacement. Native launch-role detection, role-status UI and OBS output observation are still separate work. `/broadcast/session` returns the calling approval's membership and `captureState: unverified`, not a measured broadcast interval or clean-video proof.
 
-[Native display](../docs/native-display-client.md) owns controls, Windows protected persistence and document isolation; [delivery contract](../docs/display-delivery.md) owns the base login/session/display authorization limits. The private surface never loads the privileged management page. Do not paste the management URL into external chat settings or put credentials in URLs, logs or command lines. The HTTPS entry point is implemented, but actual hosting and the new service's Windows end-to-end acceptance remain unverified in the current plan.
+[Native display](../docs/native-display-client.md) owns controls and document isolation; [delivery contract](../docs/display-delivery.md) owns base authorization limits. Management pages never run inside the private HUD. Do not put management URLs or secrets into external-chat settings, display URLs, logs or command lines. Actual service-hosting and Windows restart acceptance remain distinct from the synthetic tests.
 
-## Current data and dependency contract
+## Data and dependency contract
 
-The browser preview retains same-browser Host/Origin/cookie/state/one-use-callback/CSRF protections. Display consumers use separate ticket/bearer credentials with no management or financial authority; the HTTPS service does not expose the probe's manual ticket route. The shared renderer creates text nodes and makes no remote media requests. It retains at most 100 bounded messages in memory; no chat database or reward ledger exists. Stop/disconnect/revoke clear text. Provider graphical badges/emoticons are not yet rendered, and the adapter does not invent unique provider message IDs or deduplicate legitimate repeated text.
+The renderer creates text nodes, makes no remote media requests and keeps at most 100 bounded messages in memory. Stop/disconnect/revoke clears text. No chat database or reward ledger exists. Graphical badges/emoticons are not yet rendered; the adapter does not invent unique provider message IDs or deduplicate legitimate repeated text. Display acknowledgements, devices and preview counts are not viewers or billable exposure.
 
-The locked Socket.IO client 2.0.3/Engine.IO3 path uses a fresh Manager with structured options parsed by Node URL. **Do not change it to `io(url)`, `new Manager(url)` or the legacy host option:** the pinned parseuri 3.0.2 override is not a callable replacement for the legacy URI API and the selected options-only path does not invoke it. Socket framing remains the library's job; do not introduce a parser shim. Socket.IO parser and ws versions/integrities remain in package-lock.json. Version changes need protocol/installed-library verification, not assumptions about a newer client.
-
-The gateway and UI bound their queues and frames; these downstream bounds do not imply a pre-decoding frame-size limit on the separate CHZZK upstream transport. Device/preview counts and chat messages are not viewers or billable ad exposure.
+The locked Socket.IO 2.0.3/Engine.IO3 client uses a fresh Manager with structured options parsed by Node URL. **Do not change it to `io(url)`, `new Manager(url)` or the legacy host option:** the parseuri 3.0.2 override is not the legacy callable URI API. Framing remains the library's job; no parser shim. Dependency changes require installed-library/protocol verification. Downstream gateway bounds do not imply pre-decoding limits on the separate CHZZK upstream.
 
 ## Relevant checks
 
@@ -63,12 +71,10 @@ npm run typecheck
 npm audit --audit-level=low
 ```
 
-Focused service checks:
+Focused persistence/HTTP checks using synthetic provider/chat/gateway boundaries:
 
 ```sh
-node --experimental-strip-types --test tests/service-roles.test.mts tests/platform-service.test.mts
+node --experimental-strip-types --test tests/provider-grants.test.mts tests/platform-service.test.mts tests/provider-restart.test.mts
 ```
 
-The new service tests use actual HTTP/SQLite with synthetic provider/chat/gateway boundaries. They do not prove a WebSocket wire exchange, a trusted TLS certificate, a native HUD session, or a real CHZZK account. The existing contract workflow separately checks Windows/Linux and Node22/24 with locked install, full runtime/development audit, strict types and unchanged manifests; its other tests exercise actual local WebSocket/library traffic and synthetic provider responses. Windows native checks separately exercise WinHTTP and WebView2; Node is a fixture tool, not a desktop runtime dependency. Run relevant checks during development and full qualification for a distribution candidate according to the workflow document. Do not reuse historical audit/CI success as current provider, deployment or hardware evidence.
-
-Extend this service rather than rebuilding login or adding device enrollment. The current plan records what was actually executed and which persistence, native, hosting and clean-video work remains. Live authorization and clean-video testing proceed when their external prerequisites exist; missing credentials do not prohibit independent implementation.
+`provider-restart-wire.test.mts` additionally uses the actual locked ws library and display gateway. These tests cover SQLite reopen, a child-process exit during refresh, account/role isolation, renewal and revocation. They are not live CHZZK, trusted-certificate, Windows HUD or physical dual-PC acceptance. The contract CI uses locked installs and strict types on Windows/Linux and Node22/24; native and distribution checks remain separate. Exact executed evidence and the next user flow belong only in the current plan, not in assumptions about earlier CI passes.

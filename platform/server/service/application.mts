@@ -195,7 +195,7 @@ ${account.connections.map(connection => `<section><p>${connection.role === 'gami
 ${this.#form(b, '/account/reconnect', '채팅 다시 연결')}
 ${this.#form(b, '/account/revoke', '모든 PC 연결 및 치지직 권한 철회')}
 ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
-<p>서비스 재시작 뒤에는 앱에서 치지직을 다시 승인해야 합니다. 저장한 PC 연결은 같은 채널 승인 뒤 이어집니다.</p>`); return;
+<p>저장된 승인이 유효하면 서비스 재시작 뒤에도 PC 연결을 복원합니다. 권한 철회나 갱신 중단으로 재승인이 필요할 때는 앱에서 다시 로그인하세요.</p>`); return;
       }
       if (request.method !== 'POST') throw new DisplayAccessError(404);
       if (!b || request.headers.origin !== this.#origin) throw new DisplayAccessError(403);

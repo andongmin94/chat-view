@@ -9,6 +9,7 @@ import { SessionStore } from './chat/session-store.mts';
 import { DisplayGateway } from './chat/display-gateway.mts';
 import { Creators } from './service/creators.mts';
 import { PlatformApplication } from './service/application.mts';
+import { ProviderGrants, readProviderKey } from './service/provider-grants.mts';
 
 export async function startPlatform(env: NodeJS.ProcessEnv = process.env) {
   const required = (name: string) => {
@@ -26,30 +27,36 @@ export async function startPlatform(env: NodeJS.ProcessEnv = process.env) {
     minVersion: 'TLSv1.2' as const, maxHeaderSize: 16384 };
   // Direct TLS termination only. Forwarded headers never authorize plain HTTP.
   const port = Number(url.port || '443');
-  const sessions = new SessionStore(database);
-  const creators = new Creators({ api, sessions,
-    createChat: changed => new ChzzkChatSession(api, changed),
-    createDisplay: (access, snapshot) => new DisplayGateway(access, () => origin, snapshot) });
-  const app = new PlatformApplication(creators, origin, state => authorizationUrl(credentials.clientId, `${origin}/callback`, state));
-  const server = createServer(tls, (request, response) => { void app.handle(request, response); });
-  server.requestTimeout = 15000; server.headersTimeout = 10000; server.keepAliveTimeout = 5000;
-  server.maxHeadersCount = 64; server.maxRequestsPerSocket = 100;
-  server.on('upgrade', (request, socket, head) => app.upgrade(request, socket, head));
-  server.on('clientError', (_error, socket) => socket.destroy());
-  let closed = false;
+  const key = readProviderKey(required('CHATVIEW_PROVIDER_KEY_FILE'));
+  let sessions: SessionStore | undefined, grants: ProviderGrants | undefined;
+  let creators: Creators | undefined, app: PlatformApplication | undefined;
+  let server: ReturnType<typeof createServer> | undefined, closed = false;
   const close = async () => {
-    if (closed) return; closed = true; app.close();
-    const stopped = new Promise<void>(resolve => server.close(() => resolve()));
-    server.closeAllConnections(); await creators.close(); await stopped; sessions.close();
+    if (closed) return; closed = true; app?.close();
+    const stopped = server ? new Promise<void>(resolve => server!.close(() => resolve())) : Promise.resolve();
+    server?.closeAllConnections();
+    try { await creators?.close(); await stopped; }
+    finally { grants?.close(); sessions?.close(); }
   };
   try {
+    sessions = new SessionStore(database);
+    try { grants = new ProviderGrants(sessions.database, key); } finally { key.fill(0); }
+    creators = new Creators({ api, sessions, grants,
+      createChat: changed => new ChzzkChatSession(api, changed),
+      createDisplay: (access, snapshot) => new DisplayGateway(access, () => origin, snapshot) });
+    app = new PlatformApplication(creators, origin, state => authorizationUrl(credentials.clientId, `${origin}/callback`, state));
+    server = createServer(tls, (request, response) => { void app!.handle(request, response); });
+    server.requestTimeout = 15000; server.headersTimeout = 10000; server.keepAliveTimeout = 5000;
+    server.maxHeadersCount = 64; server.maxRequestsPerSocket = 100;
+    server.on('upgrade', (request, socket, head) => app!.upgrade(request, socket, head));
+    server.on('clientError', (_error, socket) => socket.destroy());
     await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(port, env.CHATVIEW_BIND_ADDRESS ?? '0.0.0.0', () => {
-        server.off('error', reject); resolve();
+      server!.once('error', reject);
+      server!.listen(port, env.CHATVIEW_BIND_ADDRESS ?? '0.0.0.0', () => {
+        server!.off('error', reject); resolve();
       });
     });
-  } catch (error) { await close(); throw error; }
+  } catch (error) { key.fill(0); await close(); throw error; }
   return { close };
 }
 
@@ -61,7 +68,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       void server.close().catch(() => { process.exitCode = 1; });
     });
   } catch {
-    // Configuration may contain provider tokens, filenames or TLS key material.
     console.error('ChatView service could not start. Check the protected server configuration.');
     process.exitCode = 1;
   }

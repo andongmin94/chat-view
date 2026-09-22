@@ -1,6 +1,6 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-09-22 (Asia/Seoul). 출발점: `OBS @ c081bb67dbfa1a6baafc649d8ff74092109af2ee`. 이번 변경: G4-05/G3-02의 제공자 승인 보호 저장과 서버 재시작 복원.
+갱신: 2026-09-22 (Asia/Seoul). 현재 코드 기준: `b69d50f4e40f38ce67db8085f3edefbf80dfa59f`. 이번 변경: G4-05/G3-02의 제공자 승인 보호 저장과 서버 재시작 복원.
 이 파일이 유일한 현재 작업 목록이다. 목표는 [PRODUCT.md](../PRODUCT.md), 구현·검증 운영은 [development-workflow.md](development-workflow.md), 책임 구분은 [architecture.md](architecture.md)를 따른다.
 
 > 최종 제품: 한 화면에서 채팅을 읽고 개인 HUD는 시청자에게 노출하지 않으며, 게임 PC에 OBS가 없는 투컴을 지원하는 챗뷰 자체 플랫폼. 스트리머가 선택한 공개 광고의 시청시간 기반 실적을 HP 진행과 광고 수익으로 연결한다.
@@ -78,9 +78,10 @@
 
 ## 현재 근거와 세션 인수인계
 
-- **이번 코드:** 이 문서와 같은 커밋의 `provider-grants.mts`, `creators.mts`, `session-store.mts`, `server/main.mts`, 계정 안내·키파일 설정, 저장/재시작/실제 gateway 회귀 검사다. 기존 서비스 테스트 fixture를 공유해 기존 9개 회귀를 유지했다. 네이티브 소스·의존성 버전·lockfile·CI 기준은 바꾸지 않았다.
+- **이번 코드:** `b69d50f4e40f38ce67db8085f3edefbf80dfa59f`의 `provider-grants.mts`, `creators.mts`, `session-store.mts`, `server/main.mts`, 계정 안내·키파일 설정, 저장/재시작/실제 gateway 회귀 검사다. 기존 서비스 테스트 fixture를 공유해 기존 9개 회귀를 유지했다. 네이티브 소스·의존성 버전·lockfile·CI 기준은 바꾸지 않았다.
 - **이번 직접 실행:** Linux Node **22.16.0**, `node --experimental-strip-types --test tests/provider-grants.test.mts tests/platform-service.test.mts tests/provider-restart.test.mts` **28/28 통과, 실패/skip 0**. 실제 HTTP/SQLite reopen, 기존 두 PC 승인 복원, 단일 갱신, 철회, 오류 격리와 갱신 claim 뒤 child-process 비정상 종료를 검사했다. provider/chat/gateway는 합성 경계다.
-- **이번 타입/검증 범위:** 저장소·키파일 모듈/테스트의 strict type 검사는 환경의 TS **5.8.3** / @types-node **25.1.0**으로 통과했다. 변경 .mts 구문 검사를 실행했다. 로컬 DNS/패키지 접근 문제로 locked `npm ci`, 전체 test/typecheck/audit와 `provider-restart-wire.test.mts`의 실제 ws 실행은 로컬에서 하지 못했다. 해당 wire 검사는 기존 원격 contract CI 대상이며 **이번 커밋의 원격 성공은 아직 확인하지 않았다**. 실제 인증서·CHZZK 계정·Windows 재시작·투컴 하드웨어·qualification은 수행하지 않았다.
+- **이번 타입/검증 범위:** 저장소·키파일 모듈/테스트의 strict type 검사는 환경의 TS **5.8.3** / @types-node **25.1.0**으로 통과했다. 변경 .mts 구문 검사를 실행했다. 로컬 DNS/패키지 접근 문제로 locked `npm ci`, 전체 test/typecheck/audit와 `provider-restart-wire.test.mts`의 실제 ws 실행은 로컬에서 하지 못했다. 로컬에서 못 한 locked 검사는 아래 원격 결과로 확인했다. 실제 인증서·CHZZK 계정·Windows 서비스 재시작·투컴 하드웨어·qualification은 수행하지 않았다.
+- **이번 원격 검증:** 코드 `b69d50f4e40f38ce67db8085f3edefbf80dfa59f`, CHZZK **#31 / 35679404268**의 Windows/Linux × Node22/24 네 조합에서 locked install, audit, 전체 테스트(실제 ws/display 재시작 검사 포함), strict type, manifest 무변경 확인이 모두 성공했다. 같은 코드의 Windows **#323 / 35679404233**도 routine 네이티브 빌드/테스트에 성공했다. 반복·설치·패키지 qualification 단계는 의도적으로 건너뛰었으며 성공으로 세지 않는다. 이 결과 기록은 코드 변경 없는 문서 보완이다.
 - **확인한 직전 원격 기준:** `c081bb67dbfa1a6baafc649d8ff74092109af2ee`의 CHZZK **#30 / 35548221833**에서 Windows/Linux × Node22/24 locked install, audit, 전체 테스트, strict type, manifest 확인 모두 성공. Windows **#322 / 35548221963** routine 빌드/테스트도 성공. qualification 단계는 건너뛴 것이며 이번 변경 검증으로 대체하지 않는다.
 - **운영 제한:** 정상 재시작은 같은 키/DB와 유효 PC 승인으로 복원한다. 갱신 도중 중단·모호한 응답은 재동의가 필요하다. 키 자동 재생성, 과거 DB로의 안전한 rollback, 다중 인스턴스, 실계정/영상 보장은 제공하지 않는다. 키와 백업은 별도 보호 관리한다.
 - **ZIP 의존 없음:** 코드·테스트·설정·현재 지시는 OBS 이력만으로 이어간다. 옛 로그인/device-enrollment/remembered-connection ZIP은 재개 자산이 아니다.

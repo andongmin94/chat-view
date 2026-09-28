@@ -39,6 +39,25 @@ bool valid(const SavedConnection &value)
             return (c >= L'a' && c <= L'f') || (c >= L'0' && c <= L'9');
         });
 }
+std::optional<SavedConnection> read_connection(HANDLE file)
+{
+    LARGE_INTEGER length{};
+    if (!GetFileSizeEx(file, &length) || length.QuadPart <= 0 || length.QuadPart > kMaximumBytes) return std::nullopt;
+    std::vector<BYTE> bytes(static_cast<size_t>(length.QuadPart));
+    DWORD read = 0;
+    if (!ReadFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) || read != bytes.size()) return std::nullopt;
+    DATA_BLOB input{read, bytes.data()}; Blob plain;
+    if (!CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &plain.value) ||
+        plain.value.cbData % sizeof(wchar_t) || plain.value.cbData > kMaximumBytes) return std::nullopt;
+    const std::wstring_view text(reinterpret_cast<wchar_t *>(plain.value.pbData), plain.value.cbData / sizeof(wchar_t));
+    const auto first = text.find(L'\n', 2), second = text.find(L'\n', first == text.npos ? text.size() : first + 1);
+    if (!text.starts_with(L"1\n") || first == text.npos || second == text.npos ||
+        second + 2 != text.size() || (text.back() != L'0' && text.back() != L'1')) return std::nullopt;
+    SavedConnection value{std::wstring(text.substr(2, first - 2)),
+                             std::wstring(text.substr(first + 1, second - first - 1)), text.back() == L'1'};
+    if (!valid(value)) { Wipe wipe{value.credential}; return std::nullopt; }
+    return value;
+}
 }
 bool save_connection(const SavedConnection &connection) noexcept
 {
@@ -76,22 +95,7 @@ std::optional<SavedConnection> load_connection() noexcept
                                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (raw == INVALID_HANDLE_VALUE) return std::nullopt;
         UniqueHandle file(raw);
-        LARGE_INTEGER length{};
-        if (!GetFileSizeEx(file.get(), &length) || length.QuadPart <= 0 || length.QuadPart > kMaximumBytes) return std::nullopt;
-        std::vector<BYTE> bytes(static_cast<size_t>(length.QuadPart));
-        DWORD read = 0;
-        if (!ReadFile(file.get(), bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) || read != bytes.size()) return std::nullopt;
-        DATA_BLOB input{read, bytes.data()}; Blob plain;
-        if (!CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &plain.value) ||
-            plain.value.cbData % sizeof(wchar_t) || plain.value.cbData > kMaximumBytes) return std::nullopt;
-        const std::wstring_view text(reinterpret_cast<wchar_t *>(plain.value.pbData), plain.value.cbData / sizeof(wchar_t));
-        const auto first = text.find(L'\n', 2), second = text.find(L'\n', first == text.npos ? text.size() : first + 1);
-        if (!text.starts_with(L"1\n") || first == text.npos || second == text.npos ||
-            second + 2 != text.size() || (text.back() != L'0' && text.back() != L'1')) return std::nullopt;
-        SavedConnection value{std::wstring(text.substr(2, first - 2)),
-                                 std::wstring(text.substr(first + 1, second - first - 1)), text.back() == L'1'};
-        if (!valid(value)) return std::nullopt;
-        return value;
+        return read_connection(file.get());
     } catch (...) { return std::nullopt; }
 }
 bool forget_connection() noexcept
@@ -102,11 +106,24 @@ bool forget_connection() noexcept
         return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
     } catch (...) { return false; }
 }
-void forget_matching_connection(const std::wstring &credential) noexcept
+bool forget_matching_connection(const std::wstring &credential) noexcept
 {
-    auto saved = load_connection();
-    if (!saved) return;
-    if (saved->credential == credential) (void)forget_connection();
-    if (!saved->credential.empty()) SecureZeroMemory(saved->credential.data(), saved->credential.size() * sizeof(wchar_t));
+    try {
+        // Hold the same file through comparison and deletion. Another process
+        // cannot replace it between the check and an unrelated path deletion.
+        const HANDLE raw = CreateFileW(path().c_str(), GENERIC_READ | DELETE, FILE_SHARE_READ,
+            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (raw == INVALID_HANDLE_VALUE) {
+            const DWORD error = GetLastError();
+            return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+        }
+        UniqueHandle file(raw);
+        auto saved = read_connection(file.get());
+        if (!saved) return false; // Corrupt/unreadable storage is not absence.
+        Wipe wipe{saved->credential};
+        if (saved->credential != credential) return true;
+        FILE_DISPOSITION_INFO disposition{}; disposition.DeleteFile = TRUE;
+        return SetFileInformationByHandle(file.get(), FileDispositionInfo, &disposition, sizeof(disposition)) != FALSE;
+    } catch (...) { return false; }
 }
 }

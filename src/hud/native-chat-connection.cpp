@@ -104,7 +104,11 @@ LRESULT CALLBACK NativeChatConnection::procedure(HWND window, UINT message, WPAR
     if (!self) return DefWindowProcW(window, message, wparam, lparam);
     if (message == WM_COMMAND) {
         if (LOWORD(wparam) == kConnect || LOWORD(wparam) == IDOK) { self->connect(); return 0; }
-        if (LOWORD(wparam) == kDisconnect) { self->auto_connect_pending_ = false; self->end(L"연결을 종료했습니다. 저장한 연결은 키 없이 다시 연결할 수 있습니다."); return 0; }
+        if (LOWORD(wparam) == kDisconnect) {
+            if (self->signing_out_) { self->notice(L"로그아웃 중입니다."); return 0; }
+            self->auto_connect_pending_ = false;
+            self->end(L"연결을 종료했습니다. 서버 승인을 해제하려면 로그아웃을 선택하세요."); return 0;
+        }
         if (LOWORD(wparam) == kForget) { self->forget(); return 0; }
         if (LOWORD(wparam) == IDCANCEL) { SendMessageW(window, WM_CLOSE, 0, 0); return 0; }
     }
@@ -136,7 +140,7 @@ void NativeChatConnection::connect() noexcept
 {
     auto_connect_pending_ = false;
     try {
-        if (client_.running() || forget_pending_ || signing_out_) { notice(L"연결 또는 종료 처리 중입니다. 중복 연결하지 않습니다."); return; }
+        if (client_.running() || signing_out_) { notice(L"연결 또는 종료 처리 중입니다. 중복 연결하지 않습니다."); return; }
         if (!hud_.webview_ready_ || hud_.system_suppressed() || hud_.shutting_down_ || hud_.capture_exclusion_failed_) {
             notice(L"HUD를 현재 사용할 수 없습니다. 캡처·잠금 보호는 우회하지 않습니다."); return;
         }
@@ -155,14 +159,17 @@ void NativeChatConnection::connect() noexcept
 void NativeChatConnection::forget() noexcept
 {
     auto_connect_pending_ = false;
-    // Wait for cancellation before deleting: a pending exchange must not
-    // write a saved login after the user has requested logout.
-    end(L"로그아웃 중입니다.");
-    forget_pending_ = true;
+    if (signing_out_) { notice(L"로그아웃 중입니다."); return; }
+    // The client owns both in-run and remembered approvals. It cancels receipt,
+    // clears only matching storage and revokes on its worker, never on this UI.
+    signing_out_ = client_.sign_out();
+    clear_display();
+    notice(signing_out_ ? L"로그아웃 중입니다. 서버 연결 승인을 해제하고 있습니다."
+        : L"표시를 중지했습니다. 해제할 승인을 확인하지 못해 서버 로그아웃은 미확인입니다.");
 }
-void NativeChatConnection::end(const wchar_t *message, bool preserve_host) noexcept
+void NativeChatConnection::clear_display(bool preserve_host) noexcept
 {
-    client_.stop(); pending_.clear(); connection_state_.reset(); show_connection_state();
+    pending_.clear(); connection_state_.reset(); show_connection_state();
     if (active_) {
         active_ = false; awaiting_login_ = false; ready_ = false; displayed_subscribed_ = false; awaiting_frame_ = 0U; surface_.close();
         if (!preserve_host) {
@@ -170,34 +177,21 @@ void NativeChatConnection::end(const wchar_t *message, bool preserve_host) noexc
             hud_.set_page_health(HudPageState::ConnectionLost, HudProvider::Chzzk);
         }
     }
-    notice(message);
+}
+void NativeChatConnection::end(const wchar_t *message, bool preserve_host) noexcept
+{
+    client_.stop(); clear_display(preserve_host); notice(message);
 }
 void NativeChatConnection::tick() noexcept
 {
     try {
-        if (forget_pending_) {
-            if (client_.running()) return;
-            forget_pending_ = false;
-            auto saved = load_connection();
-            if (!forget_connection()) {
-                notice(L"이 PC의 연결 정보 삭제에 실패했습니다. 다시 로그아웃해 주세요.");
-                if (saved) SecureZeroMemory(saved->credential.data(), saved->credential.size() * sizeof(wchar_t));
-                return;
-            }
-            if (saved) {
-                signing_out_ = client_.start(std::move(saved->origin), std::move(saved->credential),
-                    saved->developer_loopback, DisplayAuthentication::SignOut, role_);
-                if (!signing_out_) notice(L"로컬 연결은 삭제했습니다. 서버 해제는 확인하지 못했습니다.");
-            } else notice(L"이 PC에서 로그아웃했습니다.");
-            return;
-        }
         if (signing_out_) {
-            DisplayUpdate logout;
             if (client_.running()) return;
             signing_out_ = false;
+            DisplayUpdate logout;
             const bool confirmed = client_.take(logout) && logout.status == DisplayStatus::SignedOut;
-            notice(confirmed ? L"로그아웃했습니다. 저장 정보와 서버 연결 승인을 해제했습니다."
-                : L"로컬 연결은 삭제했습니다. 서버 해제는 확인하지 못했습니다. 관리 화면에서도 연결을 해제할 수 있습니다.");
+            notice(confirmed ? L"현재 연결을 로그아웃했습니다. 서버 승인도 해제했습니다."
+                : L"로그아웃 미확인: 저장 정보 삭제 또는 서버 해제에 실패했습니다. 다시 로그아웃하거나 관리 화면에서 연결을 해제하세요.");
             return;
         }
         if (auto_connect_pending_ && !active_ && !client_.running() && hud_.webview_ready_ &&
@@ -237,7 +231,6 @@ void NativeChatConnection::tick() noexcept
                 end(L"로그인 또는 연결이 종료됐습니다. 로그인 / 연결을 다시 선택하세요."); return;
             }
             if (update.status == DisplayStatus::Reconnecting) {
-                // Keep one cleared surface through retry backoff, not old chat.
                 if (!reconnecting_ && !open_surface()) { end(L"연결 손실 뒤 화면을 지우지 못했습니다."); return; }
                 reconnecting_ = true;
                 notice(L"연결 복구 중입니다. 서버와 채널 승인이 준비되면 자동 재연결합니다.");
@@ -275,7 +268,6 @@ void NativeChatConnection::tick() noexcept
 void NativeChatConnection::close() noexcept
 {
     auto_connect_pending_ = false; client_.stop();
-    if (forget_pending_) (void)forget_connection();
     connection_state_.reset();
     pending_.clear(); active_ = false; awaiting_login_ = false; surface_.close();
     if (hotkey_) { UnregisterHotKey(nullptr, kConnectHotkey); hotkey_ = false; }

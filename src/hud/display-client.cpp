@@ -247,14 +247,32 @@ bool inspect_frame(std::wstring &frame, const DisplayMembership &expected, Displ
 }
 struct DisplayClient::State {
     UniqueHandle cancel{CreateEventW(nullptr, TRUE, FALSE, nullptr)};
+    UniqueHandle logout_cancel{CreateEventW(nullptr, TRUE, FALSE, nullptr)};
     std::atomic<bool> finished{false};
     std::mutex mutex;
     DisplayUpdate latest{DisplayStatus::Connecting, {}, false};
     std::wstring login_url;
+    std::wstring origin;
+    std::wstring renewal;
+    bool local = false;
+    bool logout_requested = false;
     DisplayRole role = DisplayRole::Gaming;
     bool pending = true;
     bool reusable = false;
     ULONGLONG expires = 0, last_frame = 0;
+    ~State() { erase(renewal); }
+    void retain_approval(const winrt::Windows::Data::Json::JsonObject &lease)
+    {
+        require(lease.GetNamedString(L"scope") == L"chat:read" && lease.GetNamedString(L"sessionScope") == L"chat:renew");
+        std::wstring value = lease.GetNamedString(L"sessionToken").c_str(); SecretWipe wipe{value};
+        const double lifetime = lease.GetNamedNumber(L"sessionExpiresInMs");
+        require(key(value) && std::isfinite(lifetime) && lifetime > 0 && lifetime <= 2592000000.0 && std::floor(lifetime) == lifetime);
+        std::lock_guard lock(mutex);
+        // Keep the exact approval even when cancellation races with receipt or
+        // persistence. Only this worker uses it; it is never part of a mailbox.
+        erase(renewal); renewal = value;
+    }
+    void clear_approval() noexcept { std::lock_guard lock(mutex); erase(renewal); }
     void finish(DisplayStatus status) noexcept
     {
         std::lock_guard lock(mutex);
@@ -272,14 +290,51 @@ bool DisplayClient::start(std::wstring origin, std::wstring credential, bool loc
         require(role == DisplayRole::Gaming || role == DisplayRole::Streaming);
         const bool browser = authentication == DisplayAuthentication::Browser || authentication == DisplayAuthentication::BrowserRemember;
         require(browser ? credential.empty() : key(credential)); (void)endpoint(origin, local);
-        auto state = std::make_shared<State>(); require(static_cast<bool>(state->cancel));
-        state->role = role;
+        auto state = std::make_shared<State>(); require(static_cast<bool>(state->cancel) && static_cast<bool>(state->logout_cancel));
+        state->role = role; state->origin = origin; state->local = local;
+        if (authentication == DisplayAuthentication::Saved || authentication == DisplayAuthentication::SignOut) state->renewal = credential;
+        state->logout_requested = authentication == DisplayAuthentication::SignOut;
         state->reusable = authentication != DisplayAuthentication::SignOut; state_ = state;
         worker_ = std::thread(&DisplayClient::run, state, std::move(origin), std::move(credential), local, authentication);
         return true;
     } catch (...) { if (state_) { state_->finish(DisplayStatus::Failed); state_->finished.store(true); } return false; }
 }
-void DisplayClient::stop() noexcept { if (state_) { SetEvent(state_->cancel.get()); state_->finish(DisplayStatus::Ended); } }
+void DisplayClient::stop() noexcept
+{
+    if (!state_) return;
+    SetEvent(state_->cancel.get()); SetEvent(state_->logout_cancel.get());
+    state_->finish(DisplayStatus::Ended);
+}
+bool DisplayClient::sign_out() noexcept
+{
+    try {
+        std::wstring origin, credential; SecretWipe wipe{credential};
+        bool local = false; DisplayRole role = DisplayRole::Gaming;
+        if (state_) {
+            std::lock_guard lock(state_->mutex);
+            if (!state_->finished.load()) {
+                // The worker commits finished under this same lock. A request
+                // at its last frame/exit cannot be acknowledged and then lost.
+                // A preceding ordinary stop cancels delivery, not this new
+                // explicit logout. Repeated logout requests do not reset it.
+                if (!state_->logout_requested) ResetEvent(state_->logout_cancel.get());
+                state_->logout_requested = true;
+                SetEvent(state_->cancel.get());
+                state_->latest = {DisplayStatus::Ended, {}, false}; state_->login_url.clear();
+                state_->pending = true; state_->expires = 0; state_->last_frame = 0;
+                return true;
+            }
+            if (state_->renewal.empty()) return false;
+            origin = state_->origin; credential = state_->renewal; local = state_->local; role = state_->role;
+        } else {
+            auto saved = load_connection();
+            if (!saved) return false;
+            SecretWipe wipe_saved{saved->credential};
+            origin = saved->origin; credential = saved->credential; local = saved->developer_loopback;
+        }
+        return start(std::move(origin), std::move(credential), local, DisplayAuthentication::SignOut, role);
+    } catch (...) { return false; }
+}
 bool DisplayClient::take_login_url(std::wstring &url) noexcept
 {
     if (!state_) return false;
@@ -303,10 +358,37 @@ bool DisplayClient::take(DisplayUpdate &update) noexcept
     state_->latest.status = update.status; state_->latest.subscribed = update.subscribed; state_->pending = false;
     return true;
 }
+void DisplayClient::run_signout(const std::shared_ptr<State> &state) noexcept
+{
+    bool apartment = false;
+    try {
+        // A pending/lost approval response is not a confirmed server logout.
+        require(key(state->renewal));
+        require(forget_matching_connection(state->renewal));
+        // Local cleanup still occurs if shutdown cancels network revocation.
+        // A different saved account/connection is deliberately left untouched.
+        winrt::init_apartment(winrt::apartment_type::multi_threaded); apartment = true;
+        const auto target = endpoint(state->origin, state->local);
+        InternetHandle session(WinHttpOpen(L"ChatView/0.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+            WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC));
+        require(WinHttpSetTimeouts(session.value, 5000, 5000, 5000, 15000) != FALSE);
+        InternetHandle connection(WinHttpConnect(session.value, target.host.c_str(), target.port, 0));
+        const auto result = post(connection.value, target.secure ? WINHTTP_FLAG_SECURE : 0,
+            L"/display/signout", L"ChatView-Session", state->renewal, state->logout_cancel.get(), GetTickCount64() + kOperationMs);
+        require(result.GetNamedBoolean(L"signedOut"));
+        state->clear_approval(); state->finish(DisplayStatus::SignedOut);
+    } catch (...) {
+        // Retain the in-memory approval for an explicit retry in this process.
+        // Failure never recreates a DPAPI file or silently retries/reconnects.
+        state->finish(DisplayStatus::Failed);
+    }
+    if (apartment) winrt::uninit_apartment();
+}
 void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin, std::wstring credential,
                         bool local, DisplayAuthentication authentication) noexcept
 {
     SecretWipe wipe{credential}; bool apartment = false;
+    if (authentication != DisplayAuthentication::SignOut) {
     try {
         winrt::init_apartment(winrt::apartment_type::multi_threaded); apartment = true;
         const auto target = endpoint(origin, local);
@@ -315,12 +397,6 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
         require(WinHttpSetTimeouts(session.value, 5000, 5000, 5000, 15000) != FALSE);
         InternetHandle connection(WinHttpConnect(session.value, target.host.c_str(), target.port, 0));
         const DWORD flags = target.secure ? WINHTTP_FLAG_SECURE : 0;
-        if (authentication == DisplayAuthentication::SignOut) {
-            const auto result = post(connection.value, flags, L"/display/signout", L"ChatView-Session",
-                credential, state->cancel.get(), GetTickCount64() + kOperationMs);
-            require(result.GetNamedBoolean(L"signedOut"));
-            state->finish(DisplayStatus::SignedOut);
-        } else {
         std::optional<winrt::Windows::Data::Json::JsonObject> approved_lease;
         std::optional<DisplayMembership> bound_membership;
         ULONGLONG approved_started = 0U;
@@ -355,8 +431,10 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                     const auto result = post(connection.value, flags, poll_path.c_str(), L"ChatView-Login",
                         verifier, state->cancel.get(), std::min(deadline, GetTickCount64() + kOperationMs));
                     const auto status = result.GetNamedString(L"status");
-                    if (status == L"approved") { approved_lease = result.GetNamedObject(L"lease"); approved_started = poll_started; }
-                    else require(status == L"pending");
+                    if (status == L"approved") {
+                        approved_lease = result.GetNamedObject(L"lease"); approved_started = poll_started;
+                        state->retain_approval(*approved_lease);
+                    } else require(status == L"pending");
                 } catch (const HttpFailure &error) {
                     if (error.status != 429) throw;
                 }
@@ -377,6 +455,7 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                 approved_lease.reset();
                 authorizing_session = false;
                 require(lease.GetNamedString(L"scope") == L"chat:read");
+                if (!renewable) state->retain_approval(lease);
                 const auto approved = membership(lease.GetNamedObject(L"membership"));
                 if (approved.role != state->role) throw RoleMismatch{};
                 require(!bound_membership || *bound_membership == approved);
@@ -447,7 +526,7 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                 }
                 if (renewable && authorizing_session && (error.status == 401 || error.status == 403)) {
                     if (persisted) forget_matching_connection(credential);
-                    state->finish(DisplayStatus::Denied); break;
+                    state->clear_approval(); state->finish(DisplayStatus::Denied); break;
                 }
                 if (!renewable || (error.status != 429 && error.status < 500 &&
                     (authorizing_session || (error.status != 401 && error.status != 403)))) throw;
@@ -458,14 +537,21 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
             if (WaitForSingleObject(state->cancel.get(), delay) != WAIT_TIMEOUT) break;
         }
         if (WaitForSingleObject(state->cancel.get(), 0) == WAIT_OBJECT_0) state->finish(DisplayStatus::Ended);
-        }
     } catch (const RoleMismatch &) {
         state->finish(WaitForSingleObject(state->cancel.get(), 0) == WAIT_OBJECT_0 ? DisplayStatus::Ended : DisplayStatus::RoleMismatch);
     } catch (...) {
         // Never log exception text, URL, credential, server error body or chat.
         state->finish(WaitForSingleObject(state->cancel.get(), 0) == WAIT_OBJECT_0 ? DisplayStatus::Ended : DisplayStatus::Failed);
     }
+    }
     if (apartment) winrt::uninit_apartment();
-    state->finished.store(true);
+    {
+        std::lock_guard lock(state->mutex);
+        if (!state->logout_requested) { state->finished.store(true); return; }
+    }
+    // No display request can now save credentials or publish another frame.
+    // Revocation uses its own cancellable, bounded request on this same worker.
+    run_signout(state);
+    { std::lock_guard lock(state->mutex); state->finished.store(true); }
 }
 }

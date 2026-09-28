@@ -13,5 +13,6 @@ struct SavedConnection {
 [[nodiscard]] std::optional<SavedConnection> load_connection() noexcept;
 [[nodiscard]] bool save_connection(const SavedConnection &connection) noexcept;
 [[nodiscard]] bool forget_connection() noexcept;
-void forget_matching_connection(const std::wstring &credential) noexcept;
+// Leave unrelated approvals intact. Unreadable storage is not successful removal.
+bool forget_matching_connection(const std::wstring &credential) noexcept;
 }

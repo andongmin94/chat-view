@@ -18,7 +18,7 @@ public:
     bool dispatch(MSG &message) noexcept;
     void open_dialog() noexcept;
     void tick() noexcept;
-    [[nodiscard]] DWORD wait_timeout() const noexcept { return active_ || auto_connect_pending_ || forget_pending_ || signing_out_ ? 100U : INFINITE; }
+    [[nodiscard]] DWORD wait_timeout() const noexcept { return active_ || auto_connect_pending_ || signing_out_ ? 100U : INFINITE; }
     void close() noexcept;
 private:
     friend struct NativeChatConnectionTestAccess;
@@ -27,6 +27,7 @@ private:
     void begin(std::wstring origin, std::wstring credential, bool local, DisplayAuthentication mode) noexcept;
     bool open_surface() noexcept;
     void forget() noexcept;
+    void clear_display(bool preserve_host = false) noexcept;
     void end(const wchar_t *notice, bool preserve_host = false) noexcept;
     void notice(const wchar_t *text) noexcept;
     void show_connection_state() noexcept;
@@ -44,7 +45,6 @@ private:
     bool auto_connect_pending_ = true;
     bool remembered_ = false;
     bool reconnecting_ = false;
-    bool forget_pending_ = false;
     bool signing_out_ = false;
     bool pending_subscribed_ = false;
     bool in_flight_subscribed_ = false;

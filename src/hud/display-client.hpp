@@ -28,6 +28,10 @@ public:
                              DisplayAuthentication authentication = DisplayAuthentication::OneTime,
                              DisplayRole role = DisplayRole::Gaming) noexcept;
     void stop() noexcept;
+    // Cancel delivery immediately; revoke the exact current approval on the
+    // worker, whether persisted or not. True means requested, not confirmed.
+    // The finished mailbox must report SignedOut before the UI claims success.
+    [[nodiscard]] bool sign_out() noexcept;
     [[nodiscard]] bool take_login_url(std::wstring &url) noexcept;
     [[nodiscard]] bool take(DisplayUpdate &update) noexcept;
     [[nodiscard]] bool running() const noexcept;
@@ -36,6 +40,7 @@ private:
     static void run(const std::shared_ptr<State> &state, std::wstring origin,
                     std::wstring credential, bool developer_loopback,
                     DisplayAuthentication authentication) noexcept;
+    static void run_signout(const std::shared_ptr<State> &state) noexcept;
     std::shared_ptr<State> state_;
     std::thread worker_;
 };

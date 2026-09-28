@@ -29,7 +29,8 @@ test('app login -> same-browser CHZZK consent -> own chat -> refresh -> signout,
   const probe = await startProbe({ credentials, port: 0, api, socketFactory: () => { upstream = new Socket(); return upstream; } });
   t.after(() => probe.close());
   const postNative = (path: string, scheme: string, value: string, remember = false) => fetch(probe.origin + path, {
-    method: 'POST', headers: { Authorization: `${scheme} ${value}`, ...(remember ? { 'X-ChatView-Remember': '1' } : {}) },
+    method: 'POST', headers: { Authorization: `${scheme} ${value}`, 'X-ChatView-Role': 'gaming',
+      ...(remember ? { 'X-ChatView-Remember': '1' } : {}) },
     redirect: 'manual', signal: AbortSignal.timeout(5000),
   });
   const verifier = randomBytes(32).toString('hex');
@@ -74,6 +75,10 @@ test('app login -> same-browser CHZZK consent -> own chat -> refresh -> signout,
   const [frame] = await once(peer, 'message');
   const envelope = JSON.parse(String(frame));
   assert.equal(envelope.snapshot.messages[0].content, '승인 완료 😀');
+  assert.equal(envelope.connection.role, 'gaming');
+  assert.equal(envelope.connection.gamingConnections, 1);
+  assert.equal(envelope.connection.streamingConnections, 0);
+  assert.equal(envelope.connection.captureState, 'unverified');
   const closed = once(peer, 'close');
   const renewed = await postNative('/display/refresh', 'ChatView-Session', result.lease.sessionToken);
   assert.equal(renewed.status, 200); await closed;

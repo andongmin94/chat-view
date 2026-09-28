@@ -19,7 +19,7 @@ test('existing connect remembers without enrollment; refresh and signout are sep
   const address = server.address(); assert(address && typeof address !== 'string');
   origin = `http://127.0.0.1:${address.port}`;
   const post = (path: string, scheme: string, token: string, extra: Record<string, string> = {}) =>
-    fetch(origin + path, { method: 'POST', headers: { Authorization: `${scheme} ${token}`, ...extra } });
+    fetch(origin + path, { method: 'POST', headers: { Authorization: `${scheme} ${token}`, 'X-ChatView-Role': 'gaming', ...extra } });
   try {
     const ticket = access.issue();
     const response = await post('/display/exchange', 'ChatView-Ticket', ticket.ticket);
@@ -29,10 +29,14 @@ test('existing connect remembers without enrollment; refresh and signout are sep
     assert.equal((await post('/display/exchange', 'ChatView-Ticket', ticket.ticket)).status, 401);
     assert.equal((await post('/display/refresh', 'Bearer', login.token)).status, 401);
     assert.equal((await post('/display/refresh', 'ChatView-Session', login.token)).status, 401);
+    assert.equal((await post('/display/refresh', 'ChatView-Session', login.sessionToken,
+      { 'X-ChatView-Role': 'streaming' })).status, 409);
+    assert.equal(access.active(login.id), true, 'role mismatch preserves the valid lease');
     const refreshed = await post('/display/refresh', 'ChatView-Session', login.sessionToken);
     assert.equal(refreshed.status, 200);
     const lease = await refreshed.json();
     assert.equal(access.active(login.id), false); assert.equal(access.active(lease.id), true);
+    assert.deepEqual(lease.membership, login.membership);
     const signedOut = await post('/display/signout', 'ChatView-Session', login.sessionToken);
     assert.deepEqual(await signedOut.json(), { signedOut: true });
     assert.equal(access.active(lease.id), false);

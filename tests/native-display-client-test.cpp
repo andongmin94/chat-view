@@ -17,6 +17,7 @@ struct NativeChatConnectionTestAccess {
     static HWND dialog(NativeChatConnection &c) { c.open_dialog(); return c.dialog_; }
     static NativeChatSurface &surface(NativeChatConnection &c) { return c.surface_; }
     static bool active(NativeChatConnection &c) { return c.active_; }
+    static const std::optional<DisplayConnectionState> &connection(NativeChatConnection &c) { return c.connection_state_; }
 };
 struct NativeChatSurfaceTestAccess {
     static ICoreWebView2 *core(NativeChatSurface &s) { return s.webview_.Get(); }
@@ -24,6 +25,12 @@ struct NativeChatSurfaceTestAccess {
 }
 namespace {
 void expect(bool value, const char *label) { if (!value) throw std::runtime_error(label); }
+std::wstring control_text(HWND dialog, int id)
+{
+    wchar_t value[1024]{};
+    GetDlgItemTextW(dialog, id, value, 1024);
+    return value;
+}
 void pump(chatview::NativeChatConnection *connection = nullptr)
 {
     MSG message{};
@@ -75,7 +82,7 @@ void gateway_ui(const std::wstring &origin)
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     chatview::HudWindow hud;
     expect(hud.create(GetModuleHandleW(nullptr), ready.get()), "create production HUD");
-    chatview::NativeChatConnection connection(hud, [](HWND, const wchar_t *url) {
+    chatview::NativeChatConnection connection(hud, chatview::DisplayRole::Streaming, [](HWND, const wchar_t *url) {
         const std::wstring value(url);
         expect(value.starts_with(L"http://127.0.0.1:") && value.find(L"/login/") != std::wstring::npos,
                "browser launch uses only the validated service login URL");
@@ -85,12 +92,20 @@ void gateway_ui(const std::wstring &origin)
     await([&] { return WaitForSingleObject(ready.get(), 0) == WAIT_OBJECT_0; }, "HUD startup", &connection);
     HWND dialog = chatview::NativeChatConnectionTestAccess::dialog(connection);
     expect(dialog != nullptr, "open native connection panel");
+    expect(control_text(dialog, 109).find(L"송출 PC") != std::wstring::npos, "panel identifies OBS runtime role before consent");
+    expect(control_text(dialog, 110).find(L"확인되지 않음") != std::wstring::npos, "no session claim before authorization");
     SetDlgItemTextW(dialog, 101, origin.c_str());
     SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
     SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(104, BN_CLICKED), 0);
     expect(GetDlgItem(dialog, 102) == nullptr && GetDlgItem(dialog, 107) != nullptr, "login panel has no manual key input");
     auto &surface = chatview::NativeChatConnectionTestAccess::surface(connection);
     await([&] { return surface.rendered_messages() == 1U; }, "WinHTTP gateway frame rendered", &connection);
+    const auto &state = chatview::NativeChatConnectionTestAccess::connection(connection);
+    expect(state && state->membership.role == chatview::DisplayRole::Streaming &&
+        state->gaming_connections == 0 && state->streaming_connections == 1,
+        "native controls receive authorized role and same-session display counts");
+    expect(control_text(dialog, 110) == chatview::connection_summary(*state), "panel displays actual accepted session metadata");
+    expect(control_text(dialog, 110).find(L"영상 제외 미검증") != std::wstring::npos, "role connection is not capture qualification");
     Microsoft::WRL::ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(surface);
     expect(evaluate(core.Get(), LR"JS(
         document.querySelector('#messages li b').textContent === '검증 사용자' &&
@@ -99,6 +114,8 @@ void gateway_ui(const std::wstring &origin)
     )JS", connection) == L"true", "real DOM Unicode/inert markup");
     std::cout << "rendered\n" << std::flush;
     await([&] { return !chatview::NativeChatConnectionTestAccess::active(connection); }, "grant revoke ends native delivery", &connection);
+    expect(!chatview::NativeChatConnectionTestAccess::connection(connection), "revocation clears native session state");
+    expect(control_text(dialog, 110).find(L"확인되지 않음") != std::wstring::npos, "revocation clears session status text");
     await([&] { return evaluate(core.Get(), L"document.querySelectorAll('#messages li').length === 0", connection) == L"true"; },
           "revocation clears actual DOM", &connection);
     connection.close(); hud.destroy();
@@ -113,7 +130,7 @@ void transport(const std::wstring &origin, const std::wstring &ticket, const std
         const auto before = GetTickCount64(); client.stop();
         expect(GetTickCount64() - before < 200U, "stop does not wait for network");
         chatview::DisplayUpdate update;
-        expect(client.take(update) && update.envelope.empty(), "stop immediately clears mailbox");
+        expect(client.take(update) && update.envelope.empty() && !update.connection, "stop immediately clears chat and status mailbox");
         await([&] { return !client.running(); }, "cancel pending async HTTP", nullptr, 2000U);
         return;
     }
@@ -122,16 +139,23 @@ void transport(const std::wstring &origin, const std::wstring &ticket, const std
     await([&] {
         chatview::DisplayUpdate update;
         if (client.take(update)) {
-            if (update.status == chatview::DisplayStatus::Receiving) received = true;
-            if (update.status == chatview::DisplayStatus::Ended || update.status == chatview::DisplayStatus::Failed) {
-                terminal = update.envelope.empty();
+            if (update.status == chatview::DisplayStatus::Receiving) {
+                received = true;
+                expect(update.connection.has_value(), "receiving requires validated connection metadata");
+                expect(update.envelope.find(L"broadcastSessionId") == std::wstring::npos &&
+                    update.envelope.find(L"connectionId") == std::wstring::npos,
+                    "connection metadata does not reach the renderer");
+            }
+            if (update.status == chatview::DisplayStatus::Ended || update.status == chatview::DisplayStatus::Failed ||
+                update.status == chatview::DisplayStatus::RoleMismatch) {
+                terminal = update.envelope.empty() && !update.connection;
             }
         }
         return !client.running();
     }, "transport terminates", nullptr, mode == "idle" ? 19000U : 10000U);
     chatview::DisplayUpdate update;
-    if (client.take(update)) terminal = update.envelope.empty();
-    expect(terminal, "terminal status retains no old chat");
+    if (client.take(update)) terminal = update.envelope.empty() && !update.connection;
+    expect(terminal, "terminal status retains no old chat or session metadata");
     if (mode == "local-expiry") {
         expect(received, "fixture delivered before expiry");
         expect(GetTickCount64() - before < 4000U, "local lease expires despite continuing server frames");

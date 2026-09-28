@@ -6,11 +6,12 @@ import { spawn } from 'node:child_process';
 import type { Duplex } from 'node:stream';
 import { DisplayAccess, DisplayAccessError } from '../server/chat/display-access.mts';
 import { DisplayGateway } from '../server/chat/display-gateway.mts';
+import { requestedRole } from '../server/chat/connection-role.mts';
 
 const executable = process.argv[2]; assert(executable, 'native executable required');
 const access = new DisplayAccess(() => ({ id: 'fixture-owner', expiresAt: performance.now() + 120000 }));
 const ticket = access.issue();
-let origin = '', deliveries = 0, exchanges = 0, unavailable = 0, dropped = false, revoked = false;
+let origin = '', deliveries = 0, exchanges = 0, unavailable = 0, dropped = false, revoked = false, roleRejected = false;
 const connections = new Set<Duplex>();
 const gateway = new DisplayGateway(access, () => origin, () => ({ state: 'subscribed', received: deliveries,
   messages: [{ nickname: '검증 사용자', content: '연결 유지 😀', messageTime: 1700000000000 }] }));
@@ -29,12 +30,15 @@ const server = createServer((request, response) => {
       lease = access.exchange(ticket.ticket);
     } else {
       assert(header.startsWith('ChatView-Session '));
-      lease = access.resume(header.slice('ChatView-Session '.length));
+      lease = access.resume(header.slice('ChatView-Session '.length), requestedRole(request));
     }
     deliveries++; gateway.changed();
     response.setHeader('Content-Type', 'application/json');
     response.end(JSON.stringify({ ...lease, expiresInMs: 2500 }));
-  } catch (error) { response.writeHead(error instanceof DisplayAccessError ? error.status : 500).end(); }
+  } catch (error) {
+    if (error instanceof DisplayAccessError && error.status === 409) roleRejected = true;
+    response.writeHead(error instanceof DisplayAccessError ? error.status : 500).end();
+  }
 });
 server.on('upgrade', (request, socket, head) => {
   connections.add(socket); socket.once('close', () => connections.delete(socket));
@@ -65,8 +69,8 @@ try {
   const [code] = await exited;
   assert.equal(code, 0, errors);
   assert.equal(exchanges, 1, 'one-use approval is not replayed on renewal/reconnect');
-  assert(deliveries >= 4 && dropped && revoked);
-  console.log('Native remembered chat flow passed');
+  assert(deliveries >= 4 && dropped && revoked && roleRejected);
+  console.log('Native remembered chat flow and launch-role binding passed');
 } finally {
   clearTimeout(deadline); child.kill(); gateway.close();
   for (const socket of connections) socket.destroy();

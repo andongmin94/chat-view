@@ -66,9 +66,10 @@ test('browser approval binds the exact creator and role; renewal cannot upgrade 
   const bob = new DisplayAccess(() => ({ id: 'bob', expiresAt: Date.now() + 3600000 }), Date.now, store);
   const login = new BrowserLogin();
   try {
-    const verifier = nonce(), request = login.start(hashSecret(verifier), true);
+    const verifier = nonce(), request = login.start(hashSecret(verifier), true, 'gaming');
+    assert.equal(login.view(request.id).role, 'gaming');
     assert.throws(() => login.approve(request.id), status(401));
-    login.approve(request.id, alice, 'gaming');
+    login.approve(request.id, alice);
     assert.throws(() => login.poll(request.id, nonce()), status(401));
     const result = login.poll(request.id, verifier);
     assert.equal(result.status, 'approved');
@@ -77,7 +78,9 @@ test('browser approval binds the exact creator and role; renewal cannot upgrade 
     assert.equal(result.lease.membership?.role, 'gaming');
     assert.throws(() => bob.resume(result.lease.sessionToken), status(403));
     assert.throws(() => bob.authenticate(result.lease.token), status(401));
-    const renewed = alice.resume(result.lease.sessionToken);
+    assert.throws(() => alice.resume(result.lease.sessionToken, 'streaming'), status(409));
+    assert.ok(alice.authenticate(result.lease.token), 'wrong role does not evict an existing lease');
+    const renewed = alice.resume(result.lease.sessionToken, 'gaming');
     assert.deepEqual(renewed.membership, result.lease.membership);
     assert.throws(() => alice.authenticate(result.lease.token), status(401));
     assert.throws(() => login.poll(request.id, verifier), status(410));
@@ -89,14 +92,16 @@ test('revocation invalidates pending approvals and only the revoked creator leas
   const alice = new DisplayAccess(() => ({ id: 'alice', expiresAt: Date.now() + 3600000 }), Date.now, store);
   const bob = new DisplayAccess(() => ({ id: 'bob', expiresAt: Date.now() + 3600000 }), Date.now, store);
   try {
-    const verifier = nonce(), pending = login.start(hashSecret(verifier), false);
-    login.approve(pending.id, alice, 'streaming');
+    const verifier = nonce(), pending = login.start(hashSecret(verifier), false, 'streaming');
+    login.approve(pending.id, alice);
     const other = bob.exchange(bob.issue().ticket, false, 'gaming');
     alice.revokeSessions();
     assert.throws(() => login.poll(pending.id, verifier), status(401));
     assert.ok(bob.authenticate(other.token));
-    const legacy = bob.exchange(bob.issue().ticket);
-    assert.equal(legacy.membership, undefined);
-    assert.equal(bob.resume(legacy.sessionToken).scope, 'chat:read');
+    const defaultDisplay = bob.exchange(bob.issue().ticket);
+    assert.equal(defaultDisplay.membership?.role, 'gaming');
+    assert.equal(bob.resume(defaultDisplay.sessionToken).scope, 'chat:read');
+    const roleless = store.create('bob');
+    assert.throws(() => bob.resume(roleless.token), status(401), 'obsolete roleless display grants are not upgraded');
   } finally { alice.close(); bob.close(); store.close(); }
 });

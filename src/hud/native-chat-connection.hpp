@@ -3,6 +3,7 @@
 #include "hud/display-client.hpp"
 #include "hud/native-chat-surface.hpp"
 #include <Windows.h>
+#include <optional>
 #include <string>
 
 namespace chatview {
@@ -10,7 +11,7 @@ class HudWindow;
 class NativeChatConnection final {
 public:
     using BrowserLauncher = bool (*)(HWND, const wchar_t *);
-    explicit NativeChatConnection(HudWindow &hud, BrowserLauncher browser = nullptr) noexcept;
+    explicit NativeChatConnection(HudWindow &hud, DisplayRole role, BrowserLauncher browser = nullptr) noexcept;
     ~NativeChatConnection();
     NativeChatConnection(const NativeChatConnection &) = delete;
     NativeChatConnection &operator=(const NativeChatConnection &) = delete;
@@ -28,8 +29,11 @@ private:
     void forget() noexcept;
     void end(const wchar_t *notice, bool preserve_host = false) noexcept;
     void notice(const wchar_t *text) noexcept;
+    void show_connection_state() noexcept;
     HudWindow &hud_;
     BrowserLauncher browser_;
+    const DisplayRole role_;
+    std::optional<DisplayConnectionState> connection_state_;
     DisplayClient client_;
     NativeChatSurface surface_;
     HWND dialog_ = nullptr;

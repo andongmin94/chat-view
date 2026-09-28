@@ -7,12 +7,11 @@ import type { ConnectionRole } from './session-store.mts';
 export const LOGIN_WINDOW_MS = 300_000;
 export const LOGIN_POLL_MS = 1000;
 const MAX_PENDING = 16;
-type Pending = { challenge: string; remember: boolean; expires: number; polled: number;
-  state: 'pending' | 'approved' | 'denied'; owner?: string; generation?: number;
-  access?: DisplayAccess; role?: ConnectionRole };
+type Pending = { challenge: string; remember: boolean; role: ConnectionRole; expires: number; polled: number;
+  state: 'pending' | 'approved' | 'denied'; owner?: string; generation?: number; access?: DisplayAccess };
 
-// The URL id cannot poll or obtain display secrets. A service binds the target
-// creator only AFTER browser authentication and explicit channel/role consent.
+// The URL id cannot poll or obtain display secrets. Bind the creator only after
+// browser authentication; the launch role is fixed before that browser opens.
 export class BrowserLogin {
   #requests = new Map<string, Pending>();
   #access?: DisplayAccess;
@@ -31,27 +30,26 @@ export class BrowserLogin {
     if (!entry) throw new DisplayAccessError(410);
     return entry;
   }
-  start(challenge: unknown, remember: boolean) {
+  start(challenge: unknown, remember: boolean, role: ConnectionRole = 'gaming') {
     this.#prune();
-    if (!validSecret(challenge)) throw new DisplayAccessError(400);
+    if (!validSecret(challenge) || (role !== 'gaming' && role !== 'streaming')) throw new DisplayAccessError(400);
     if (this.#requests.size >= MAX_PENDING) throw new DisplayAccessError(429);
     const id = randomBytes(16).toString('hex');
-    this.#requests.set(id, { challenge, remember, expires: this.#now() + LOGIN_WINDOW_MS,
+    this.#requests.set(id, { challenge, remember, role, expires: this.#now() + LOGIN_WINDOW_MS,
       polled: -Infinity, state: 'pending' });
     return { id, verificationPath: `/login/${id}`, expiresInMs: LOGIN_WINDOW_MS, intervalMs: LOGIN_POLL_MS };
   }
   view(id: string) {
     const entry = this.#get(id);
     if (entry.state !== 'pending') throw new DisplayAccessError(409);
-    return { remember: entry.remember, code: id.slice(-6).toUpperCase() };
+    return { remember: entry.remember, role: entry.role, code: id.slice(-6).toUpperCase() };
   }
-  approve(id: string, access = this.#access, role?: ConnectionRole) {
+  approve(id: string, access = this.#access) {
     const entry = this.#get(id);
     if (entry.state !== 'pending') throw new DisplayAccessError(409);
-    if (role !== undefined && role !== 'gaming' && role !== 'streaming') throw new DisplayAccessError(400);
     const owner = access?.ownerId();
     if (!access || !owner) throw new DisplayAccessError(401);
-    entry.access = access; entry.role = role;
+    entry.access = access;
     entry.owner = owner; entry.generation = access.generation; entry.state = 'approved';
   }
   deny(id: string) {

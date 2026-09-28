@@ -164,7 +164,7 @@ int run(HINSTANCE instance, const chatview::HudLaunchOptions &options)
         return 3;
     }
 
-    chatview::NativeChatConnection chat(hud_window);
+    chatview::NativeChatConnection chat(hud_window, chatview::display_role_for(options.mode));
     if (!companion) hud_window.show_ready();
 
     chatview::SharedSnapshot initial_snapshot;

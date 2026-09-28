@@ -2,6 +2,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { BrowserLogin } from './browser-login.mts';
 import { DisplayAccess, DisplayAccessError } from './display-access.mts';
+import { requestedRole } from './connection-role.mts';
 
 const DENIED = 'ChatView display request denied';
 
@@ -56,13 +57,12 @@ export class DisplaySessionGateway {
       if (request.headers['transfer-encoding'] !== undefined ||
           (request.headers['content-length'] !== undefined && request.headers['content-length'] !== '0'))
         throw new DisplayAccessError(400);
-      // Persistence is a native-client choice. This hint only shapes the browser consent text.
       const remember = request.headers['x-chatview-remember'];
       if (remember !== undefined && (request.url !== '/display/login' || remember !== '1'))
         throw new DisplayAccessError(400);
       const result = polling ? this.login.poll(polling[1]!, authorization(request, 'ChatView-Login'))
-        : request.url === '/display/login' ? this.login.start(authorization(request, 'ChatView-Challenge'), remember === '1')
-        : request.url === '/display/refresh' ? this.#access.resume(authorization(request, 'ChatView-Session'))
+        : request.url === '/display/login' ? this.login.start(authorization(request, 'ChatView-Challenge'), remember === '1', requestedRole(request))
+        : request.url === '/display/refresh' ? this.#access.resume(authorization(request, 'ChatView-Session'), requestedRole(request))
         : request.url === '/display/signout'
           ? (this.#access.signout(authorization(request, 'ChatView-Session')), { signedOut: true })
           : this.#access.exchange(authorization(request, 'ChatView-Ticket'));

@@ -20,13 +20,17 @@ bool received(chatview::DisplayClient &client, unsigned int minimum, bool *recon
     chatview::DisplayUpdate update;
     if (!client.take(update)) return false;
     if (update.status == chatview::DisplayStatus::Reconnecting) {
-        expect(update.envelope.empty(), "reconnection clears the old mailbox");
+        expect(update.envelope.empty() && !update.connection, "reconnection clears old chat and connection state");
         if (reconnecting) *reconnecting = true;
     }
-    expect(update.status != chatview::DisplayStatus::Failed && update.status != chatview::DisplayStatus::Denied,
-           "remembered session remains authorized");
-    return update.status == chatview::DisplayStatus::Receiving &&
-        winrt::Windows::Data::Json::JsonObject::Parse(update.envelope).GetNamedObject(L"snapshot").GetNamedNumber(L"received") >= minimum;
+    expect(update.status != chatview::DisplayStatus::Failed && update.status != chatview::DisplayStatus::Denied &&
+        update.status != chatview::DisplayStatus::RoleMismatch, "remembered session remains authorized for this role");
+    if (update.status != chatview::DisplayStatus::Receiving) return false;
+    expect(update.connection && update.connection->membership.role == chatview::DisplayRole::Gaming,
+        "restored display keeps the approved gaming role");
+    const auto envelope = winrt::Windows::Data::Json::JsonObject::Parse(update.envelope);
+    expect(!envelope.HasKey(L"connection"), "session metadata never enters the renderer envelope");
+    return envelope.GetNamedObject(L"snapshot").GetNamedNumber(L"received") >= minimum;
 }
 }
 int main()
@@ -52,6 +56,18 @@ int main()
         auto saved = chatview::load_connection();
         expect(saved && saved->origin == origin && saved->developer_loopback && saved->credential != ticket,
                "DPAPI restores session credential, not the one-use approval");
+        {
+            chatview::DisplayClient wrongRole;
+            expect(wrongRole.start(saved->origin, saved->credential, saved->developer_loopback,
+                chatview::DisplayAuthentication::Saved, chatview::DisplayRole::Streaming), "try a different launch role");
+            await([&] { return !wrongRole.running(); }, "wrong role is terminal, not retried");
+            chatview::DisplayUpdate result;
+            expect(wrongRole.take(result) && result.status == chatview::DisplayStatus::RoleMismatch &&
+                result.envelope.empty() && !result.connection, "wrong role never displays private chat or status");
+            auto retained = chatview::load_connection();
+            expect(retained && retained->credential == saved->credential, "wrong launch does not erase the approved saved login");
+            SecureZeroMemory(retained->credential.data(), retained->credential.size() * sizeof(wchar_t));
+        }
         chatview::DisplayClient restored;
         expect(restored.start(saved->origin, saved->credential, saved->developer_loopback,
                              chatview::DisplayAuthentication::Saved), "resume from protected login");
@@ -69,7 +85,7 @@ int main()
             chatview::DisplayUpdate update;
             if (restored.take(update)) {
                 if (update.status == chatview::DisplayStatus::Denied) denied = true;
-                if (denied) expect(update.envelope.empty(), "revoked session retains no chat");
+                if (denied) expect(update.envelope.empty() && !update.connection, "revoked session retains no chat or connection state");
             }
             return !restored.running();
         }, "revocation stops retrying");
@@ -81,7 +97,7 @@ int main()
         await([&] { return !stale.running(); }, "stale credential rejected");
         expect(stale.take(last) && last.status == chatview::DisplayStatus::Denied, "stale credential stays denied");
         SecureZeroMemory(saved->credential.data(), saved->credential.size() * sizeof(wchar_t));
-        std::cout << "Remembered connection, protected restart, renewal, reconnect and revoke passed\n";
+        std::cout << "Remembered connection, protected restart, role binding, renewal, reconnect and revoke passed\n";
         return 0;
     } catch (const std::exception &error) { std::cerr << "Remembered connection test failed: " << error.what() << '\n'; return 1; }
       catch (...) { std::cerr << "Remembered connection test failed\n"; return 1; }

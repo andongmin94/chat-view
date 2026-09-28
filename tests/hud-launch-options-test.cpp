@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "hud/launch-options.hpp"
+#include "hud/connection-status.hpp"
 
 #include <initializer_list>
 #include <iostream>
@@ -64,7 +65,31 @@ int main()
         const auto owned = parse({L"--mapping", mapping, L"--event", L"e", L"--parent", L"1"});
         mapping.assign(L"changed");
         expect(owned && owned->mapping_name == L"owned-copy", "options own strings after argv release");
-        std::cout << "HUD launch options: " << assertions << " assertions passed\n";
+        expect(chatview::display_role_for(companion->mode) == chatview::DisplayRole::Gaming,
+            "companion requests gaming role without an OBS dependency");
+        expect(chatview::display_role_for(obs->mode) == chatview::DisplayRole::Streaming,
+            "validated OBS launch requests streaming role");
+        expect(std::wstring_view(chatview::display_role_wire(chatview::DisplayRole::Gaming)) == L"gaming" &&
+            std::wstring_view(chatview::display_role_wire(chatview::DisplayRole::Streaming)) == L"streaming",
+            "wire role spelling is fixed");
+        const std::wstring id = L"01234567-89ab-cdef-0123-456789abcdef";
+        expect(chatview::connection_id(id), "canonical UUID accepted");
+        for (const auto &bad : {std::wstring(), id + L"x", id.substr(1),
+            std::wstring(L"01234567_89ab-cdef-0123-456789abcdef"),
+            std::wstring(L"01234567-89AB-cdef-0123-456789abcdef"),
+            std::wstring(L"01234567-89ab-cdef-0123-456789abcdeg")})
+            expect(!chatview::connection_id(bad), "malformed session identifiers rejected");
+        chatview::DisplayConnectionState state{{chatview::DisplayRole::Gaming, id, id}, 1, 1};
+        const auto summary = chatview::connection_summary(state);
+        expect(summary.find(id) != std::wstring::npos && summary.find(L"게임 1 / 송출 1") != std::wstring::npos,
+            "summary identifies the exact session and display counts");
+        expect(summary.find(L"영상 제외 미검증") != std::wstring::npos,
+            "role approval is explicitly not a capture-safety claim");
+        const auto copy = state;
+        expect(state == copy, "connection status equality retains membership");
+        state.membership.role = chatview::DisplayRole::Streaming;
+        expect(state != copy, "different role is not the same connection status");
+        std::cout << "HUD launch options and connection status: " << assertions << " assertions passed\n";
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
         return 1;

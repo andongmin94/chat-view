@@ -23,6 +23,7 @@ constexpr ULONGLONG kOperationMs = 15000U;
 constexpr ULONGLONG kLeaseMs = 300000U;
 struct InvalidFrame {};
 struct NetworkFailure {};
+struct RoleMismatch {};
 struct HttpFailure { DWORD status; };
 void require(bool ok) { if (!ok) throw InvalidFrame{}; }
 void network(bool ok) { if (!ok) throw NetworkFailure{}; }
@@ -193,11 +194,13 @@ std::string response_body(AsyncHandle &request, HANDLE cancel, ULONGLONG deadlin
     }
 }
 winrt::Windows::Data::Json::JsonObject post(HINTERNET connection, DWORD flags, const wchar_t *path,
-    const wchar_t *scheme, const std::wstring &credential, HANDLE cancel, ULONGLONG deadline, bool remember = false)
+    const wchar_t *scheme, const std::wstring &credential, HANDLE cancel, ULONGLONG deadline,
+    bool remember = false, const wchar_t *role = nullptr)
 {
     AsyncHandle request(WinHttpOpenRequest(connection, L"POST", path, nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags));
     std::wstring header = std::wstring(L"Authorization: ") + scheme + L" " + credential + L"\r\n";
     if (remember) header += L"X-ChatView-Remember: 1\r\n";
+    if (role) header += std::wstring(L"X-ChatView-Role: ") + role + L"\r\n";
     SecretWipe wipe_header{header};
     send_request(request, header, cancel, deadline, false);
     std::string body = response_body(request, cancel, deadline);
@@ -206,16 +209,39 @@ winrt::Windows::Data::Json::JsonObject post(HINTERNET connection, DWORD flags, c
     SecretWipe wipe{text};
     return winrt::Windows::Data::Json::JsonObject::Parse(text);
 }
-bool inspect_frame(const std::wstring &frame)
+DisplayMembership membership(const winrt::Windows::Data::Json::JsonObject &value)
+{
+    DisplayMembership result;
+    const auto role = value.GetNamedString(L"role");
+    require(role == L"gaming" || role == L"streaming");
+    result.role = role == L"gaming" ? DisplayRole::Gaming : DisplayRole::Streaming;
+    result.broadcast_session_id = value.GetNamedString(L"broadcastSessionId").c_str();
+    result.connection_id = value.GetNamedString(L"connectionId").c_str();
+    require(connection_id(result.broadcast_session_id) && connection_id(result.connection_id));
+    return result;
+}
+bool inspect_frame(std::wstring &frame, const DisplayMembership &expected, DisplayConnectionState &connection)
 {
     constexpr std::wstring_view states[] = {L"idle", L"connecting", L"subscribing", L"subscribed", L"disconnected", L"revoked", L"unsubscribed", L"error", L"stopped"};
-    const auto value = winrt::Windows::Data::Json::JsonObject::Parse(frame);
+    auto value = winrt::Windows::Data::Json::JsonObject::Parse(frame);
     require(value.GetNamedString(L"type") == L"chat-snapshot" && value.GetNamedNumber(L"version") == 1);
+    const auto detail = value.GetNamedObject(L"connection");
+    connection.membership = membership(detail);
+    require(connection.membership == expected && detail.GetNamedString(L"captureState") == L"unverified");
+    const double gaming = detail.GetNamedNumber(L"gamingConnections"), streaming = detail.GetNamedNumber(L"streamingConnections");
+    require(std::isfinite(gaming) && std::floor(gaming) == gaming && gaming >= 0 && gaming <= 4);
+    require(std::isfinite(streaming) && std::floor(streaming) == streaming && streaming >= 0 && streaming <= 1);
+    require(gaming + streaming <= 4 && (expected.role == DisplayRole::Gaming ? gaming >= 1 : streaming == 1));
+    connection.gaming_connections = static_cast<unsigned>(gaming);
+    connection.streaming_connections = static_cast<unsigned>(streaming);
     const auto snapshot = value.GetNamedObject(L"snapshot"); const auto state = snapshot.GetNamedString(L"state");
     require(std::find(std::begin(states), std::end(states), std::wstring_view(state)) != std::end(states));
     const double count = snapshot.GetNamedNumber(L"received");
     require(std::isfinite(count) && count >= 0 && count <= 9007199254740991.0 &&
             std::floor(count) == count && snapshot.GetNamedArray(L"messages").Size() <= 100U);
+    // The immutable chat document sees only chat; session/role state stays in
+    // native controls and cannot be confused with a renderer acknowledgement.
+    value.Remove(L"connection"); frame = value.Stringify().c_str();
     return state == L"subscribed";
 }
 }
@@ -225,6 +251,7 @@ struct DisplayClient::State {
     std::mutex mutex;
     DisplayUpdate latest{DisplayStatus::Connecting, {}, false};
     std::wstring login_url;
+    DisplayRole role = DisplayRole::Gaming;
     bool pending = true;
     bool reusable = false;
     ULONGLONG expires = 0, last_frame = 0;
@@ -235,17 +262,18 @@ struct DisplayClient::State {
     }
 };
 DisplayClient::~DisplayClient() { stop(); if (worker_.joinable()) worker_.join(); }
-bool DisplayClient::start(std::wstring origin, std::wstring credential, bool local, DisplayAuthentication authentication) noexcept
+bool DisplayClient::start(std::wstring origin, std::wstring credential, bool local,
+                          DisplayAuthentication authentication, DisplayRole role) noexcept
 {
     SecretWipe wipe{credential};
     try {
         if (running()) return false;
         if (worker_.joinable()) worker_.join();
+        require(role == DisplayRole::Gaming || role == DisplayRole::Streaming);
         const bool browser = authentication == DisplayAuthentication::Browser || authentication == DisplayAuthentication::BrowserRemember;
         require(browser ? credential.empty() : key(credential)); (void)endpoint(origin, local);
         auto state = std::make_shared<State>(); require(static_cast<bool>(state->cancel));
-        // Every successful login/exchange receives an in-run renewal session.
-        // Remember/BrowserRemember additionally persist it on this Windows user.
+        state->role = role;
         state->reusable = authentication != DisplayAuthentication::SignOut; state_ = state;
         worker_ = std::thread(&DisplayClient::run, state, std::move(origin), std::move(credential), local, authentication);
         return true;
@@ -294,13 +322,14 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
             state->finish(DisplayStatus::SignedOut);
         } else {
         std::optional<winrt::Windows::Data::Json::JsonObject> approved_lease;
+        std::optional<DisplayMembership> bound_membership;
         ULONGLONG approved_started = 0U;
         if (authentication == DisplayAuthentication::Browser || authentication == DisplayAuthentication::BrowserRemember) {
             const bool keep = authentication == DisplayAuthentication::BrowserRemember;
             std::wstring verifier = login_verifier(); SecretWipe wipe_verifier{verifier};
             const auto started = GetTickCount64();
             const auto request = post(connection.value, flags, L"/display/login", L"ChatView-Challenge",
-                login_challenge(verifier), state->cancel.get(), started + kOperationMs, keep);
+                login_challenge(verifier), state->cancel.get(), started + kOperationMs, keep, display_role_wire(state->role));
             const std::wstring id = request.GetNamedString(L"id").c_str();
             require(id.size() == 32U && std::all_of(id.begin(), id.end(), [](wchar_t c) {
                 return (c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f');
@@ -329,7 +358,7 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                     if (status == L"approved") { approved_lease = result.GetNamedObject(L"lease"); approved_started = poll_started; }
                     else require(status == L"pending");
                 } catch (const HttpFailure &error) {
-                    if (error.status != 429) throw; // Server cadence is respected; never replay a consumed success.
+                    if (error.status != 429) throw;
                 }
             }
             authentication = keep ? DisplayAuthentication::Remember : DisplayAuthentication::OneTime;
@@ -343,10 +372,15 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                 const auto started = approved_lease ? approved_started : GetTickCount64();
                 const auto lease = approved_lease ? *approved_lease : post(connection.value, flags,
                     renewable ? L"/display/refresh" : L"/display/exchange",
-                    renewable ? L"ChatView-Session" : L"ChatView-Ticket", credential, state->cancel.get(), started + kOperationMs);
+                    renewable ? L"ChatView-Session" : L"ChatView-Ticket", credential, state->cancel.get(), started + kOperationMs,
+                    false, display_role_wire(state->role));
                 approved_lease.reset();
                 authorizing_session = false;
                 require(lease.GetNamedString(L"scope") == L"chat:read");
+                const auto approved = membership(lease.GetNamedObject(L"membership"));
+                if (approved.role != state->role) throw RoleMismatch{};
+                require(!bound_membership || *bound_membership == approved);
+                bound_membership = approved;
                 std::wstring token = lease.GetNamedString(L"token").c_str(); SecretWipe wipe_token{token}; require(key(token));
                 const double duration = lease.GetNamedNumber(L"expiresInMs");
                 require(std::isfinite(duration) && duration > 0 && duration <= static_cast<double>(kLeaseMs) && std::floor(duration) == duration);
@@ -395,18 +429,22 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                     require(count <= socket.result().buffer.size() && count + frame.size() <= kMaxFrameBytes);
                     frame.append(socket.result().buffer.data(), count);
                     if (kind != WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE) continue;
-                    auto envelope = utf16(frame); frame.clear(); const bool subscribed = inspect_frame(envelope);
+                    auto envelope = utf16(frame); frame.clear();
+                    DisplayConnectionState connection_state;
+                    const bool subscribed = inspect_frame(envelope, approved, connection_state);
                     {
                         std::lock_guard lock(state->mutex);
                         network(WaitForSingleObject(state->cancel.get(), 0) == WAIT_TIMEOUT && GetTickCount64() < expires);
-                        state->latest = {DisplayStatus::Receiving, std::move(envelope), subscribed};
+                        state->latest = {DisplayStatus::Receiving, std::move(envelope), subscribed, std::move(connection_state)};
                         state->last_frame = GetTickCount64(); state->pending = true;
                     }
                     failures = 0; deadline = std::min(renew, GetTickCount64() + kOperationMs);
                 }
-                // RAII closes the old socket before minting its replacement.
                 continue;
             } catch (const HttpFailure &error) {
+                if (renewable && authorizing_session && error.status == 409) {
+                    state->finish(DisplayStatus::RoleMismatch); break;
+                }
                 if (renewable && authorizing_session && (error.status == 401 || error.status == 403)) {
                     if (persisted) forget_matching_connection(credential);
                     state->finish(DisplayStatus::Denied); break;
@@ -421,6 +459,8 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
         }
         if (WaitForSingleObject(state->cancel.get(), 0) == WAIT_OBJECT_0) state->finish(DisplayStatus::Ended);
         }
+    } catch (const RoleMismatch &) {
+        state->finish(WaitForSingleObject(state->cancel.get(), 0) == WAIT_OBJECT_0 ? DisplayStatus::Ended : DisplayStatus::RoleMismatch);
     } catch (...) {
         // Never log exception text, URL, credential, server error body or chat.
         state->finish(WaitForSingleObject(state->cancel.get(), 0) == WAIT_OBJECT_0 ? DisplayStatus::Ended : DisplayStatus::Failed);

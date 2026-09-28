@@ -11,7 +11,7 @@ test('HTTP login of two creators/two PCs routes only each owner chat and role', 
   const f = await fixture();
   try {
     const alice = await f.connect('alice', 'gaming');
-    const second = await f.start();
+    const second = await f.start('streaming');
     const stream = await f.approve(second, 'streaming', alice.b);
     const bob = await f.connect('bob', 'streaming');
     assert.equal(alice.lease.membership.broadcastSessionId, stream.membership.broadcastSessionId);
@@ -27,8 +27,8 @@ test('HTTP login of two creators/two PCs routes only each owner chat and role', 
     const own = await f.native('/broadcast/session', 'ChatView-Session', alice.lease.sessionToken);
     assert.deepEqual(await own.json(), { membership: alice.lease.membership, captureState: 'unverified' });
     assert.equal((await f.native('/broadcast/session', 'ChatView-Session', alice.lease.token)).status, 403);
-    const duplicate = await f.start(); await f.page(duplicate.verificationPath, alice.b);
-    assert.equal((await f.post(`/login/${duplicate.id}/approve/streaming`, alice.b)).status, 409);
+    const duplicate = await f.start('streaming'); await f.page(duplicate.verificationPath, alice.b);
+    assert.equal((await f.post(`/login/${duplicate.id}/approve`, alice.b)).status, 409);
     assert.equal(f.store.connections('alice').length, 2);
   } finally { await f.close(); }
 });
@@ -60,8 +60,8 @@ test('provider revoke failure still removes local roles and pending approvals, n
   const f = await fixture();
   try {
     const alice = await f.connect('alice', 'gaming'), bob = await f.connect('bob', 'gaming');
-    const pending = await f.start(); await f.page(pending.verificationPath, alice.b);
-    assert.equal((await f.post(`/login/${pending.id}/approve/streaming`, alice.b)).status, 200);
+    const pending = await f.start('streaming'); await f.page(pending.verificationPath, alice.b);
+    assert.equal((await f.post(`/login/${pending.id}/approve`, alice.b)).status, 200);
     f.failRevoke(); await f.page('/account', alice.b);
     const response = await f.post('/account/revoke', alice.b), html = await response.text();
     assert.equal(response.status, 200); assert.match(html, /확인하지 못했습니다/u);
@@ -178,5 +178,45 @@ test('independent PC browsers join the same creator without revoking the first H
     await f.post('/logout', gaming.b);
     assert.ok(f.creators.gateway(gaming.lease.token));
     assert.ok(f.creators.gateway(streaming.lease.token));
+  } finally { await f.close(); }
+});
+
+test('launch role is fixed before consent and old role-selector routes are removed', async () => {
+  const f = await fixture();
+  try {
+    const alice = await f.connect('alice', 'gaming');
+    const pending = await f.start('streaming');
+    const html = await f.page(pending.verificationPath, alice.b);
+    assert.match(html, /앱이 요청한 역할: <strong>송출 PC · OBS 관리 런타임/u);
+    assert.match(html, new RegExp(`/login/${pending.id}/approve"`, 'u'));
+    assert.doesNotMatch(html, /\/approve\/(gaming|streaming)/u);
+    for (const role of ['gaming', 'streaming'])
+      assert.equal((await f.post(`/login/${pending.id}/approve/${role}`, alice.b)).status, 404);
+    assert.equal(f.app.login.view(pending.id).role, 'streaming');
+    const lease = await f.approve(pending, 'streaming', alice.b);
+    assert.equal(lease.membership.role, 'streaming');
+    const before = f.store.find(lease.sessionToken);
+    assert.equal((await f.native('/display/refresh', 'ChatView-Session', lease.sessionToken, 'gaming')).status, 409);
+    assert.deepEqual(f.store.find(lease.sessionToken)?.membership, before?.membership);
+    assert.ok(f.creators.gateway(lease.token), 'wrong-mode resume must not evict the original lease');
+    assert.equal((await f.native('/display/refresh', 'ChatView-Session', lease.sessionToken, 'streaming')).status, 200);
+  } finally { await f.close(); }
+});
+
+test('native role header is mandatory and singular, not inferred from credentials', async () => {
+  const f = await fixture();
+  try {
+    const alice = await f.connect('alice', 'gaming');
+    for (const path of ['/display/login', '/display/refresh']) {
+      const authorization = path === '/display/login'
+        ? `ChatView-Challenge ${nonce()}` : `ChatView-Session ${alice.lease.sessionToken}`;
+      for (const role of [undefined, '', 'admin', 'Gaming', 'gaming, streaming']) {
+        const headers: Record<string, string> = { Authorization: authorization };
+        if (role !== undefined) headers['X-ChatView-Role'] = role;
+        assert.equal((await f.request(path, { method: 'POST', headers })).status, 400);
+      }
+    }
+    assert.ok(f.creators.gateway(alice.lease.token));
+    assert.equal(f.store.connections('alice').length, 1);
   } finally { await f.close(); }
 });

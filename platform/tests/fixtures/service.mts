@@ -9,6 +9,7 @@ import { PlatformApplication } from '../../server/service/application.mts';
 import { SessionStore, hashSecret } from '../../server/chat/session-store.mts';
 import { DisplayAccessError } from '../../server/chat/display-access.mts';
 import { ProviderGrants } from '../../server/service/provider-grants.mts';
+import type { ConnectionRole } from '../../server/chat/session-store.mts';
 import type { DisplayAccess } from '../../server/chat/display-access.mts';
 import type { DisplayGateway } from '../../server/chat/display-gateway.mts';
 import type { Channel, Tokens } from '../../server/chzzk/api.mts';
@@ -92,8 +93,12 @@ export async function fixture(options: Options = {}) {
   origin = `http://127.0.0.1:${address.port}`;
   app = new PlatformApplication(creators, origin, state => `https://chzzk.naver.com/account-interlock?state=${state}`);
   const request = (path: string, init: RequestInit = {}) => fetch(origin + path, { ...init, redirect: 'manual' });
-  const native = (path: string, scheme: string, token: string) => request(path, {
-    method: 'POST', headers: { Authorization: `${scheme} ${token}` },
+  // Tests simulate a known launch role. Production never derives request intent
+  // from an arbitrary caller-selected owner or defaults a missing HTTP header.
+  const native = (path: string, scheme: string, token: string,
+    role: ConnectionRole = store.find(token)?.membership?.role ?? 'gaming') => request(path, {
+    method: 'POST', headers: { Authorization: `${scheme} ${token}`,
+      ...(['/display/login', '/display/refresh'].includes(path) ? { 'X-ChatView-Role': role } : {}) },
   });
   const browser: { cookie: string; csrf: string } = { cookie: '', csrf: '' };
   const cookie = (response: Response) => response.headers.get('set-cookie')?.split(';')[0] ?? '';
@@ -111,8 +116,8 @@ export async function fixture(options: Options = {}) {
     headers: { Cookie: b.cookie, Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ csrf: b.csrf }),
   });
-  async function start() {
-    const verifier = nonce(), response = await native('/display/login', 'ChatView-Challenge', hashSecret(verifier));
+  async function start(role: ConnectionRole = 'gaming') {
+    const verifier = nonce(), response = await native('/display/login', 'ChatView-Challenge', hashSecret(verifier), role);
     assert.equal(response.status, 200);
     const data = await response.json() as { id: string; verificationPath: string };
     return { ...data, verifier };
@@ -128,17 +133,18 @@ export async function fixture(options: Options = {}) {
     assert.equal(response.status, 303); b.cookie = cookie(response); assert.notEqual(b.cookie, old);
     await page(pending.verificationPath, b);
   }
-  async function approve(pending: Awaited<ReturnType<typeof start>>, role: 'gaming' | 'streaming', b = browser) {
+  async function approve(pending: Awaited<ReturnType<typeof start>>, role: ConnectionRole, b = browser) {
     await page(pending.verificationPath, b);
-    const response = await post(`/login/${pending.id}/approve/${role}`, b);
+    assert.equal(app.login.view(pending.id).role, role, 'consent cannot replace the requested launch role');
+    const response = await post(`/login/${pending.id}/approve`, b);
     assert.equal(response.status, 200);
     const polled = await native(`/display/login/${pending.id}`, 'ChatView-Login', pending.verifier);
     assert.equal(polled.status, 200);
     return (await polled.json() as { lease: { id: string; token: string; sessionToken: string;
-      membership: { role: string; connectionId: string; broadcastSessionId: string } } }).lease;
+      membership: { role: ConnectionRole; connectionId: string; broadcastSessionId: string } } }).lease;
   }
-  async function connect(owner: string, role: 'gaming' | 'streaming') {
-    const b = { cookie: '', csrf: '' }, pending = await start();
+  async function connect(owner: string, role: ConnectionRole) {
+    const b = { cookie: '', csrf: '' }, pending = await start(role);
     await authenticate(owner, pending, b);
     return { b, lease: await approve(pending, role, b) };
   }

@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
+#include "hud/connection-status.hpp"
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 
 namespace chatview {
-enum class DisplayStatus { Idle, Connecting, AwaitingLogin, Receiving, Reconnecting, Denied, SignedOut, Ended, Failed };
+enum class DisplayStatus { Idle, Connecting, AwaitingLogin, Receiving, Reconnecting, Denied, RoleMismatch, SignedOut, Ended, Failed };
 enum class DisplayAuthentication { OneTime, Remember, Saved, SignOut, Browser, BrowserRemember };
 struct DisplayUpdate {
     DisplayStatus status = DisplayStatus::Idle;
     std::wstring envelope;
     bool subscribed = false;
+    std::optional<DisplayConnectionState> connection;
 };
-// Owner-thread API, worker-owned asynchronous WinHTTP. Remembered session credentials are
-// separate from short display tokens and never enter the renderer or OBS.
+// Owner-thread API, worker-owned asynchronous WinHTTP. App-session credentials
+// and connection metadata never enter the private chat renderer or OBS.
 class DisplayClient final {
 public:
     DisplayClient() = default;
@@ -22,9 +25,9 @@ public:
     DisplayClient &operator=(const DisplayClient &) = delete;
     [[nodiscard]] bool start(std::wstring origin, std::wstring credential,
                              bool developer_loopback = false,
-                             DisplayAuthentication authentication = DisplayAuthentication::OneTime) noexcept;
+                             DisplayAuthentication authentication = DisplayAuthentication::OneTime,
+                             DisplayRole role = DisplayRole::Gaming) noexcept;
     void stop() noexcept;
-    // One browser URL, built from the validated origin and a fixed login path.
     [[nodiscard]] bool take_login_url(std::wstring &url) noexcept;
     [[nodiscard]] bool take(DisplayUpdate &update) noexcept;
     [[nodiscard]] bool running() const noexcept;

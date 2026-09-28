@@ -3,15 +3,20 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import { DisplayAccess, DisplayAccessError } from './display-access.mts';
+import type { Membership } from './session-store.mts';
 import { nativeChatSnapshot } from '../../web/native-chat.js';
 
 export const MAX_DISPLAY_FRAME_BYTES = 2 * 1024 * 1024;
 const DENIED = 'ChatView display request denied';
+export type DisplayConnectionState = Membership & Readonly<{
+  gamingConnections: number; streamingConnections: number; captureState: 'unverified';
+}>;
 
-// This same display DTO is consumed by the existing NativeChatSurface. It has
-// no sender IDs, provider tokens, privileged commands or accounting fields.
-export function displayFrame(snapshot: unknown): string {
-  const frame = JSON.stringify({ type: 'chat-snapshot', version: 1, snapshot: nativeChatSnapshot(snapshot) });
+// Connection metadata is for native controls, not the chat renderer. No provider
+// secrets, other owners, privileged commands or accounting fields are included.
+export function displayFrame(snapshot: unknown, connection?: DisplayConnectionState): string {
+  const frame = JSON.stringify({ type: 'chat-snapshot', version: 1, snapshot: nativeChatSnapshot(snapshot),
+    ...(connection ? { connection } : {}) });
   if (Buffer.byteLength(frame, 'utf8') > MAX_DISPLAY_FRAME_BYTES) throw new Error('Display frame too large');
   return frame;
 }
@@ -28,8 +33,6 @@ function authorization(request: IncomingMessage, scheme: string): string {
   return token;
 }
 
-// Attach to an existing HTTP(S) server after its creator authentication layer
-// is defined. No listener, public account system, or automatic trust in cookies.
 export class DisplayGateway {
   #access: DisplayAccess;
   #origin: () => string;
@@ -45,7 +48,6 @@ export class DisplayGateway {
   }
   #checkOrigin(request: IncomingMessage) {
     const origin = new URL(this.#origin());
-    // HTTP is permitted only for the explicitly local developer/test adapter.
     const encrypted = (request.socket as typeof request.socket & { encrypted?: boolean }).encrypted === true;
     if (origin.protocol === 'https:' ? !encrypted :
         origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1') throw new DisplayAccessError(403);
@@ -65,7 +67,6 @@ export class DisplayGateway {
       if (request.method !== 'POST') throw new DisplayAccessError(405);
       if (request.headers['transfer-encoding'] !== undefined ||
           (request.headers['content-length'] !== undefined && request.headers['content-length'] !== '0')) throw new DisplayAccessError(400);
-      // Ticket is in a header, never in a URL, cookie or a browser frame.
       const lease = this.#access.exchange(authorization(request, 'ChatView-Ticket'));
       response.writeHead(200); response.end(JSON.stringify(lease));
     } catch (error) {
@@ -84,25 +85,23 @@ export class DisplayGateway {
           request.headers['sec-websocket-protocol'] !== undefined) throw new DisplayAccessError(403);
       const grant = this.#access.authenticate(authorization(request, 'Bearer'));
       if (this.#clients.has(grant.id)) throw new DisplayAccessError(409);
-      // ws validates the WebSocket handshake and bounds incoming frames. Do not
-      // implement framing, ticket parsing, or an alternate transport ourselves.
       this.#server.handleUpgrade(request, socket, head, peer => {
         this.#clients.set(grant.id, peer);
-        // A deadline close also retires the grant. Fractional timer rounding
-        // must never leave a just-closed bearer briefly reusable.
         const expiry = setTimeout(() => {
           this.#access.revoke(grant.id); peer.terminate();
         }, Math.ceil(this.#access.remaining(grant.id)));
         expiry.unref();
         peer.on('error', () => peer.terminate());
-        // This channel is receive-only. Even valid JSON is not a control API.
+        // Receive-only: this is not an OBS output or role-change API.
         peer.on('message', () => peer.terminate());
         peer.once('close', () => {
           clearTimeout(expiry);
           if (this.#clients.get(grant.id) === peer) this.#clients.delete(grant.id);
           if (!this.#clients.size) { clearInterval(this.#pulse); this.#pulse = undefined; }
+          this.changed();
         });
         this.#send(grant.id, peer);
+        this.changed();
         this.#pulse ??= setInterval(() => this.#broadcast(), 5000);
         this.#pulse.unref();
       });
@@ -113,17 +112,28 @@ export class DisplayGateway {
   }
   changed(): void {
     if (this.#closed) return;
-    // Authorization loss is not delayed by the ordinary coalescing window.
     for (const [id, peer] of this.#clients) if (!this.#access.active(id)) peer.terminate();
     if (!this.#clients.size) return;
     this.#flush ??= setTimeout(() => { this.#flush = undefined; this.#broadcast(); }, 50);
   }
+  #connection(id: string): DisplayConnectionState {
+    const membership = this.#access.membership(id);
+    if (!membership) throw new DisplayAccessError(401);
+    const gaming = new Set<string>(), streaming = new Set<string>();
+    for (const [peerId, peer] of this.#clients) {
+      if (peer.readyState !== WebSocket.OPEN) continue;
+      const other = this.#access.membership(peerId);
+      if (!other || other.broadcastSessionId !== membership.broadcastSessionId) continue;
+      (other.role === 'gaming' ? gaming : streaming).add(other.connectionId);
+    }
+    return { ...membership, gamingConnections: gaming.size, streamingConnections: streaming.size,
+      captureState: 'unverified' };
+  }
   #send(id: string, peer: WebSocket): void {
     if (peer.readyState !== WebSocket.OPEN) return;
-    // One outstanding frame maximum; slow consumers reconnect, not grow a queue.
     if (!this.#access.active(id) || peer.bufferedAmount !== 0) { peer.terminate(); return; }
     try {
-      const frame = displayFrame(this.#snapshot());
+      const frame = displayFrame(this.#snapshot(), this.#connection(id));
       peer.send(frame, { binary: false, compress: false }, error => { if (error) peer.terminate(); });
     } catch { peer.terminate(); }
   }

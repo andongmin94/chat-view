@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { BrowserLogin } from '../chat/browser-login.mts';
 import { DisplayAccessError } from '../chat/display-access.mts';
+import { requestedRole } from '../chat/connection-role.mts';
 import { hashSecret, validSecret } from '../chat/session-store.mts';
 import { Creators } from './creators.mts';
 
@@ -126,7 +127,7 @@ export class PlatformApplication {
             url.searchParams.getAll('state').length !== 1 || url.searchParams.getAll('code').length !== 1 ||
             !timingSafeEqual(Buffer.from(hashSecret(state)), Buffer.from(b.attempt.digest))) throw new DisplayAccessError(400);
         const id = b.attempt.loginId;
-        b.attempt = undefined; // Consume before upstream I/O, even on failure.
+        b.attempt = undefined;
         this.login.view(id);
         const channel = await this.#creators.authorize(code, state,
           AbortSignal.any([b.controller.signal, AbortSignal.timeout(Math.max(1, b.expires - Date.now()))]));
@@ -142,7 +143,7 @@ export class PlatformApplication {
         if (remember !== undefined && (url.pathname !== '/display/login' || remember !== '1')) throw new DisplayAccessError(400);
         const polling = /^\/display\/login\/([a-f0-9]{32})$/u.exec(url.pathname);
         if (url.pathname === '/display/login') {
-          this.#json(response, this.login.start(auth(request, 'ChatView-Challenge'), remember === '1')); return;
+          this.#json(response, this.login.start(auth(request, 'ChatView-Challenge'), remember === '1', requestedRole(request))); return;
         }
         if (polling) {
           const result = this.login.poll(polling[1]!, auth(request, 'ChatView-Login'));
@@ -154,13 +155,16 @@ export class PlatformApplication {
           this.#json(response, result); return;
         }
         if (url.pathname === '/display/refresh') {
-          this.#json(response, await this.#creators.resume(auth(request, 'ChatView-Session'))); return;
+          const token = auth(request, 'ChatView-Session'), role = requestedRole(request);
+          const session = this.#creators.sessions.find(token);
+          if (!session?.membership) throw new DisplayAccessError(401);
+          if (session.membership.role !== role) throw new DisplayAccessError(409);
+          this.#json(response, await this.#creators.resume(token)); return;
         }
         if (url.pathname === '/display/signout') {
           this.#creators.signout(auth(request, 'ChatView-Session'));
           this.#json(response, { signedOut: true }); return;
         }
-        // The public service intentionally has no manual display-ticket route.
         throw new DisplayAccessError(404);
       }
       if (url.pathname === '/broadcast/session' && request.method === 'POST') {
@@ -175,12 +179,13 @@ export class PlatformApplication {
         const id = landing[1]!, intent = this.login.view(id);
         if (!b) { this.#createBrowser(response); this.#redirect(response, url.pathname); return; }
         const account = b.owner ? this.#creators.describe(b.owner) : undefined;
+        const roleLabel = intent.role === 'gaming' ? '게임 PC · 개인 HUD' : '송출 PC · OBS 관리 런타임';
         this.#page(response, '챗뷰에 채팅 연결', `<p>앱에서 직접 시작한 요청인지 확인하세요. 확인 번호: <strong>${intent.code}</strong></p>
+<p>앱이 요청한 역할: <strong>${roleLabel}</strong></p>
 <p>${intent.remember ? '이 PC에서 연결을 유지합니다. 공용 PC에서는 취소하세요.' : '이번 실행에서만 연결합니다.'}</p>
 ${account?.authorized ? `<p>채널: <strong>${escape(account.channel.channelName)}</strong></p>
-${this.#form(b, `/login/${id}/approve/gaming`, '게임 PC · 개인 HUD로 연결')}
-${this.#form(b, `/login/${id}/approve/streaming`, '송출 PC · OBS 역할로 연결')}
-<p>송출 역할은 한 연결에만 승인됩니다. 다른 PC로 옮길 때는 기존 연결을 먼저 해제하세요.</p><p><a href="/account">내 연결 관리</a></p>`
+${this.#form(b, `/login/${id}/approve`, '이 채널과 요청 역할로 연결')}
+<p>역할은 앱 실행 방식에서 정해집니다. 송출 역할을 옮길 때는 기존 연결을 먼저 해제하세요.</p><p><a href="/account">내 연결 관리</a></p>`
 : this.#form(b, `/login/${id}/connect`, '치지직으로 로그인')}
 ${this.#form(b, `/login/${id}/deny`, '취소')}`); return;
       }
@@ -200,9 +205,9 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
       if (request.method !== 'POST') throw new DisplayAccessError(404);
       if (!b || request.headers.origin !== this.#origin) throw new DisplayAccessError(403);
       await csrfForm(request, b.csrf); this.#live(b);
-      const action = /^\/login\/([a-f0-9]{32})\/(connect|deny|approve\/(gaming|streaming))$/u.exec(url.pathname);
+      const action = /^\/login\/([a-f0-9]{32})\/(connect|deny|approve)$/u.exec(url.pathname);
       if (action) {
-        const id = action[1]!; this.login.view(id);
+        const id = action[1]!, intent = this.login.view(id);
         if (action[2] === 'connect') {
           const state = nonce();
           b.attempt = { digest: hashSecret(state), loginId: id, expires: Date.now() + 300_000 };
@@ -211,11 +216,10 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
         if (action[2] === 'deny') this.login.deny(id);
         else {
           if (!b.owner) throw new DisplayAccessError(401);
-          const role = action[3] as 'gaming' | 'streaming';
-          if (role === 'streaming' && this.#creators.sessions.connections(b.owner).some(c => c.role === 'streaming'))
+          if (intent.role === 'streaming' && this.#creators.sessions.connections(b.owner).some(c => c.role === 'streaming'))
             throw new DisplayAccessError(409);
           await this.#creators.ensureChat(b.owner); this.#live(b);
-          this.login.approve(id, this.#creators.access(b.owner), role);
+          this.login.approve(id, this.#creators.access(b.owner));
         }
         this.#page(response, '연결 요청 처리됨', '<p>챗뷰 앱으로 돌아가세요.</p><p><a href="/account">내 연결 관리</a></p>'); return;
       }

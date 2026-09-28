@@ -1,47 +1,60 @@
 # Private-display delivery contract
 
-Updated: 2026-09-20. This documents the implemented service boundary, not project priorities. See [development-plan.md](development-plan.md) for current acceptance, [native-display-client.md](native-display-client.md) for the implemented Windows consumer, and [PRODUCT.md](../PRODUCT.md) for scope.
+Updated: 2026-09-28. Mechanisms only: [development-plan.md](development-plan.md) owns evidence/priorities, [native-display-client.md](native-display-client.md) the Windows consumer and [PRODUCT.md](../PRODUCT.md) the product scope.
 
-## Implemented path and authority
+## Implemented authority
 
-`DisplayAccess`, `DisplaySessionGateway` and `DisplayGateway` share one creator-authorized upstream session with bounded read-only displays. The session gateway owns browser-login, renewal and logout HTTP operations; the display gateway owns the read-only WebSocket stream. The local developer probe composes both with the CHZZK session; the native WinHTTP consumer and connection panel are connected to them. Do not rebuild these layers as a separate device-registration product.
+The HTTPS application composes creator-isolated provider sessions with the existing browser login, display access and gateway. The private local probe uses those same lower-level modules. One creator's upstream serves its approved displays; no separate hardware registration or pairing product is required. This remains development code, not deployed-service, live-provider, clean-video or advertising certification.
 
-This is not a deployed multi-user account service, persistent hardware identity, physical two-PC capture proof or verified audience exposure. A remembered ChatView login authorizes private chat only; it is not a provider credential, viewer identity or advertising/reward authority.
+Native renewal credentials, short chat bearers, browser-management cookies and provider tokens have separate scopes. A ChatView display approval is not a viewer identity, provider credential or financial authority. Server-side membership groups approved gaming/streaming connections; it is not an observed broadcast interval.
 
-## Browser login and session protocol
+## Login and renewal protocol
 
 | Operation | Authentication and effect |
 | --- | --- |
-| `POST /display/login` | Native sends `Authorization: ChatView-Challenge <sha256(verifier)>`; optional `X-ChatView-Remember: 1` affects consent/persistence intent only. Returns a random request id and exact `/login/<id>` verification path. |
-| Browser `/login/<id>` | Same-browser protected CHZZK consent resolves the creator/channel, starts the authorized chat session and requires explicit approval. The URL id cannot collect the resulting credential. |
-| `POST /display/login/<id>` | Native polls with `Authorization: ChatView-Login <verifier>`. Approval is one-use and bound to the same owner and authorization generation; revoke/reauthorize invalidates uncollected approval. |
-| `POST /display/refresh` | `Authorization: ChatView-Session <renewal>`. Mints a fresh short `chat:read` lease without replaying browser approval. |
-| `POST /display/signout` | Revokes that remembered/current ChatView renewal session. It does not globally revoke CHZZK unless the creator separately chooses provider revocation. |
-| Upgrade `/display/events` | `Authorization: Bearer <short display token>`; standard WebSocket text snapshots. One connection per grant. |
-| Legacy/developer `POST /display/exchange` | One-use `ChatView-Ticket` compatibility path. It is not the normal native UX and must not reappear as a manual-key requirement. |
+| `POST /display/login` | `Authorization: ChatView-Challenge <sha256(verifier)>`, exactly one `X-ChatView-Role: gaming` or `streaming`, optional `X-ChatView-Remember: 1`. The role is fixed before the browser opens. Returns a random request ID and exact `/login/<id>` path. |
+| Browser `/login/<id>` | Protected provider authentication resolves creator/channel. The public page displays the already-requested role and requires explicit confirmation through `/login/<id>/approve`; it cannot change the role. Old `/approve/gaming` and `/approve/streaming` routes are removed. |
+| `POST /display/login/<id>` | `Authorization: ChatView-Login <verifier>`. Collects a one-use approval bound to its creator, authorization generation and fixed role. The landing URL alone cannot collect credentials. |
+| `POST /display/refresh` | `Authorization: ChatView-Session <renewal>` and mandatory `X-ChatView-Role`. Wrong role returns 409 before replacing a lease. Roleless obsolete display approvals are not silently upgraded. |
+| `POST /display/signout` | Revokes the submitted ChatView approval, not all provider tokens. The native non-remembered logout submission gap is D5 in the plan; an API capability does not imply every UI path invokes it. |
+| Upgrade `/display/events` | `Authorization: Bearer <short chat token>`, standard receive-only WebSocket. One connection per lease. |
+| `POST /broadcast/session` (service) | The caller's native renewal credential returns only its own membership and `captureState: unverified`. No output-writing authority is conferred. |
+| Developer-only `POST /display/exchange` | Internal one-use `ChatView-Ticket` exchange in lower-level fixtures/local probe. The public service returns 404. It is not a manual-key UX or compatibility fallback. |
 
-Every explicit browser approval receives a renewable ChatView session for the current app run, so a long broadcast does not require reapproval every five minutes. The native **remember this PC** choice controls only whether that renewal credential is persisted across restarts. Server persistence stores only a hash; Windows persistence uses user-scoped protection. Provider tokens and chat content are not part of remembered display state.
+Every explicit approval receives an in-run renewable session. **이 PC에서 연결 유지** only chooses Windows user-scoped persistence across app restarts. Native approval secrets are stored as server hashes; provider grants are separately encrypted by the service. No chat content is persisted. Display lease expiration bounds each WebSocket; renewal and role remain separately revocable.
 
-Short display leases still bound individual WebSocket exposure. The renewal session is separately revocable and cannot be used as a display bearer, provider token, account-management credential or financial credential. Keep all credential classes out of query strings, WebSocket subprotocols, diagnostics, renderer messages and process arguments.
+An incorrect role header cannot change stored consent. A native client also validates returned membership against its actual launch intent, then requires the same role/session/connection through renewal. Server origin, actual TLS, HTTP method/body, credential scheme, duplicate headers, CSRF and callback state checks remain in place. No credentials in query strings, WebSocket subprotocols, logs, renderer messages or process arguments. TLS is required outside explicit literal-loopback development; forwarded headers do not make plaintext trusted.
 
-TLS is required outside explicit literal-loopback development. The session/display gateways check actual request TLS rather than trusting arbitrary forwarding headers. Public deployment needs explicit reverse-proxy trust and multi-user account/channel isolation; the loopback probe must not simply be exposed to the internet.
+## Data and bounds
 
-## Display data and bounds
-
-The gateway reuses `nativeChatSnapshot` from `platform/web/native-chat.js` to whitelist the same envelope used by the native renderer:
+The gateway sanitizes chat with `nativeChatSnapshot` and adds separate recipient-specific native connection metadata:
 
 ```json
-{"type":"chat-snapshot","version":1,"snapshot":{"state":"subscribed","received":1,"messages":[{"nickname":"Synthetic example","content":"안녕 😀","messageTime":1700000000000}]}}
+{
+  "type": "chat-snapshot",
+  "version": 1,
+  "snapshot": {
+    "state": "subscribed", "received": 1,
+    "messages": [{"nickname": "Synthetic example", "content": "안녕 😀", "messageTime": 1700000000000}]
+  },
+  "connection": {
+    "role": "gaming",
+    "broadcastSessionId": "01234567-89ab-cdef-0123-456789abcdef",
+    "connectionId": "abcdef01-2345-6789-abcd-ef0123456789",
+    "gamingConnections": 1, "streamingConnections": 1,
+    "captureState": "unverified"
+  }
+}
 ```
 
-Only bounded state/count, nickname/content/time reach the display; provider secrets, sender identifiers, unknown fields, window commands and financial actions do not. Non-subscribed/invalid snapshots clear old text. Incoming application commands close the read-only peer.
+The UUIDs above are synthetic identifiers, not credentials. Live frames contain the recipient's own membership. Counts deduplicate authorized open display connections on that creator's gateway and in that same logical session; other creators, expired leases and revoked approvals are excluded. A connection event/close updates the existing coalescer. Half-open sockets can remain counted until retired. Counts do not prove remote OBS health, an active broadcast, clean video or audience exposure.
 
-The existing ws dependency owns framing/upgrades. Frames are bounded to 2 MiB UTF-8 and the shared validator accepts at most 100 text rows. Updates coalesce over 50 ms; a peer with an outstanding buffered frame is disconnected instead of queued indefinitely. Status frames maintain delivery liveness independently of new chat. The server and native client enforce lease/session expiry and stop old display authorization before continuing with a replacement.
+The native client validates membership equality, canonical identifier syntax, integer counts, at most four total/one streaming and inclusion of its own role. It accepts only the explicit unverified capture state. It removes `connection` before passing the envelope to the chat document and separately updates read-only native controls. The renderer receives only bounded chat state/count and nickname/content/time, never membership, provider secrets, sender IDs, window commands or financial actions.
 
-Authorization expiry/change, upstream revocation and logout clear affected grants. Native transport loss clears old chat and uses bounded retry only while a renewable ChatView session remains valid. Window/capture policy belongs to the HUD, not this protocol.
+The ws dependency owns framing/upgrades; no custom WebSocket parser is introduced. Frames remain at most 2 MiB UTF-8 and 100 text rows. Updates coalesce for 50 ms; outstanding buffered output disconnects a slow consumer rather than growing a queue. Existing five-second status frames provide local delivery liveness. Native lease/liveness watchdogs clear chat and session state on expiry/loss. Incoming application commands terminate the receive-only peer. Capture/visibility policy remains owned by the HUD, not this connection protocol.
 
 ## Verification boundary
 
-Contract tests use actual local HTTP/WebSocket/library traffic, shared-renderer validation, SQLite session persistence and synthetic creator/provider data. They cover verifier/challenge separation, explicit consent, approval replay, revocation generation, renewal/logout, credential separation, CSRF/Host/Origin, Unicode, expiry and invalid input. Windows native tests separately exercise WinHTTP, protected persistence and actual WebView2 DOM.
+Contract tests use real local HTTP/WebSocket/library traffic and SQLite with synthetic provider/creator input. Coverage includes fixed role consent, missing/duplicate/invalid role headers, obsolete selector rejection, owner/session isolation, role-preserving renewal, visible connection counts and selective/full revocation, alongside prior verifier, CSRF, Unicode, expiry, restart and malformed-input cases.
 
-Neither suite proves live NAVER approval, deployed multi-user account security, physical two-PC capture or payable advertising exposure. Exact current results and open defects live only in development-plan.md.
+Windows fixtures separately exercise WinHTTP, protected persistence and the actual HUD/WebView2. They validate native role/status display and reject wrong roles, session IDs, counts and capture claims before publishing chat. Neither suite proves live NAVER approval, deployed-service security, physical dual-PC capture or payable exposure. Exact runs and open defects are recorded only in the development plan.

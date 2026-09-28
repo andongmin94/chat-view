@@ -3,6 +3,7 @@
 #include "hud/saved-connection.hpp"
 #include <Windows.h>
 #include <winrt/Windows.Data.Json.h>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <functional>
 #include <iostream>
 #include <stdexcept>

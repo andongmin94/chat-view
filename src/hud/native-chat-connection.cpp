@@ -185,6 +185,8 @@ void NativeChatConnection::end(const wchar_t *message, bool preserve_host) noexc
 void NativeChatConnection::tick() noexcept
 {
     try {
+        if (connection_state_ && expire_reported_output(connection_state_->output, GetTickCount64()))
+            show_connection_state();
         if (signing_out_) {
             if (client_.running()) return;
             signing_out_ = false;

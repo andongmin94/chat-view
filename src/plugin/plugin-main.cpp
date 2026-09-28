@@ -36,6 +36,7 @@ std::unique_ptr<chatview::RuntimeController> runtime_controller;
 std::unique_ptr<chatview::ControlCenterBridge> control_center_bridge;
 UINT_PTR capture_risk_timer_id = 0U;
 bool frontend_callback_registered = false;
+bool frontend_exiting = false;
 bool scene_graph_stable = false;
 ULONGLONG streaming_start_deadline = 0U;
 ULONGLONG recording_start_deadline = 0U;
@@ -103,7 +104,7 @@ CaptureScan scan_display_capture_sources() noexcept
 
 void publish_frontend_state() noexcept
 {
-    if (!runtime_controller) {
+    if (!runtime_controller || frontend_exiting) {
         return;
     }
 
@@ -119,6 +120,9 @@ void publish_frontend_state() noexcept
     const bool recording = obs_frontend_recording_active();
     const bool replay_buffer = obs_frontend_replay_buffer_active();
     const bool virtual_camera = obs_frontend_virtualcam_active();
+    // Actual frontend activity, not the conservative pending-start protection
+    // flags below. The IPC heartbeat becomes stale if frontend polling stops.
+    runtime_controller->observe_outputs({now, streaming, recording});
 
     const bool effective_streaming = streaming || streaming_pending;
     const bool effective_recording = recording || recording_pending;
@@ -206,6 +210,12 @@ void on_frontend_event(obs_frontend_event event, void *) noexcept
     bool publish = true;
 
     switch (event) {
+    case OBS_FRONTEND_EVENT_EXIT:
+        // OBS forbids further frontend API calls after this event returns.
+        frontend_exiting = true;
+        if (capture_risk_timer_id) { KillTimer(nullptr, capture_risk_timer_id); capture_risk_timer_id = 0U; }
+        if (runtime_controller) runtime_controller->observe_outputs({});
+        return;
     case OBS_FRONTEND_EVENT_FINISHED_LOADING:
     case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
     case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
@@ -369,6 +379,7 @@ void toggle_edit_mode(void *)
 
 void reset_frontend_tracking() noexcept
 {
+    frontend_exiting = false;
     scene_graph_stable = false;
     streaming_start_deadline = 0U;
     recording_start_deadline = 0U;

@@ -28,7 +28,7 @@ export function deferred<T>() {
 type Options = {
   path?: string; key?: Uint8Array; now?: () => number;
   createDisplay?: (access: DisplayAccess, origin: () => string, snapshot: () => unknown) =>
-    Pick<DisplayGateway, 'changed' | 'upgrade' | 'close'>;
+    Pick<DisplayGateway, 'changed' | 'upgrade' | 'close' | 'report'>;
 };
 export async function fixture(options: Options = {}) {
   const now = options.now ?? Date.now;
@@ -81,6 +81,7 @@ export async function fixture(options: Options = {}) {
       if (options.createDisplay) return options.createDisplay(access, () => origin, snapshot);
       const capture = { snapshot, changed: 0 }; gateways.push(capture);
       return { changed() { capture.changed++; }, close() {},
+        report(): never { throw new Error('Synthetic fixture does not accept output reports'); },
         upgrade() { throw new Error('Synthetic fixture does not claim a WebSocket handshake'); } };
     },
   });
@@ -141,6 +142,7 @@ export async function fixture(options: Options = {}) {
     const polled = await native(`/display/login/${pending.id}`, 'ChatView-Login', pending.verifier);
     assert.equal(polled.status, 200);
     return (await polled.json() as { lease: { id: string; token: string; sessionToken: string;
+      outputToken?: string; outputScope?: 'broadcast:report';
       membership: { role: ConnectionRole; connectionId: string; broadcastSessionId: string } } }).lease;
   }
   async function connect(owner: string, role: ConnectionRole) {

@@ -18,6 +18,7 @@ public:
     bool dispatch(MSG &message) noexcept;
     void open_dialog() noexcept;
     void tick() noexcept;
+    void observe_outputs(ObsOutputObservation sample) noexcept { client_.observe_outputs(sample); }
     [[nodiscard]] DWORD wait_timeout() const noexcept { return active_ || auto_connect_pending_ || signing_out_ ? 100U : INFINITE; }
     void close() noexcept;
 private:

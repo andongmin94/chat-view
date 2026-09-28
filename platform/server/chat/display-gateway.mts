@@ -3,20 +3,23 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import { DisplayAccess, DisplayAccessError } from './display-access.mts';
+import { BroadcastOutput, UNKNOWN_OUTPUT } from './broadcast-output.mts';
+import type { OutputView } from './broadcast-output.mts';
 import type { Membership } from './session-store.mts';
 import { nativeChatSnapshot } from '../../web/native-chat.js';
 
 export const MAX_DISPLAY_FRAME_BYTES = 2 * 1024 * 1024;
 const DENIED = 'ChatView display request denied';
 export type DisplayConnectionState = Membership & Readonly<{
-  gamingConnections: number; streamingConnections: number; captureState: 'unverified';
+  gamingConnections: number; streamingConnections: number; captureState: 'unverified'; output: OutputView;
 }>;
 
 // Connection metadata is for native controls, not the chat renderer. No provider
 // secrets, other owners, privileged commands or accounting fields are included.
-export function displayFrame(snapshot: unknown, connection?: DisplayConnectionState): string {
+export function displayFrame(snapshot: unknown, connection?: Omit<DisplayConnectionState, 'output'>,
+  output: OutputView = UNKNOWN_OUTPUT): string {
   const frame = JSON.stringify({ type: 'chat-snapshot', version: 1, snapshot: nativeChatSnapshot(snapshot),
-    ...(connection ? { connection } : {}) });
+    ...(connection ? { connection: { ...connection, output } } : {}) });
   if (Buffer.byteLength(frame, 'utf8') > MAX_DISPLAY_FRAME_BYTES) throw new Error('Display frame too large');
   return frame;
 }
@@ -42,9 +45,18 @@ export class DisplayGateway {
   #flush?: ReturnType<typeof setTimeout>;
   #pulse?: ReturnType<typeof setInterval>;
   #closed = false;
+  #output: BroadcastOutput;
 
-  constructor(access: DisplayAccess, origin: () => string, snapshot: () => unknown) {
-    this.#access = access; this.#origin = origin; this.#snapshot = snapshot;
+  constructor(access: DisplayAccess, origin: () => string, snapshot: () => unknown,
+    output = new BroadcastOutput()) {
+    this.#access = access; this.#origin = origin; this.#snapshot = snapshot; this.#output = output;
+  }
+  report(token: unknown, value: unknown) {
+    if (this.#closed) throw new DisplayAccessError(503);
+    const grant = this.#access.authenticateOutput(token);
+    if (this.#clients.get(grant.id)?.readyState !== WebSocket.OPEN) throw new DisplayAccessError(409);
+    const sequence = this.#output.record(grant.id, value);
+    this.changed(); return { accepted: true, sequence };
   }
   #checkOrigin(request: IncomingMessage) {
     const origin = new URL(this.#origin());
@@ -96,6 +108,7 @@ export class DisplayGateway {
         peer.on('message', () => peer.terminate());
         peer.once('close', () => {
           clearTimeout(expiry);
+          this.#output.clear(grant.id);
           if (this.#clients.get(grant.id) === peer) this.#clients.delete(grant.id);
           if (!this.#clients.size) { clearInterval(this.#pulse); this.#pulse = undefined; }
           this.changed();
@@ -127,13 +140,18 @@ export class DisplayGateway {
       (other.role === 'gaming' ? gaming : streaming).add(other.connectionId);
     }
     return { ...membership, gamingConnections: gaming.size, streamingConnections: streaming.size,
-      captureState: 'unverified' };
+      captureState: 'unverified', output: this.#output.snapshot(leaseId => {
+        const other = this.#access.membership(leaseId);
+        return this.#clients.get(leaseId)?.readyState === WebSocket.OPEN &&
+          other?.role === 'streaming' && other.broadcastSessionId === membership.broadcastSessionId;
+      }) };
   }
   #send(id: string, peer: WebSocket): void {
     if (peer.readyState !== WebSocket.OPEN) return;
     if (!this.#access.active(id) || peer.bufferedAmount !== 0) { peer.terminate(); return; }
     try {
-      const frame = displayFrame(this.#snapshot(), this.#connection(id));
+      const connection = this.#connection(id);
+      const frame = displayFrame(this.#snapshot(), connection, connection.output);
       peer.send(frame, { binary: false, compress: false }, error => { if (error) peer.terminate(); });
     } catch { peer.terminate(); }
   }

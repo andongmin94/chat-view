@@ -186,6 +186,7 @@ int run(HINSTANCE instance, const chatview::HudLaunchOptions &options)
             break;
         }
 
+        if (!companion) chat.observe_outputs(state_reader.read_outputs());
         chat.tick();
         const DWORD wait_result = MsgWaitForMultipleObjectsEx(
             handle_count,

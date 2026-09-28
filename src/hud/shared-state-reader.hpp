@@ -25,6 +25,13 @@ public:
     void close() noexcept;
 
     [[nodiscard]] bool read(SharedSnapshot &snapshot) const noexcept;
+    [[nodiscard]] ObsOutputObservation read_outputs() const noexcept
+    {
+        SharedSnapshot snapshot;
+        if (!parent_process_ || WaitForSingleObject(parent_process_.get(), 0U) != WAIT_TIMEOUT ||
+            !read(snapshot) || has_flag(snapshot, SharedStateShutdown)) return {};
+        return read_obs_output(*shared_state_);
+    }
     [[nodiscard]] HANDLE state_changed_event() const noexcept;
     [[nodiscard]] HANDLE parent_process() const noexcept;
 

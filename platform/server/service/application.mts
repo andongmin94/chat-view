@@ -7,6 +7,7 @@ import { DisplayAccessError } from '../chat/display-access.mts';
 import { requestedRole } from '../chat/connection-role.mts';
 import { hashSecret, validSecret } from '../chat/session-store.mts';
 import { Creators } from './creators.mts';
+import { readOutputReport } from '../chat/broadcast-output.mts';
 
 const nonce = () => randomBytes(32).toString('hex');
 const escape = (value: string) => value.replace(/[&<>"']/gu,
@@ -167,6 +168,12 @@ export class PlatformApplication {
         }
         throw new DisplayAccessError(404);
       }
+      if (url.pathname === '/broadcast/output') {
+        if (request.method !== 'POST') throw new DisplayAccessError(405);
+        const token = auth(request, 'ChatView-Output');
+        const report = await readOutputReport(request);
+        this.#json(response, this.#creators.reportOutput(token, report)); return;
+      }
       if (url.pathname === '/broadcast/session' && request.method === 'POST') {
         empty(request);
         const session = this.#creators.sessions.find(auth(request, 'ChatView-Session'));
@@ -182,6 +189,7 @@ export class PlatformApplication {
         const roleLabel = intent.role === 'gaming' ? '게임 PC · 개인 HUD' : '송출 PC · OBS 관리 런타임';
         this.#page(response, '챗뷰에 채팅 연결', `<p>앱에서 직접 시작한 요청인지 확인하세요. 확인 번호: <strong>${intent.code}</strong></p>
 <p>앱이 요청한 역할: <strong>${roleLabel}</strong></p>
+${intent.role === 'streaming' ? '<p>이 역할은 OBS의 송출·녹화 출력 활성 상태를 같은 계정의 연결에 전달합니다. 영상 제외나 시청 실적을 검증하는 권한은 아닙니다.</p>' : ''}
 <p>${intent.remember ? '이 PC에서 연결을 유지합니다. 공용 PC에서는 취소하세요.' : '이번 실행에서만 연결합니다.'}</p>
 ${account?.authorized ? `<p>채널: <strong>${escape(account.channel.channelName)}</strong></p>
 ${this.#form(b, `/login/${id}/approve`, '이 채널과 요청 역할로 연결')}

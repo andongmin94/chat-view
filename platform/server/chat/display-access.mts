@@ -10,7 +10,7 @@ export const MAX_DISPLAY_DEVICES = 4;
 export type DisplayOwner = Readonly<{ id: string; expiresAt: number }>;
 export type DisplayGrant = Readonly<{ id: string; expiresAt: number }>;
 type Entry = { id: string; owner: string; digest: string; kind: 'ticket' | 'lease'; expiresAt: number;
-  session?: string; membership?: Membership };
+  session?: string; membership?: Membership; outputDigest?: string };
 
 export class DisplayAccessError extends Error {
   readonly status: number;
@@ -63,13 +63,15 @@ export class DisplayAccess {
     let session: ReturnType<SessionStore['create']>;
     try { session = this.#sessions.create(owner.id, role); }
     catch (error) { if (error instanceof SessionRoleError) throw new DisplayAccessError(409); throw error; }
-    const token = secret();
+    const token = secret(), outputToken = role === 'streaming' ? secret() : undefined;
     const expiresAt = Math.min(owner.expiresAt, now + DISPLAY_LEASE_MS, now + session.expiresInMs);
     this.#entries.set(entry.id, { ...entry, digest: hashSecret(token), kind: 'lease', expiresAt,
-      session: session.id, membership: session.membership });
+      session: session.id, membership: session.membership,
+      outputDigest: outputToken ? hashSecret(outputToken) : undefined });
     return { id: entry.id, token, expiresInMs: Math.floor(expiresAt - now), scope: DISPLAY_SCOPE,
       sessionToken: session.token, sessionExpiresInMs: session.expiresInMs, sessionScope: 'chat:renew',
-      membership: session.membership };
+      membership: session.membership,
+      ...(outputToken ? { outputToken, outputScope: 'broadcast:report' as const } : {}) };
   }
   resume(token: unknown, expectedRole?: ConnectionRole) {
     const session = this.#sessions.find(token);
@@ -83,11 +85,14 @@ export class DisplayAccess {
     for (const [id, entry] of this.#entries) if (entry.session === session.id) this.#entries.delete(id);
     if (this.#entries.size >= MAX_DISPLAY_DEVICES) throw new DisplayAccessError(429);
     const id = randomUUID(), access = secret();
+    const outputToken = session.membership.role === 'streaming' ? secret() : undefined;
     const expiresAt = Math.min(owner.expiresAt, now + DISPLAY_LEASE_MS, now + session.remainingMs);
     this.#entries.set(id, { id, owner: owner.id, digest: hashSecret(access), kind: 'lease', expiresAt,
-      session: session.id, membership: session.membership });
+      session: session.id, membership: session.membership,
+      outputDigest: outputToken ? hashSecret(outputToken) : undefined });
     return { id, token: access, expiresInMs: Math.floor(expiresAt - now), scope: DISPLAY_SCOPE,
-      membership: session.membership };
+      membership: session.membership,
+      ...(outputToken ? { outputToken, outputScope: 'broadcast:report' as const } : {}) };
   }
   signout(token: unknown) {
     if (!validSecret(token)) throw new DisplayAccessError(401);
@@ -105,6 +110,17 @@ export class DisplayAccess {
     if (!validSecret(token)) throw new DisplayAccessError(401);
     const hash = hashSecret(token);
     const entry = [...this.#entries.values()].find(value => value.kind === 'lease' && value.digest === hash);
+    if (!entry) throw new DisplayAccessError(401);
+    return { id: entry.id, expiresAt: entry.expiresAt };
+  }
+  // A separate short capability, never a chat bearer or renewable session.
+  // It shares the exact lease lifetime and revocation, not another enrollment.
+  authenticateOutput(token: unknown): DisplayGrant {
+    this.#current();
+    if (!validSecret(token)) throw new DisplayAccessError(401);
+    const hash = hashSecret(token);
+    const entry = [...this.#entries.values()].find(value => value.kind === 'lease' &&
+      value.membership?.role === 'streaming' && value.outputDigest === hash);
     if (!entry) throw new DisplayAccessError(401);
     return { id: entry.id, expiresAt: entry.expiresAt };
   }

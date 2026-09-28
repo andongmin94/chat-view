@@ -9,7 +9,7 @@ import { ProviderGrants } from './provider-grants.mts';
 import type { StoredProviderGrant } from './provider-grants.mts';
 
 type Chat = Pick<ChzzkChatSession, 'start' | 'stop' | 'snapshot'>;
-type Gateway = Pick<DisplayGateway, 'changed' | 'upgrade' | 'close'>;
+type Gateway = Pick<DisplayGateway, 'changed' | 'upgrade' | 'close' | 'report'>;
 type Provider = Pick<ChzzkApi, 'exchangeCode' | 'getUser' | 'refresh' | 'revoke'>;
 type Creator = {
   channel: Channel; tokens?: Tokens; expires: number; epoch: number; revision?: string;
@@ -206,11 +206,15 @@ export class Creators {
     c.ready = task;
     try { await task; } finally { if (c.ready === task) c.ready = undefined; }
   }
-  track(lease: { id: string; token: string }, owner: string): void {
+  track(lease: { id: string; token: string; outputToken?: string }, owner: string): void {
     const c = this.#get(owner);
     for (const [key, value] of this.#leases) if (!value.creator.access.active(value.id)) this.#leases.delete(key);
     c.access.authenticate(lease.token);
     this.#leases.set(hashSecret(lease.token), { creator: c, id: lease.id });
+    if (lease.outputToken) {
+      c.access.authenticateOutput(lease.outputToken);
+      this.#leases.set(hashSecret(lease.outputToken), { creator: c, id: lease.id });
+    }
     c.gateway.changed();
   }
   gateway(token: unknown): Gateway {
@@ -219,6 +223,14 @@ export class Creators {
     if (!entry || !entry.creator.access.active(entry.id)) throw new DisplayAccessError(401);
     entry.creator.access.authenticate(token);
     return entry.creator.gateway;
+  }
+  reportOutput(token: unknown, report: unknown) {
+    if (this.#closed || !validSecret(token)) throw new DisplayAccessError(401);
+    const entry = this.#leases.get(hashSecret(token));
+    if (!entry || !entry.creator.access.active(entry.id)) throw new DisplayAccessError(401);
+    // Rechecked after the bounded body read; a late request cannot revive a
+    // revoked/rotated lease. The gateway separately verifies output scope.
+    return entry.creator.gateway.report(token, report);
   }
   async resume(token: unknown) {
     const session = this.sessions.find(token);

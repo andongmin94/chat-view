@@ -39,18 +39,18 @@ test('same-session display counts are owner-scoped and change on connect, discon
     const gaming = await reader(t, f.origin, game.lease.token);
     const initial = await gaming.until(frame => frame.connection.streamingConnections === 0);
     assert.deepEqual(initial.connection, { ...game.lease.membership,
-      gamingConnections: 1, streamingConnections: 0, captureState: 'unverified' });
+      gamingConnections: 1, streamingConnections: 0, captureState: 'unverified', output: { state: 'unknown' } });
     const streaming = await reader(t, f.origin, stream.lease.token);
     const both = await gaming.until(frame => frame.connection.streamingConnections === 1);
     assert.deepEqual(both.connection, { ...game.lease.membership,
-      gamingConnections: 1, streamingConnections: 1, captureState: 'unverified' });
+      gamingConnections: 1, streamingConnections: 1, captureState: 'unverified', output: { state: 'unknown' } });
     const second = await streaming.until(frame => frame.connection.gamingConnections === 1);
     assert.deepEqual(second.connection, { ...stream.lease.membership,
-      gamingConnections: 1, streamingConnections: 1, captureState: 'unverified' });
+      gamingConnections: 1, streamingConnections: 1, captureState: 'unverified', output: { state: 'unknown' } });
     const bob = await reader(t, f.origin, other.lease.token);
     const isolated = await bob.until(() => true);
     assert.deepEqual(isolated.connection, { ...other.lease.membership,
-      gamingConnections: 0, streamingConnections: 1, captureState: 'unverified' });
+      gamingConnections: 0, streamingConnections: 1, captureState: 'unverified', output: { state: 'unknown' } });
     assert(!JSON.stringify(isolated).includes(game.lease.membership.broadcastSessionId));
     assert(!JSON.stringify(both).includes(other.lease.membership.broadcastSessionId));
     assert.equal((await f.native('/display/refresh', 'ChatView-Session', game.lease.sessionToken, 'streaming')).status, 409);

@@ -5,11 +5,14 @@
 #include <Windows.h>
 
 #include <cstdint>
+#include <atomic>
+#include <cstddef>
+#include "common/obs-output.hpp"
 
 namespace chatview {
 
 inline constexpr std::uint32_t kSharedStateMagic = 0x43485657U; // "CHVW"
-inline constexpr std::uint32_t kSharedStateVersion = 4U;
+inline constexpr std::uint32_t kSharedStateVersion = 5U;
 
 enum SharedStateFlag : std::uint32_t {
     SharedStateNone = 0U,
@@ -35,7 +38,8 @@ struct SharedState {
     volatile LONG sequence;
     std::uint32_t flags;
     std::uint64_t generation;
-    std::uint8_t reserved[40]{};
+    alignas(8) std::uint64_t output_observation = 0U;
+    std::uint8_t reserved[32]{};
 };
 
 struct SharedSnapshot {
@@ -51,6 +55,17 @@ struct SharedSnapshot {
 
 static_assert(sizeof(LONG) == sizeof(std::int32_t));
 static_assert(sizeof(SharedState) == 64U);
+static_assert(std::atomic_ref<std::uint64_t>::is_always_lock_free);
+static_assert(offsetof(SharedState, output_observation) % std::atomic_ref<std::uint64_t>::required_alignment == 0U);
+
+inline void publish_obs_output(SharedState &state, ObsOutputObservation sample) noexcept
+{
+    std::atomic_ref<std::uint64_t>(state.output_observation).store(pack_obs_output(sample), std::memory_order_release);
+}
+inline ObsOutputObservation read_obs_output(const SharedState &state) noexcept
+{
+    return unpack_obs_output(std::atomic_ref<const std::uint64_t>(state.output_observation).load(std::memory_order_acquire));
+}
 static_assert(are_valid_shared_state_flags(SharedStateNone));
 static_assert(are_valid_shared_state_flags(kKnownSharedStateFlags));
 static_assert(!are_valid_shared_state_flags(1U << 3U));

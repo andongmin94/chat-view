@@ -29,6 +29,13 @@ public:
     void stop() noexcept;
     void update(
         bool streaming, bool recording, bool capture_risk) noexcept;
+    // Frontend callback: one atomic IPC store; no I/O or network waits. The
+    // existing lifetime lock prevents a store into an unmapped shutdown view.
+    void observe_outputs(ObsOutputObservation sample) noexcept
+    {
+        SharedSrwLockGuard lock(state_publish_lock_);
+        if (state_publish_handle_ && shared_state_) publish_obs_output(*shared_state_, sample);
+    }
     [[nodiscard]] RuntimeTelemetrySnapshot runtime_telemetry() const noexcept;
     [[nodiscard]] bool restart_hud() noexcept;
     [[nodiscard]] bool toggle_edit_mode() noexcept;

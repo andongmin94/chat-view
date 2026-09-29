@@ -1,6 +1,6 @@
 # ChatView architecture
 
-Updated: 2026-09-28. Authority: [PRODUCT.md](../PRODUCT.md). Cadence: [development-workflow.md](development-workflow.md). Evidence and next work: [development-plan.md](development-plan.md). This document defines boundaries, not another task queue.
+Updated: 2026-09-29. Authority: [PRODUCT.md](../PRODUCT.md). Cadence: [development-workflow.md](development-workflow.md). Evidence and next work: [development-plan.md](development-plan.md). This document defines boundaries, not another task queue.
 
 ## Product structure
 
@@ -25,7 +25,7 @@ Independent logins of the same CHZZK creator share one logical session and upstr
 
 Explicit native logout uses the exact approval held privately by the display client, whether memory-only or remembered. Display cancellation precedes worker-owned local matching cleanup and server signout; the UI requires server acknowledgement before claiming completion. Failed logout may be retried explicitly within the same process without restoring disk credentials. Another saved account is not substituted or deleted. Normal display stop/process exit and uncertain or lost responses remain distinct from confirmed server revocation. Exact cancellation/storage behavior belongs in the native-client contract.
 
-Open server-side sockets are not remote OBS attestation, output start/end, verified video exclusion or viewers. Half-open remote connections may remain counted until their transport/lease is retired. Capture state stays `unverified`. Only the assigned streaming role may gain future scoped OBS observation authority. Extra HUDs never become audience/reward sources. Current implementation evidence and remaining role/output work are tracked in the plan, not hidden by the connection indicator.
+Open server-side sockets are not remote OBS attestation, output start/end, verified video exclusion or viewers. Half-open remote connections may remain counted until their transport/lease is retired. Capture state stays `unverified`. The streaming role receives a distinct short `broadcast:report` capability bound to its live display lease. Existing OBS frontend activity values cross local IPC as one timestamped sample; a separate cancellable WinHTTP worker reports only fresh streaming/recording flags. This keeps network work out of OBS callbacks and private-chat receipt. The gateway expires stale reports and returns unknown after disconnection, renewal or revocation. Neither this report nor an extra HUD becomes an audience/reward source. Current implementation evidence and remaining role/output work are tracked in the plan.
 
 ## Control data is not game video
 
@@ -62,7 +62,11 @@ Provider credentials belong in protected configuration. System-browser authoriza
 
 Required flow: creator selects approved banner/campaign -> public OBS ad source -> eligible audience-time evidence -> HP -> reward record. Prefer OBS Browser Source with first-party rendering and approved assets. No arbitrary advertiser JavaScript, private-HUD ad accounting or silent scene changes.
 
-The server owns budgets, accepted intervals, versioned rules and exact monetary records. Clients report observations, not HP deductions/balances. Use transactions, idempotency and atomic caps; separate estimates, held/rejected evidence, confirmed rewards and paid amounts with auditable corrections. Synthetic demos cannot enter payable accounting.
+The first implemented slice is one fixed, non-payable test campaign. Existing browser account/CSRF authority selects or stops it; neither native display credentials nor public source addresses can manage it. `Campaigns` uses the existing SQLite connection and ties selection to the exact streaming approval with cascading deletion on revoke. The public source address survives stop and normal restart, but a new streaming approval requires explicit selection. Public reads return only bounded artwork and a short visibility lifetime, never private chat/account/session data, provider authorization or monetary actions. They inspect an existing gateway without restoring an account or opening an upstream subscription.
+
+The public renderer is separate from private HUD documents and requires no OBS page permissions. It starts transparent, bounds response size/concurrency, hides stale content using an independent deadline and requests new state after page restoration. A recent report permits preview even when OBS output is stopped; visibility is not accepted exposure. Users currently place the public URL in an OBS Browser Source and confirm its geometry themselves. No automatic scene changes are implemented. Real OBS scene/capture acceptance remains separate from HTTP and browser-document fixtures.
+
+Future accounting remains server-authoritative: budgets, accepted intervals, versioned rules and exact monetary records. Clients report observations, not HP deductions/balances. Use transactions, idempotency and atomic caps; separate estimates, held/rejected evidence, confirmed rewards and paid amounts with auditable corrections. The test-campaign flow has no audience meter, HP calculation or reward ledger and cannot enter payable accounting.
 
 Integrated audience counts are at most estimates, not measured individual attention. Unknown/stale samples are not verified exposure. OBS activity/showing flags, transforms and render heartbeats cannot independently prove visibility. Preview, hiding, occlusion, cropping, source changes, duplicate devices and modified clients need explicit treatment. Data rights, campaign rules and fraud/disclosure/privacy/payout checks precede real money without cancelling the business loop. HP units, ownership, placement and payout remain owner decisions; no invented zero-HP payout rule.
 

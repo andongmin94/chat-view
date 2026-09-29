@@ -172,7 +172,6 @@ try {
       positionX: x, positionY: y, scaleX: scale, scaleY: scale, alignment: 5, rotation: 0, boundsType: 'OBS_BOUNDS_NONE' } });
     const { sceneItemTransform: t } = await call('GetSceneItemTransform', { sceneName: main, sceneItemId });
     assert.equal(t.positionX, x); assert.equal(t.positionY, y);
-    assert.equal(t.sourceWidth, 960); assert.equal(t.sourceHeight, 180);
     assert.equal(t.scaleX, scale); assert.equal(t.scaleY, scale);
   };
   const capture = async (label: string, sceneName: string, rectangle = [0, 0, 0, 0], timeout = 15000) => {
@@ -186,6 +185,14 @@ try {
       { timeout: 8000, maxBuffer: 4096 });
       metrics = JSON.parse(result.stdout.trim());
       if (metrics.matches === true) {
+        // OBS creates CEF asynchronously: source dimensions are zero before the
+        // first frame. Assert geometry AFTER real pixels, within the same bound.
+        if (rectangle[2]! > 0) {
+          const { sceneItemTransform: t } = await call('GetSceneItemTransform', { sceneName: main, sceneItemId });
+          assert.equal(t.sourceWidth, 960); assert.equal(t.sourceHeight, 180);
+          assert.equal(t.positionX, rectangle[0]); assert.equal(t.positionY, rectangle[1]);
+          assert.equal(t.scaleX * t.sourceWidth, rectangle[2]); assert.equal(t.scaleY * t.sourceHeight, rectangle[3]);
+        }
         captures.push({ label, rectangle, ...metrics }); console.log(`${label}: composite pixels passed`); return;
       }
       await delay(250);

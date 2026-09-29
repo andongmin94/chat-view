@@ -37,16 +37,20 @@ const password = randomBytes(32).toString('hex');
 await writeFile(websocketConfig, JSON.stringify({ first_load: false, server_enabled: true,
   server_port: port, alerts_enabled: false, auth_required: true, server_password: password }), { mode: 0o600 });
 
+class ObsRequestFailure extends Error {
+  readonly code: number;
+  constructor(name: string, code: number) { super(`OBS ${name} rejected (${code})`); this.code = code; }
+}
+
 // Test-only bounded request/response transport using the existing ws dependency.
 // This is not a new product OBS connection, SDK or unauthenticated RPC server.
 // Protocol: obsproject/obs-websocket/docs/generated/protocol.md (RPC v1).
 async function connectControl(): Promise<{ call: (name: string, data?: Record<string, unknown>) => Promise<any>; close: () => void }> {
-  const deadline = performance.now() + 30000;
-  while (performance.now() < deadline) {
+  while (performance.now() < startupDeadline) {
     assert(!spawnFailed && child.exitCode === null, 'OBS exited before control readiness');
     const socket = new WebSocket(`ws://127.0.0.1:${port}`, { handshakeTimeout: 1500, maxPayload: 2 * 1024 * 1024 });
     let ready = false;
-    type Pending = { resolve: (data: unknown) => void; reject: (error: Error) => void };
+    type Pending = { name: string; resolve: (data: unknown) => void; reject: (error: Error) => void };
     const pending = new Map<string, Pending>();
     let accepted!: () => void, rejected!: (e: Error) => void;
     const identified = new Promise<void>((yes, no) => { accepted = yes; rejected = no; });
@@ -69,7 +73,7 @@ async function connectControl(): Promise<{ call: (name: string, data?: Record<st
           const item = pending.get(value.d.requestId); if (!item) return;
           pending.delete(value.d.requestId);
           if (value.d.requestStatus.result === true) item.resolve(value.d.responseData ?? {});
-          else item.reject(new Error(`OBS request rejected (${value.d.requestStatus.code})`));
+          else item.reject(new ObsRequestFailure(item.name, value.d.requestStatus.code));
         }
       } catch { fail(); socket.terminate(); }
     });
@@ -82,7 +86,7 @@ async function connectControl(): Promise<{ call: (name: string, data?: Record<st
       const id = randomUUID(); let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
         return await new Promise((yes, no) => {
-          pending.set(id, { resolve: yes, reject: no });
+          pending.set(id, { name, resolve: yes, reject: no });
           timeout = setTimeout(() => { no(new Error(`OBS ${name} timed out`)); socket.terminate(); }, 8000);
           socket.send(JSON.stringify({ op: 6, d: { requestType: name, requestId: id, requestData: data } }));
         });
@@ -93,6 +97,7 @@ async function connectControl(): Promise<{ call: (name: string, data?: Record<st
 }
 
 const f = await fixture({ createDisplay: (approval, origin, snapshot) => new DisplayGateway(approval, origin, snapshot) });
+const startupDeadline = performance.now() + 30000;
 const child = spawn(executable, ['--portable', '--multi', '--disable-updater', '--disable-missing-files-check',
   '--disable-shutdown-check', '--websocket_ipv4_only'], { cwd: dirname(executable), stdio: 'ignore' });
 let spawnFailed = false;
@@ -117,7 +122,17 @@ const pixelScript = fileURLToPath(new URL('../../tests/check-ad-pixels.ps1', imp
 const main = 'ChatView Ad Fixture', away = 'ChatView Empty Fixture', input = 'ChatView Public Test Ad';
 try {
   control = await connectControl(); const call = control.call;
-  const version = await call('GetVersion'); assert.equal(version.obsVersion, process.env.OBS_VERSION);
+  // Identification may complete before OBS finishes loading its scene collection.
+  // Probe with a read only; do not replay any scene mutation or other failure.
+  let version;
+  for (;;) {
+    try { version = await call('GetVersion'); break; }
+    catch (error) {
+      if (!(error instanceof ObsRequestFailure) || error.code !== 207 || performance.now() >= startupDeadline) throw error;
+      await delay(250);
+    }
+  }
+  assert.equal(version.obsVersion, process.env.OBS_VERSION);
   assert(version.availableRequests.includes('SaveSourceScreenshot'));
   await call('SetStudioModeEnabled', { studioModeEnabled: false });
   await call('SetVideoSettings', { baseWidth: 1280, baseHeight: 720, outputWidth: 1280, outputHeight: 720,

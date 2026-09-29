@@ -1,0 +1,76 @@
+name: OBS public ad flow
+
+on:
+  push:
+    branches: [OBS]
+    paths:
+      - '.github/workflows/obs-ad-flow.yml'
+      - 'platform/server/ads/**'
+      - 'platform/server/service/**'
+      - 'platform/server/chat/**'
+      - 'platform/web/ad-*'
+      - 'platform/tests/fixtures/service.mts'
+      - 'platform/tools/obs-ad-scene-test.mts'
+      - 'platform/package*.json'
+      - 'tests/check-ad-pixels.ps1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scene-flow:
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 12
+    env:
+      OBS_VERSION: '32.2.2'
+      OBS_PORTABLE_SHA256: 4d6e40e3ab155f56b30de517380566a206d74b63cdf5ad49aa596924768f97e1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install existing locked test libraries
+        working-directory: platform
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          npm ci --ignore-scripts --no-audit
+          git diff --exit-code -- package.json package-lock.json
+      - name: Check isolated official OBS browser-source composition
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -ItemType Directory -Path .ci -Force | Out-Null
+          $archive = Join-Path $env:GITHUB_WORKSPACE '.ci/obs-ad-runtime.zip'
+          $url = "https://github.com/obsproject/obs-studio/releases/download/$env:OBS_VERSION/OBS-Studio-$env:OBS_VERSION-Windows-x64.zip"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($hash -ne $env:OBS_PORTABLE_SHA256) { throw 'Official OBS archive hash mismatch' }
+          $runtime = Join-Path $env:GITHUB_WORKSPACE '.ci/obs-ad-flow-runtime'
+          if (Test-Path -LiteralPath $runtime) { throw 'Refuse a reused OBS fixture directory' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $runtime
+          $executables = @(Get-ChildItem $runtime -Recurse -File -Filter obs64.exe |
+            Where-Object { $_.FullName -match '[\\/]bin[\\/]64bit[\\/]obs64\.exe$' })
+          if ($executables.Count -ne 1) { throw 'Expected exactly one official OBS executable' }
+          $root = $executables[0].Directory.Parent.Parent.FullName
+          Set-Content -LiteralPath (Join-Path $root '.chatview-ad-fixture') -Value 'synthetic-only' -Encoding utf8NoBOM
+          node --experimental-strip-types platform/tools/obs-ad-scene-test.mts $root "$env:GITHUB_WORKSPACE/.ci/obs-ad-evidence"
+      - name: Preserve synthetic scene images and result only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: obs-public-ad-composition
+          path: |
+            .ci/obs-ad-evidence/*.png
+            .ci/obs-ad-evidence/result.json
+          if-no-files-found: ignore
+          retention-days: 7

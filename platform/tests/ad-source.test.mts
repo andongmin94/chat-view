@@ -45,7 +45,10 @@ async function fixture(path = `/public/ads/${'a'.repeat(32)}`) {
   return {
     get calls() { return calls; }, get timers() { return tasks.size; },
     get hidden() { return elements.get('banner')!.hidden; },
-    event(type: string) { events.dispatchEvent(new Event(type)); },
+    event(type: string, detail?: unknown) {
+      const event = new Event(type); Object.defineProperty(event, 'detail', { value: detail });
+      events.dispatchEvent(event);
+    },
     advance(ms: number) {
       const until = now + ms;
       for (;;) {
@@ -96,5 +99,62 @@ test('invalid public source paths do not start reads on load or restoration', as
   try {
     f.event('pageshow'); await flush();
     assert.equal(f.calls, 0); assert.equal(f.timers, 0); assert.equal(f.hidden, true);
+  } finally { f.close(); }
+});
+
+
+test('OBS hide clears retained artwork and pollers; show requires a new response', async () => {
+  const f = await fixture();
+  try {
+    assert.equal(f.hidden, false); assert.equal(f.calls, 1);
+    f.event('obsSourceVisibleChanged', { visible: false });
+    assert.equal(f.hidden, true); assert.equal(f.timers, 0);
+    f.advance(30000); await flush(); assert.equal(f.calls, 1);
+    f.event('obsSourceVisibleChanged', { visible: true });
+    assert.equal(f.hidden, true, 'no previous artwork is reused');
+    await flush(); assert.equal(f.calls, 2); assert.equal(f.hidden, false);
+    for (let i = 0; i < 5; i++) f.event('obsSourceVisibleChanged', { visible: true });
+    await flush(); assert.equal(f.calls, 2); assert.equal(f.timers, 2);
+  } finally { f.close(); }
+});
+
+test('OBS visibility and document restoration cannot resurrect each other', async () => {
+  const f = await fixture();
+  try {
+    f.event('obsSourceVisibleChanged', { visible: false });
+    f.event('pagehide'); f.event('pageshow'); await flush();
+    assert.equal(f.hidden, true); assert.equal(f.calls, 1); assert.equal(f.timers, 0);
+    f.event('pagehide'); f.event('obsSourceVisibleChanged', { visible: true });
+    await flush(); assert.equal(f.calls, 1); assert.equal(f.timers, 0);
+    f.event('pageshow'); await flush(); assert.equal(f.calls, 2); assert.equal(f.hidden, false);
+  } finally { f.close(); }
+});
+
+test('inactive studio preview is not treated as invisible or as paid exposure', async () => {
+  const f = await fixture();
+  try {
+    f.event('obsSourceActiveChanged', { active: false });
+    assert.equal(f.hidden, false);
+    f.advance(2000); await flush(); assert.equal(f.calls, 2);
+    f.event('obsSourceVisibleChanged', { visible: false });
+    f.event('obsSourceActiveChanged', { active: true });
+    await flush(); assert.equal(f.hidden, true); assert.equal(f.timers, 0);
+  } finally { f.close(); }
+});
+
+test('malformed visibility fails closed and OBS exit is terminal for this document', async () => {
+  const f = await fixture();
+  try {
+    for (const detail of [undefined, null, true, {}, [], { visible: 'true' }, { visible: 1 }]) {
+      f.event('obsSourceVisibleChanged', detail);
+      assert.equal(f.hidden, true); assert.equal(f.timers, 0);
+      f.event('obsSourceVisibleChanged', { visible: true }); await flush();
+      assert.equal(f.hidden, false);
+    }
+    f.event('obsExit'); const calls = f.calls;
+    f.event('obsSourceVisibleChanged', { visible: true });
+    f.event('pagehide'); f.event('pageshow');
+    f.advance(30000); await flush();
+    assert.equal(f.hidden, true); assert.equal(f.calls, calls); assert.equal(f.timers, 0);
   } finally { f.close(); }
 });

@@ -189,11 +189,12 @@ void VideoOutputPanel::start()
     output_ = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kOutputClass, L"ChatView · 창 영상 출력",
         WS_POPUP | WS_CLIPCHILDREN, r.left, r.top, r.right - r.left, r.bottom - r.top, nullptr, nullptr, GetModuleHandleW(nullptr), this);
     if (!output_) throw std::runtime_error("Video output unavailable");
-    // A distinct owned top-level window stays above the flip-model surface;
-    // never rely on GDI painting into the GPU presentation HWND to mask it.
-    cover_ = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"STATIC", L"",
-        WS_POPUP | WS_VISIBLE | SS_BLACKRECT, r.left, r.top, r.right - r.left, r.bottom - r.top,
-        output_, nullptr, GetModuleHandleW(nullptr), nullptr);
+    // Reuse the registered BLACK_BRUSH window class: SS_BLACKRECT uses the
+    // theme-dependent window-frame color, not guaranteed RGB(0,0,0). Keep this
+    // a separate owned HWND above, never GDI paint inside the flip surface.
+    cover_ = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kOutputClass, L"",
+        WS_POPUP | WS_VISIBLE, r.left, r.top, r.right - r.left, r.bottom - r.top,
+        output_, nullptr, GetModuleHandleW(nullptr), this);
     if (!cover_) { DestroyWindow(output_); output_ = nullptr; throw std::runtime_error("Video cover unavailable"); }
     ShowWindow(output_, SW_SHOWNOACTIVATE);
     requested_ = capture_.start(source_, output_);
@@ -239,7 +240,7 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
     }
     if (!self) return DefWindowProcW(window, message, wparam, lparam);
     try {
-        if (message == WM_MOUSEACTIVATE && window == self->output_) return MA_NOACTIVATE;
+        if (message == WM_MOUSEACTIVATE && (window == self->output_ || window == self->cover_)) return MA_NOACTIVATE;
         if (message == WM_DISPLAYCHANGE || message == WM_SETTINGCHANGE || (message == WM_POWERBROADCAST && wparam == PBT_APMSUSPEND)) self->stop(L"화면/전원 상태가 바뀌어 출력을 중지했습니다.");
         if (message == WM_COMMAND) {
             switch (LOWORD(wparam)) {
@@ -258,6 +259,7 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
         if (message == WM_NCDESTROY) {
             SetWindowLongPtrW(window, GWLP_USERDATA, 0);
             if (self->panel_ == window) self->panel_ = nullptr;
+            if (self->cover_ == window) self->cover_ = nullptr;
             if (self->output_ == window) { self->output_ = nullptr; self->cover_ = nullptr; }
         }
     } catch (...) { self->stop(L"출력 처리 실패 · 개인 채팅이나 전체 화면 캡처로 전환하지 않습니다."); }

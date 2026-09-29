@@ -119,10 +119,11 @@ void exercise()
     expect(!capture.start(input, output.value), "duplicate start rejected");
     await([&] { draw_hud(); return capture.snapshot().frames >= 2 && pixel_matches(pixel(660, 150), video_color); }, "real WGC output excludes overlaid HUD", 10000);
     expect(IsWindowVisible(hud.value) && pixel_matches(pixel(150, 140), hud_color), "HUD remains locally visible while output is clean");
-    // Check the same owned top-level black-cover pattern used by the panel;
-    // an active flip-model GPU surface cannot overwrite this separate window.
-    Window cover(CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"STATIC", L"",
-        WS_POPUP | WS_VISIBLE | SS_BLACKRECT, 500, 30, 320, 240,
+    // Reuse a literal BLACK_BRUSH class, as the production panel does. The
+    // old SS_BLACKRECT control instead followed the current window-frame color.
+    // Keep the RGB(0,0,0) assertion: masking is independent of theme and GPU.
+    Window cover(CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, klass.lpszClassName, L"",
+        WS_POPUP | WS_VISIBLE, 500, 30, 320, 240,
         output.value, nullptr, klass.hInstance, nullptr));
     await([&] { return pixel_matches(pixel(660, 150), RGB(0,0,0)); }, "independent black cover masks active GPU output");
     ShowWindow(cover.value, SW_HIDE);

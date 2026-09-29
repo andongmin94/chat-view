@@ -82,4 +82,15 @@ if(BUILD_TESTING)
     target_include_directories(chat-view-obs-output-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
     chatview_enable_warnings(chat-view-obs-output-test)
     add_test(NAME chat-view-obs-output COMMAND chat-view-obs-output-test)
+    add_executable(chat-view-public-ad-browser-test tests/public-ad-browser-test.cpp)
+    target_include_directories(chat-view-public-ad-browser-test PRIVATE "${WEBVIEW2_INCLUDE_DIR}")
+    target_link_libraries(chat-view-public-ad-browser-test PRIVATE "${WEBVIEW2_LOADER_LIBRARY}" ole32 user32)
+    target_compile_definitions(chat-view-public-ad-browser-test PRIVATE WEBVIEW2_STATIC)
+    chatview_enable_win32(chat-view-public-ad-browser-test)
+    chatview_enable_warnings(chat-view-public-ad-browser-test)
+    add_test(NAME chat-view-public-ad-browser
+        COMMAND "${CHATVIEW_NODE_EXECUTABLE}" --experimental-strip-types
+        "${CMAKE_CURRENT_SOURCE_DIR}/platform/tools/public-ad-browser-test.mts"
+        $<TARGET_FILE:chat-view-public-ad-browser-test>)
+    set_tests_properties(chat-view-public-ad-browser PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE)
 endif()

@@ -58,6 +58,17 @@ export class DisplayGateway {
     const sequence = this.#output.record(grant.id, value);
     this.changed(); return { accepted: true, sequence };
   }
+  // Read-only availability for this exact approved sender. Reuses the same
+  // observation/expiry as private connection status, never inventing ad evidence.
+  outputFor(broadcastSessionId: string, connectionId: string): OutputView {
+    if (this.#closed) return UNKNOWN_OUTPUT;
+    return this.#output.snapshot(leaseId => {
+      const membership = this.#access.membership(leaseId);
+      return this.#clients.get(leaseId)?.readyState === WebSocket.OPEN &&
+        membership?.role === 'streaming' && membership.broadcastSessionId === broadcastSessionId &&
+        membership.connectionId === connectionId;
+    });
+  }
   #checkOrigin(request: IncomingMessage) {
     const origin = new URL(this.#origin());
     const encrypted = (request.socket as typeof request.socket & { encrypted?: boolean }).encrypted === true;
@@ -164,3 +175,4 @@ export class DisplayGateway {
     this.#clients.clear(); this.#server.close();
   }
 }
+

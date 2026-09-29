@@ -8,6 +8,8 @@ import { requestedRole } from '../chat/connection-role.mts';
 import { hashSecret, validSecret } from '../chat/session-store.mts';
 import { Creators } from './creators.mts';
 import { readOutputReport } from '../chat/broadcast-output.mts';
+import { Campaigns, CampaignError } from '../ads/campaigns.mts';
+import { campaignsPage, servePublicAd } from '../ads/pages.mts';
 
 const nonce = () => randomBytes(32).toString('hex');
 const escape = (value: string) => value.replace(/[&<>"']/gu,
@@ -50,6 +52,7 @@ async function csrfForm(request: IncomingMessage, expected: string) {
 export class PlatformApplication {
   readonly login = new BrowserLogin();
   #creators: Creators;
+  #campaigns: Campaigns;
   #origin: string;
   #authorizeUrl: (state: string) => string;
   #browsers = new Map<string, Browser>();
@@ -60,6 +63,8 @@ export class PlatformApplication {
         (url.protocol !== 'https:' && !(url.protocol === 'http:' && url.hostname === '127.0.0.1')))
       throw new Error('Invalid ChatView origin');
     this.#creators = creators; this.#origin = origin; this.#authorizeUrl = authorizeUrl;
+    this.#campaigns = new Campaigns({ sessions: creators.sessions,
+      output: (owner, membership) => creators.outputFor(owner, membership) });
   }
   #check(request: IncomingMessage) {
     if (this.#closed) throw new DisplayAccessError(503);
@@ -81,8 +86,8 @@ export class PlatformApplication {
   #json(response: ServerResponse, value: unknown) {
     response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(value));
   }
-  #page(response: ServerResponse, title: string, content: string) {
-    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  #page(response: ServerResponse, title: string, content: string, status = 200) {
+    response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
     response.end(`<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>ChatView · ${title}</title>
 <style>body{font:16px/1.7 system-ui;max-width:720px;margin:48px auto;padding:0 24px}h1{font-size:28px}form{margin:12px 0}button{font:inherit;padding:10px 16px;cursor:pointer}small{display:block}</style>
 <h1>${title}</h1>${content}<p><small>개발 서비스입니다. PC 역할 연결은 HUD 없는 영상 전달이나 실제 광고 노출의 증거가 아닙니다.</small></p></html>`);
@@ -122,6 +127,10 @@ export class PlatformApplication {
       this.#check(request);
       const url = new URL(request.url!, this.#origin);
       if (url.origin !== this.#origin) throw new DisplayAccessError(403);
+      if (url.pathname.startsWith('/public/ads/')) {
+        if (url.search) throw new DisplayAccessError(400);
+        servePublicAd(request, response, url.pathname, this.#campaigns); return;
+      }
       if (url.pathname === '/callback' && request.method === 'GET') {
         const b = this.#browser(request), state = url.searchParams.get('state'), code = url.searchParams.get('code');
         if (!b?.attempt || b.attempt.expires <= Date.now() || !validSecret(state) || !code || code.length > 8192 ||
@@ -197,6 +206,11 @@ ${this.#form(b, `/login/${id}/approve`, '이 채널과 요청 역할로 연결')
 : this.#form(b, `/login/${id}/connect`, '치지직으로 로그인')}
 ${this.#form(b, `/login/${id}/deny`, '취소')}`); return;
       }
+      if (request.method === 'GET' && url.pathname === '/campaigns') {
+        if (!b?.owner) throw new DisplayAccessError(401);
+        this.#page(response, '시험 캠페인 · 공개 배너', campaignsPage(
+          this.#campaigns.status(b.owner), b.csrf, this.#origin, this.#creators.describe(b.owner).authorized)); return;
+      }
       if (request.method === 'GET' && url.pathname === '/healthz') { response.writeHead(204); response.end(); return; }
       if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/account')) {
         if (!b?.owner) { this.#page(response, 'ChatView', '<p>챗뷰 앱에서 로그인 버튼을 눌러 채팅을 연결하세요.</p>'); return; }
@@ -205,6 +219,7 @@ ${this.#form(b, `/login/${id}/deny`, '취소')}`); return;
 <p>채팅 상태: ${escape(account.chatState)} · ${account.authorized ? '치지직 승인 유효' : '앱에서 치지직 재로그인 필요'}</p>
 ${account.connections.map(connection => `<section><p>${connection.role === 'gaming' ? '게임 PC · 개인 HUD' : '송출 PC · OBS 역할'}<br>
 연결: ${connection.connectionId}</p>${this.#form(b!, `/connections/${connection.connectionId}/revoke`, '이 연결 해제')}</section>`).join('')}
+<p><a href="/campaigns">시험 캠페인 선택 · OBS 공개 배너</a></p>
 ${this.#form(b, '/account/reconnect', '채팅 다시 연결')}
 ${this.#form(b, '/account/revoke', '모든 PC 연결 및 치지직 권한 철회')}
 ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
@@ -237,6 +252,19 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
         this.#redirect(response, '/'); return;
       }
       if (!b.owner) throw new DisplayAccessError(401);
+      const campaign = /^\/campaigns\/([a-z0-9-]{1,64})\/select$/u.exec(url.pathname);
+      if (campaign) {
+        if (!this.#creators.describe(b.owner).authorized) throw new DisplayAccessError(401);
+        try { this.#campaigns.select(b.owner, campaign[1]!); }
+        catch (error) {
+          if (!(error instanceof CampaignError) || error.status !== 409) throw error;
+          this.#page(response, '송출 연결 필요', '<p>먼저 이 계정의 OBS 관리 런타임에서 로그인해 송출 역할을 승인하세요.</p><p><a href="/campaigns">캠페인으로 돌아가기</a></p>', 409); return;
+        }
+        this.#redirect(response, '/campaigns'); return;
+      }
+      if (url.pathname === '/campaigns/stop') {
+        this.#campaigns.stop(b.owner); this.#redirect(response, '/campaigns'); return;
+      }
       const revoke = /^\/connections\/([a-f0-9-]{36})\/revoke$/u.exec(url.pathname);
       if (revoke) { this.#creators.removeConnection(b.owner, revoke[1]!); this.#redirect(response, '/account'); return; }
       if (url.pathname === '/account/reconnect') {
@@ -253,7 +281,11 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
     } catch (error) {
       if (response.headersSent) { response.destroy(); return; }
       response.setHeader('Connection', 'close');
-      response.writeHead(error instanceof DisplayAccessError ? error.status : 503, { 'Content-Type': 'application/json' });
+      const status = error instanceof DisplayAccessError || error instanceof CampaignError ? error.status : 503;
+      if (request.url?.startsWith('/public/ads/')) {
+        response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(); return;
+      }
+      response.writeHead(status, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify({ error: 'ChatView request unavailable' }));
     }
   }
@@ -274,3 +306,4 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
     for (const b of this.#browsers.values()) this.#drop(b);
   }
 }
+

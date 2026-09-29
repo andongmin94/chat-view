@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { DisplayAccess, DisplayAccessError } from '../chat/display-access.mts';
 import { SessionStore, hashSecret, validSecret } from '../chat/session-store.mts';
+import type { Membership } from '../chat/session-store.mts';
+import { UNKNOWN_OUTPUT } from '../chat/broadcast-output.mts';
+import type { OutputView } from '../chat/broadcast-output.mts';
 import { ChzzkError } from '../chzzk/api.mts';
 import type { ChzzkApi, Channel, Tokens } from '../chzzk/api.mts';
 import type { ChzzkChatSession } from '../chzzk/session.mts';
@@ -9,7 +12,7 @@ import { ProviderGrants } from './provider-grants.mts';
 import type { StoredProviderGrant } from './provider-grants.mts';
 
 type Chat = Pick<ChzzkChatSession, 'start' | 'stop' | 'snapshot'>;
-type Gateway = Pick<DisplayGateway, 'changed' | 'upgrade' | 'close' | 'report'>;
+type Gateway = Pick<DisplayGateway, 'changed' | 'upgrade' | 'close' | 'report' | 'outputFor'>;
 type Provider = Pick<ChzzkApi, 'exchangeCode' | 'getUser' | 'refresh' | 'revoke'>;
 type Creator = {
   channel: Channel; tokens?: Tokens; expires: number; epoch: number; revision?: string;
@@ -232,6 +235,12 @@ export class Creators {
     // revoked/rotated lease. The gateway separately verifies output scope.
     return entry.creator.gateway.report(token, report);
   }
+  // Public rendering must not load protected grants or start a subscription.
+  outputFor(owner: string, membership: Membership): OutputView {
+    const c = this.#creators.get(owner);
+    if (this.#closed || !c?.tokens || c.restored || c.expires <= this.#now()) return UNKNOWN_OUTPUT;
+    return c.gateway.outputFor(membership.broadcastSessionId, membership.connectionId);
+  }
   async resume(token: unknown) {
     const session = this.sessions.find(token);
     if (!session) throw new DisplayAccessError(401);
@@ -267,3 +276,4 @@ export class Creators {
     this.#leases.clear(); this.#creators.clear();
   }
 }
+

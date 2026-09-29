@@ -3,6 +3,7 @@ import { DisplayAccess, DisplayAccessError } from '../chat/display-access.mts';
 import { SessionStore, hashSecret, validSecret } from '../chat/session-store.mts';
 import type { Membership } from '../chat/session-store.mts';
 import { CampaignActivity } from '../ads/activity.mts';
+import { AudienceSampler } from '../chzzk/audience.mts';
 import { UNKNOWN_OUTPUT } from '../chat/broadcast-output.mts';
 import type { OutputView } from '../chat/broadcast-output.mts';
 import { ChzzkError } from '../chzzk/api.mts';
@@ -23,6 +24,7 @@ type Creator = {
   timer?: ReturnType<typeof setTimeout>; retry?: ReturnType<typeof setTimeout>; retries: number;
 };
 type Options = {
+  audienceApi?: Pick<ChzzkApi, 'listLives'>;
   api: Provider; sessions: SessionStore; grants: ProviderGrants; now?: () => number;
   createChat: (changed: () => void) => Chat;
   createDisplay: (access: DisplayAccess, snapshot: () => unknown) => Gateway;
@@ -33,6 +35,7 @@ type Options = {
 export class Creators {
   readonly sessions: SessionStore;
   readonly activity: CampaignActivity;
+  readonly audience: AudienceSampler;
   #options: Options;
   #now: () => number;
   #creators = new Map<string, Creator>();
@@ -43,7 +46,22 @@ export class Creators {
   #revokedAt = new Map<string, number>();
   constructor(options: Options) {
     this.#options = options; this.sessions = options.sessions; this.#now = options.now ?? Date.now;
-    this.activity = new CampaignActivity(this.sessions.database, this.#now);
+    this.audience = new AudienceSampler(options.audienceApi, () => this.#audienceTargets(), this.#now);
+    this.activity = new CampaignActivity(this.sessions.database, this.#now, undefined,
+      owner => this.audience.current(owner));
+  }
+  #audienceTargets(): string[] {
+    if (this.#closed) return [];
+    const rows = this.sessions.database.prepare(`SELECT a.owner, s.connection_id, b.id
+      FROM ad_selections s JOIN ad_sources a ON a.source_id = s.source_id
+      JOIN chat_sessions c ON c.id = s.connection_id AND c.owner = a.owner
+      JOIN connection_roles r ON r.connection_id = c.id AND r.role = 'streaming'
+      JOIN broadcast_sessions b ON b.owner = c.owner WHERE c.expires_at > ?`).all(this.#now());
+    return rows.filter(row => {
+      const output = this.outputFor(String(row.owner), {role: 'streaming',
+        connectionId: String(row.connection_id), broadcastSessionId: String(row.id)});
+      return output.state === 'reported' && output.streaming;
+    }).map(row => String(row.owner));
   }
   #context(channel: Channel): Creator {
     const existing = this.#creators.get(channel.channelId);
@@ -80,6 +98,7 @@ export class Creators {
     c.gateway.changed();
   }
   #retire(c: Creator) {
+    this.audience.clear(c.channel.channelId);
     c.epoch++; c.tokens = undefined; c.expires = 0; c.refreshing = undefined; c.validating = undefined;
     clearTimeout(c.timer); clearTimeout(c.retry); c.retry = undefined;
     this.activity.clear(c.channel.channelId);
@@ -239,8 +258,11 @@ export class Creators {
     // revoked/rotated lease. The gateway separately verifies output scope.
     const membership = entry.creator.access.membership(entry.id);
     if (!membership) throw new DisplayAccessError(401);
-    return entry.creator.gateway.report(token, report, receipt =>
+    const accepted = entry.creator.gateway.report(token, report, receipt =>
       this.activity.record(entry.creator.channel.channelId, membership, receipt));
+    // One shared provider task; never await network in this report or chat path.
+    void this.audience.refresh();
+    return accepted;
   }
   // Public rendering must not load protected grants or start a subscription.
   outputFor(owner: string, membership: Membership): OutputView {
@@ -259,9 +281,12 @@ export class Creators {
     if (!validSecret(token)) throw new DisplayAccessError(401);
     const session = this.sessions.find(token);
     this.sessions.remove(token);
+    if (session?.membership?.role === 'streaming') this.audience.clear(session.owner);
     if (session) this.#creators.get(session.owner)?.gateway.changed();
   }
   removeConnection(owner: string, id: string) {
+    if (this.sessions.connections(owner).some(c => c.connectionId === id && c.role === 'streaming'))
+      this.audience.clear(owner);
     this.sessions.removeConnection(owner, id);
     this.#creators.get(owner)?.gateway.changed();
   }
@@ -274,7 +299,7 @@ export class Creators {
   }
   async close(): Promise<void> {
     if (this.#closed) return;
-    this.#closed = true; this.#lifetime.abort(); this.activity.close();
+    this.#closed = true; this.#lifetime.abort(); this.audience.close(); this.activity.close();
     for (const c of this.#creators.values()) {
       // Closing the process is not a signout or provider revocation.
       this.#retire(c); c.gateway.close(); c.access.close();

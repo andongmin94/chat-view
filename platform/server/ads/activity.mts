@@ -2,6 +2,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { Membership } from '../chat/session-store.mts';
 import type { OutputAcceptance } from '../chat/broadcast-output.mts';
+import type { AudienceView } from '../chzzk/audience.mts';
 
 export const ACTIVITY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const ACTIVITY_ROW_LIMIT = 1000;
@@ -10,7 +11,7 @@ export type ActivityReason = 'first-report' | 'continuous' | 'connection-change'
   'sequence-gap' | 'stale-gap' | 'state-change' | 'clock-change';
 export type ActivityInterval = Readonly<{ from: number; to: number; durationMs: number;
   state: ActivityState; reason: ActivityReason; reports: number }>;
-type Head = OutputAcceptance & { at: number; tick: number; row: number; campaign: string };
+type Head = OutputAcceptance & { at: number; tick: number; row: number; campaign: string; audience: AudienceView };
 const stateOf = (r: OutputAcceptance['report']): ActivityState =>
   r.streaming ? (r.recording ? 'both' : 'streaming') : r.recording ? 'recording' : 'idle';
 
@@ -21,10 +22,12 @@ export class CampaignActivity {
   #db: DatabaseSync;
   #now: () => number;
   #monotonic: () => number;
+  #audience: (owner: string) => AudienceView;
   #heads = new Map<string, Head>();
   constructor(db: DatabaseSync, now: () => number = Date.now,
-    monotonic: () => number = () => performance.now()) {
-    this.#db = db; this.#now = now; this.#monotonic = monotonic;
+    monotonic: () => number = () => performance.now(),
+    audience: (owner: string) => AudienceView = () => ({ state: 'unavailable', reason: 'disabled' })) {
+    this.#db = db; this.#now = now; this.#monotonic = monotonic; this.#audience = audience;
     db.exec(`CREATE TABLE IF NOT EXISTS campaign_activity (
       id INTEGER PRIMARY KEY, owner TEXT NOT NULL, campaign_id TEXT NOT NULL,
       from_at INTEGER NOT NULL, to_at INTEGER NOT NULL,
@@ -36,7 +39,12 @@ export class CampaignActivity {
       CHECK(to_at >= from_at)
     ) STRICT;
     CREATE INDEX IF NOT EXISTS campaign_activity_owner ON campaign_activity(owner, id);
-    CREATE INDEX IF NOT EXISTS campaign_activity_time ON campaign_activity(from_at);`);
+    CREATE INDEX IF NOT EXISTS campaign_activity_time ON campaign_activity(from_at);
+    CREATE TABLE IF NOT EXISTS campaign_audience (
+      activity_id INTEGER PRIMARY KEY REFERENCES campaign_activity(id) ON DELETE CASCADE,
+      estimated_viewer_ms INTEGER NOT NULL CHECK(estimated_viewer_ms >= 0),
+      covered_ms INTEGER NOT NULL CHECK(covered_ms > 0)
+    ) STRICT;`);
     this.#expire();
   }
   #expire() {
@@ -69,7 +77,7 @@ export class CampaignActivity {
         AND r.role = 'streaming' AND b.id = ?`)
       .get(owner, membership.connectionId, at, membership.broadcastSessionId);
     if (!selected) return;
-    const campaign = String(selected.campaign_id);
+    const campaign = String(selected.campaign_id), audience = this.#audience(owner);
     let from = at, duration = 0, state: ActivityState = 'unknown', reason: ActivityReason = 'first-report';
     if (previous && previous.campaign === campaign) {
       const elapsed = tick - previous.tick, wallElapsed = at - previous.at;
@@ -84,6 +92,18 @@ export class CampaignActivity {
         else if (stateOf(input.report) !== stateOf(previous.report)) reason = 'state-change';
         else { state = stateOf(input.report); reason = 'continuous'; duration = elapsed; }
       }
+    }
+    // Last-sample hold over the accepted OUTPUT interval, not ad attention.
+    // Both ends must still have fresh samples for the same provider live and
+    // continuity epoch. A new sample never retroactively fills missing time.
+    const priorAudience = previous?.audience;
+    let viewerMs: number | undefined;
+    if (reason === 'continuous' && (state === 'streaming' || state === 'both') &&
+        priorAudience?.state === 'sampled' && audience.state === 'sampled' &&
+        priorAudience.liveId === audience.liveId && priorAudience.continuity === audience.continuity &&
+        priorAudience.requestedAt <= from && duration < priorAudience.validForMs) {
+      const estimate = priorAudience.viewers * duration;
+      if (Number.isSafeInteger(estimate) && estimate >= 0) viewerMs = estimate;
     }
     this.#db.exec('BEGIN IMMEDIATE');
     try {
@@ -105,11 +125,20 @@ export class CampaignActivity {
           VALUES (?, ?, ?, ?, ?, ?, ?, 1)`).run(owner, campaign, from, at, duration, state, reason);
         row = Number(inserted.lastInsertRowid);
       }
+      if (viewerMs !== undefined) {
+        const old = this.#db.prepare('SELECT estimated_viewer_ms FROM campaign_audience WHERE activity_id = ?').get(row);
+        // Unrepresentable estimates are omitted, never rounded into an exact total.
+        if (Number.isSafeInteger(Number(old?.estimated_viewer_ms ?? 0) + viewerMs))
+          this.#db.prepare(`INSERT INTO campaign_audience VALUES (?, ?, ?)
+            ON CONFLICT(activity_id) DO UPDATE SET
+              estimated_viewer_ms = estimated_viewer_ms + excluded.estimated_viewer_ms,
+              covered_ms = covered_ms + excluded.covered_ms`).run(row, viewerMs, duration);
+      }
       this.#db.prepare(`DELETE FROM campaign_activity WHERE owner = ? AND id NOT IN
         (SELECT id FROM campaign_activity WHERE owner = ? ORDER BY id DESC LIMIT ?)`)
         .run(owner, owner, ACTIVITY_ROW_LIMIT);
       this.#db.exec('COMMIT');
-      this.#heads.set(owner, { ...input, at, tick, row, campaign });
+      this.#heads.set(owner, { ...input, at, tick, row, campaign, audience });
     } catch (error) { this.#db.exec('ROLLBACK'); throw error; }
   }
   summary(owner: string) {
@@ -121,10 +150,17 @@ export class CampaignActivity {
       COALESCE(SUM(CASE WHEN state = 'idle' THEN duration_ms ELSE 0 END),0) AS idle,
       COALESCE(SUM(CASE WHEN state = 'unknown' THEN 1 ELSE 0 END),0) AS unknown,
       MIN(from_at) AS first_at, MAX(to_at) AS last_at FROM campaign_activity WHERE owner = ?`).get(owner)!;
+    const estimate = this.#db.prepare(`SELECT TOTAL(v.estimated_viewer_ms) AS viewer_ms,
+      COALESCE(SUM(v.covered_ms),0) AS covered_ms FROM campaign_audience v
+      JOIN campaign_activity a ON a.id = v.activity_id WHERE a.owner = ?`).get(owner)!;
+    const viewerMs = Number(estimate.viewer_ms), coveredMs = Number(estimate.covered_ms);
     const rows = this.#db.prepare(`SELECT from_at, to_at, duration_ms, state, reason, reports
       FROM campaign_activity WHERE owner = ? ORDER BY id DESC LIMIT 50`).all(owner);
     return { mode: 'test' as const, payable: false as const,
-      estimatedViewerMs: null, measuredAdViewerMs: null, hp: null, revenue: null,
+      estimatedViewerMs: coveredMs > 0 && Number.isSafeInteger(viewerMs) ? viewerMs : null,
+      audienceCoverageMs: coveredMs, audienceUnmeasuredMs: Math.max(0, Number(totals.streaming) - coveredMs),
+      audience: this.#audience(owner), audienceMethod: 'last-sample-hold' as const,
+      measuredAdViewerMs: null, hp: null, revenue: null,
       intervals: Number(totals.intervals), reports: Number(totals.reports),
       streamingMs: Number(totals.streaming), recordingMs: Number(totals.recording),
       activeMs: Number(totals.active), idleMs: Number(totals.idle), unknownIntervals: Number(totals.unknown),

@@ -11,6 +11,9 @@ export type Tokens = Readonly<{
 }>;
 export type Channel = Readonly<{ channelId: string; channelName: string }>;
 export type Fetch = (url: string, init: RequestInit) => Promise<Response>;
+export type LivePage = Readonly<{ data: readonly Readonly<{
+  channelId: string; liveId: number; concurrentUserCount: number;
+}>[]; next?: string }>;
 
 // Deliberately omit upstream bodies, URLs, headers and exception causes:
 // each can contain a code, a token, or a session URL.
@@ -122,9 +125,13 @@ export class ChzzkApi {
     this.#fetch = fetcher;
   }
 
-  async #request(path: string, accessToken?: string, body?: Record<string, string>, signal?: AbortSignal, method: 'GET' | 'POST' = body ? 'POST' : 'GET'): Promise<unknown> {
+  async #request(path: string, accessToken?: string, body?: Record<string, string>, signal?: AbortSignal, method: 'GET' | 'POST' = body ? 'POST' : 'GET', client = false): Promise<unknown> {
     const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/json' };
     if (accessToken !== undefined) headers.Authorization = `Bearer ${secret(accessToken)}`;
+    if (client) {
+      headers['Client-Id'] = this.#credentials.clientId;
+      headers['Client-Secret'] = this.#credentials.clientSecret;
+    }
     const deadline = AbortSignal.timeout(10_000);
     let response: Response;
     try {
@@ -147,6 +154,27 @@ export class ChzzkApi {
       throw new ChzzkError('response');
     }
     return envelope.content;
+  }
+
+  // Official Live API: only size and opaque next are documented filters. This
+  // is not a per-channel endpoint and absence never implies zero viewers.
+  async listLives(next?: string, signal?: AbortSignal): Promise<LivePage> {
+    const query = new URLSearchParams({ size: '20' });
+    if (next !== undefined) query.set('next', text(next, 2048, 'invalid-input'));
+    const data = record(await this.#request(`/open/v1/lives?${query}`, undefined, undefined, signal, 'GET', true));
+    if (!Array.isArray(data.data) || data.data.length > 20) throw new ChzzkError('response');
+    const seen = new Set<string>();
+    const lives = data.data.map(value => {
+      const live = record(value), channelId = text(live.channelId, 256, 'response');
+      if (seen.has(channelId) || !Number.isSafeInteger(live.liveId) || (live.liveId as number) < 1 ||
+          !Number.isSafeInteger(live.concurrentUserCount) || (live.concurrentUserCount as number) < 0 ||
+          (live.concurrentUserCount as number) > 0x7fffffff) throw new ChzzkError('response');
+      seen.add(channelId);
+      return { channelId, liveId: live.liveId as number, concurrentUserCount: live.concurrentUserCount as number };
+    });
+    const cursor = record(data.page).next;
+    return { data: lives, ...(cursor === undefined || cursor === null || cursor === '' ? {}
+      : { next: text(cursor, 2048, 'response') }) };
   }
 
   async exchangeCode(code: string, state: string, signal?: AbortSignal): Promise<Tokens> {

@@ -4,6 +4,7 @@ import { createServer } from 'node:https';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { authorizationUrl, ChzzkApi } from './chzzk/api.mts';
+import { audienceSamplingEnabled } from './chzzk/audience.mts';
 import { ChzzkChatSession } from './chzzk/session.mts';
 import { SessionStore } from './chat/session-store.mts';
 import { DisplayGateway } from './chat/display-gateway.mts';
@@ -23,6 +24,7 @@ export async function startPlatform(env: NodeJS.ProcessEnv = process.env) {
   if (!isAbsolute(database)) throw new Error('ChatView requires an absolute session database path');
   const credentials = { clientId: required('CHZZK_CLIENT_ID'), clientSecret: required('CHZZK_CLIENT_SECRET') };
   const api = new ChzzkApi(credentials);
+  const sampleAudience = audienceSamplingEnabled(env.CHATVIEW_AUDIENCE_SAMPLING);
   const tls = { key: readFileSync(required('CHATVIEW_TLS_KEY_FILE')), cert: readFileSync(required('CHATVIEW_TLS_CERT_FILE')),
     minVersion: 'TLSv1.2' as const, maxHeaderSize: 16384 };
   // Direct TLS termination only. Forwarded headers never authorize plain HTTP.
@@ -42,6 +44,7 @@ export async function startPlatform(env: NodeJS.ProcessEnv = process.env) {
     sessions = new SessionStore(database);
     try { grants = new ProviderGrants(sessions.database, key); } finally { key.fill(0); }
     creators = new Creators({ api, sessions, grants,
+      audienceApi: sampleAudience ? api : undefined,
       createChat: changed => new ChzzkChatSession(api, changed),
       createDisplay: (access, snapshot) => new DisplayGateway(access, () => origin, snapshot) });
     app = new PlatformApplication(creators, origin, state => authorizationUrl(credentials.clientId, `${origin}/callback`, state));

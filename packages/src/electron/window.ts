@@ -15,7 +15,7 @@ export function createWindow(port: number) {
     height: 275,
     frame: false,
     resizable: isDev,
-    icon: path.join(__dirname, "../../public/icon.ico"),
+    icon: path.join(__dirname, "../../public/icon.png"),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -83,7 +83,7 @@ export const createOverlayWindow = (url: string) => {
     transparent: true,
     thickFrame: process.platform === "win32",
     skipTaskbar: true,
-    icon: path.join(__dirname, "../../public/icon.ico"),
+    icon: path.join(__dirname, "../../public/icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       webSecurity: false,

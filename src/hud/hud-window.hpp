@@ -34,6 +34,7 @@ public:
 
 private:
     friend class NativeChatConnection;
+    friend class VideoOutputPanel;
     static LRESULT CALLBACK window_proc(
         HWND window, UINT message, WPARAM wparam, LPARAM lparam);
 

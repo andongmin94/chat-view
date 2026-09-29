@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Real WGC/GPU/window pixels, but synthetic source/HUD and one desktop. This
+// tests window isolation, NOT a physical capture card, audio or game support.
+#include "hud/window-capture.hpp"
+#include <Windows.h>
+#include <shellapi.h>
+#include <iostream>
+#include <functional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+
+namespace {
+constexpr wchar_t source_class[] = L"ChatView.SyntheticVideoSource";
+constexpr COLORREF video_color = RGB(20, 100, 180), hud_color = RGB(240, 20, 180);
+void expect(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
+void pump()
+{
+    MSG msg{};
+    while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg); DispatchMessageW(&msg);
+    }
+}
+void await(const std::function<bool()> &condition, const char *message, ULONGLONG ms = 5000)
+{
+    const auto deadline = GetTickCount64() + ms;
+    while (!condition()) { expect(GetTickCount64() < deadline, message); pump(); Sleep(10); }
+}
+LRESULT CALLBACK source_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    if (message == WM_TIMER) { InvalidateRect(window, nullptr, FALSE); return 0; }
+    if (message == WM_PAINT) {
+        PAINTSTRUCT paint{}; const HDC dc = BeginPaint(window, &paint);
+        RECT rect{}; GetClientRect(window, &rect);
+        const HBRUSH base = CreateSolidBrush(video_color); FillRect(dc, &rect, base); DeleteObject(base);
+        rect = {0, 0, (GetTickCount64() / 100) % 2 ? 30 : 50, 10};
+        FillRect(dc, &rect, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+        EndPaint(window, &paint); return 0;
+    }
+    if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
+    if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+int source()
+{
+    WNDCLASSW klass{}; klass.lpfnWndProc = source_proc; klass.hInstance = GetModuleHandleW(nullptr); klass.lpszClassName = source_class;
+    expect(RegisterClassW(&klass) != 0, "source class");
+    HWND window = CreateWindowExW(0, source_class, L"Synthetic game", WS_POPUP | WS_VISIBLE | WS_SYSMENU | WS_MINIMIZEBOX,
+        30, 30, 400, 300, nullptr, nullptr, klass.hInstance, nullptr);
+    expect(window != nullptr, "source window"); SetTimer(window, 1, 100, nullptr);
+    MSG msg{}; while (GetMessageW(&msg, nullptr, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageW(&msg); }
+    return 0;
+}
+struct Child {
+    PROCESS_INFORMATION process{};
+    ~Child()
+    {
+        if (process.hProcess) { TerminateProcess(process.hProcess, 0); WaitForSingleObject(process.hProcess, 2000); CloseHandle(process.hProcess); }
+        if (process.hThread) CloseHandle(process.hThread);
+    }
+    Child()
+    {
+        wchar_t path[32768]{}; expect(GetModuleFileNameW(nullptr, path, 32768) != 0, "test executable");
+        std::wstring command = L"\"" + std::wstring(path) + L"\" --source";
+        STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+        expect(CreateProcessW(path, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process) != FALSE, "synthetic source process");
+    }
+    HWND window() const
+    {
+        struct Find { DWORD pid; HWND found = nullptr; } find{process.dwProcessId};
+        EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
+            auto &f = *reinterpret_cast<Find *>(parameter); DWORD pid = 0; (void)GetWindowThreadProcessId(window, &pid);
+            wchar_t name[128]{}; GetClassNameW(window, name, 128);
+            if (pid == f.pid && std::wstring_view(name) == source_class) { f.found = window; return FALSE; }
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&find));
+        return find.found;
+    }
+};
+struct Window {
+    HWND value = nullptr;
+    ~Window() { if (value) DestroyWindow(value); }
+    explicit Window(HWND window) : value(window) { expect(value != nullptr, "fixture window"); }
+};
+COLORREF pixel(int x, int y)
+{
+    const HDC dc = GetDC(nullptr); if (!dc) return CLR_INVALID;
+    const auto result = GetPixel(dc, x, y); ReleaseDC(nullptr, dc); return result;
+}
+bool pixel_matches(COLORREF a, COLORREF b)
+{
+    const auto close = [](int x, int y) { return x > y ? x - y <= 8 : y - x <= 8; };
+    return a != CLR_INVALID && close(GetRValue(a), GetRValue(b)) && close(GetGValue(a), GetGValue(b)) && close(GetBValue(a), GetBValue(b));
+}
+void exercise()
+{
+    expect(GetSystemMetrics(SM_CXSCREEN) >= 900 && GetSystemMetrics(SM_CYSCREEN) >= 600, "interactive desktop required (not skipped)");
+    Child game; HWND input = nullptr;
+    await([&] { input = game.window(); return input && IsWindowVisible(input); }, "source ready");
+    WNDCLASSW klass{}; klass.lpfnWndProc = DefWindowProcW; klass.hInstance = GetModuleHandleW(nullptr);
+    klass.lpszClassName = L"ChatView.VideoPixelFixture"; klass.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+    expect(RegisterClassW(&klass) != 0, "output class");
+    Window output(CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOPMOST, klass.lpszClassName, L"Synthetic output", WS_POPUP | WS_VISIBLE,
+        500, 30, 320, 240, nullptr, nullptr, klass.hInstance, nullptr));
+    // The HUD-like window is deliberately NOT capture-excluded. WGC must select
+    // the game surface, not desktop pixels underneath/around it.
+    Window hud(CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOPMOST, L"STATIC", L"", WS_POPUP | WS_VISIBLE | SS_WHITERECT,
+        100, 100, 150, 80, nullptr, nullptr, klass.hInstance, nullptr));
+    SetWindowLongPtrW(hud.value, GWL_STYLE, WS_POPUP | WS_VISIBLE | SS_OWNERDRAW);
+    const auto draw_hud = [&] {
+        HDC dc = GetDC(hud.value); RECT rect{}; GetClientRect(hud.value, &rect);
+        HBRUSH brush = CreateSolidBrush(hud_color); FillRect(dc, &rect, brush); DeleteObject(brush); ReleaseDC(hud.value, dc);
+    };
+    pump(); draw_hud();
+    chatview::WindowCapture capture;
+    expect(!capture.start(hud.value, output.value), "self/HUD capture rejected");
+    expect(!capture.start(GetDesktopWindow(), output.value), "desktop is never a window fallback");
+    expect(capture.start(input, output.value), "start actual window capture");
+    expect(!capture.start(input, output.value), "duplicate start rejected");
+    await([&] { draw_hud(); return capture.snapshot().frames >= 2 && pixel_matches(pixel(660, 150), video_color); }, "real WGC output excludes overlaid HUD", 10000);
+    expect(IsWindowVisible(hud.value) && pixel_matches(pixel(150, 140), hud_color), "HUD remains locally visible while output is clean");
+    expect(capture.snapshot().width == 400 && capture.snapshot().height == 300, "captured content dimensions");
+    SetWindowPos(input, nullptr, 0, 0, 600, 300, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    await([&] { return capture.snapshot().width == 600 && pixel_matches(pixel(660, 150), video_color) && pixel_matches(pixel(660, 40), RGB(0,0,0)); }, "resize recreates pool and letterboxes without old padding");
+    SetWindowPos(output.value, nullptr, 0, 0, 300, 300, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    await([&] { return pixel_matches(pixel(650, 180), video_color) && pixel_matches(pixel(650, 40), RGB(0,0,0)); }, "output resizing preserves aspect and black bars");
+    ShowWindow(input, SW_MINIMIZE);
+    await([&] { return !capture.running(); }, "minimized source stops capture", 2000);
+    expect(capture.snapshot().status == chatview::WindowCaptureStatus::SourceLost, "minimize is source loss, no desktop fallback");
+    await([&] { return pixel_matches(pixel(650, 180), RGB(0,0,0)); }, "source loss clears output");
+    ShowWindow(input, SW_RESTORE);
+    expect(capture.start(input, output.value), "explicit restart after source restoration");
+    await([&] { return capture.snapshot().frames >= 2 && pixel_matches(pixel(650, 180), video_color); }, "restart displays fresh frames");
+    const auto before = GetTickCount64(); capture.stop();
+    expect(GetTickCount64() - before < 200, "UI stop never waits on capture/GPU");
+    await([&] { return !capture.running(); }, "capture worker cancellation", 2000);
+    await([&] { return pixel_matches(pixel(650, 180), RGB(0,0,0)); }, "cancel clears stale pixels");
+    expect(IsWindowVisible(hud.value), "capture stop does not hide HUD");
+    expect(capture.start(input, output.value), "start before source close");
+    await([&] { return capture.snapshot().frames >= 1; }, "frame before close");
+    PostMessageW(input, WM_CLOSE, 0, 0);
+    await([&] { return !capture.running() && pixel_matches(pixel(650, 180), RGB(0,0,0)); }, "closed source clears output", 2000);
+    capture.close();
+    std::cout << "WGC window -> GPU output: overlay isolation, resize, minimize, stop, restart and close passed\n";
+}
+}
+int main(int argc, char **argv)
+{
+    try {
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        if (argc == 2 && std::string_view(argv[1]) == "--source") return source();
+        expect(argc == 1, "unexpected test arguments"); exercise(); return 0;
+    } catch (const std::exception &error) { std::cerr << "Window capture test: " << error.what() << '\n'; return 1; }
+}

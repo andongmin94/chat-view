@@ -53,3 +53,4 @@ if(BUILD_TESTING)
 endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/native-chat-delivery.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/window-capture.cmake")

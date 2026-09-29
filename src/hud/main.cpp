@@ -5,10 +5,12 @@
 #include "hud/launch-options.hpp"
 #include "hud/native-chat-connection.hpp"
 #include "hud/shared-state-reader.hpp"
+#include "hud/video-output-panel.hpp"
 
 #include <Windows.h>
 #include <shellapi.h>
 
+#include <algorithm>
 #include <exception>
 #include <memory>
 #include <optional>
@@ -89,7 +91,7 @@ std::optional<chatview::HudLaunchOptions> parse_options()
 }
 
 bool dispatch_pending_messages(int &exit_code, chatview::NativeChatConnection &chat,
-                               bool companion)
+                               chatview::VideoOutputPanel &video, bool companion)
 {
     MSG message{};
     while (PeekMessageW(&message, nullptr, 0U, 0U, PM_REMOVE)) {
@@ -102,7 +104,7 @@ bool dispatch_pending_messages(int &exit_code, chatview::NativeChatConnection &c
             exit_code = 0;
             return false;
         }
-        if (chat.dispatch(message)) continue;
+        if (video.dispatch(message) || chat.dispatch(message)) continue;
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
@@ -128,6 +130,7 @@ int run(HINSTANCE instance, const chatview::HudLaunchOptions &options)
             L"화면 복제·HDMI에는 개인 채팅이 그대로 나갈 수 있습니다.\n"
             L"영상 경로를 검증하기 전에는 실제 방송에 사용하지 마세요.\n\n"
             L"연결: Ctrl+Alt+Shift+C / 이동: Ctrl+Alt+Shift+H\n"
+            L"게임 창 별도 출력(실험): Ctrl+Alt+Shift+V\n"
             L"챗뷰 종료: Ctrl+Alt+Shift+Q\n\n개발 검증을 계속할까요?",
             L"ChatView · 독립 HUD (개발 검증)",
             MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
@@ -165,6 +168,7 @@ int run(HINSTANCE instance, const chatview::HudLaunchOptions &options)
     }
 
     chatview::NativeChatConnection chat(hud_window, chatview::display_role_for(options.mode));
+    chatview::VideoOutputPanel video(hud_window, companion);
     if (!companion) hud_window.show_ready();
 
     chatview::SharedSnapshot initial_snapshot;
@@ -182,16 +186,17 @@ int run(HINSTANCE instance, const chatview::HudLaunchOptions &options)
     int exit_code = 0;
     bool running = true;
     while (running) {
-        if (!dispatch_pending_messages(exit_code, chat, companion)) {
+        if (!dispatch_pending_messages(exit_code, chat, video, companion)) {
             break;
         }
 
         if (!companion) chat.observe_outputs(state_reader.read_outputs());
         chat.tick();
+        video.tick();
         const DWORD wait_result = MsgWaitForMultipleObjectsEx(
             handle_count,
             wait_handles,
-            chat.wait_timeout(),
+            std::min(chat.wait_timeout(), video.wait_timeout()),
             QS_ALLINPUT,
             MWMO_ALERTABLE | MWMO_INPUTAVAILABLE);
         if (wait_result == WAIT_FAILED) {
@@ -231,6 +236,7 @@ int run(HINSTANCE instance, const chatview::HudLaunchOptions &options)
         running = false;
     }
 
+    video.close();
     chat.close();
     hud_window.destroy();
     return exit_code;

@@ -121,7 +121,20 @@ int wmain(int argc, wchar_t **argv)
         expect(GetDlgItem(panel, 101) && GetDlgItem(panel, 107) && GetDlgItem(panel, 104),
                "existing authenticated connection controls available");
         expect(GetDlgItem(panel, 102) == nullptr, "no manual credential field in connection panel");
-        await_window(child, L"ChatView HUD");
+        const HWND hud = await_window(child, L"ChatView HUD");
+        expect(PostThreadMessageW(child.thread_id, WM_HOTKEY, 0x4356U,
+            MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'V')) != FALSE, "open companion video controls");
+        const HWND video = await_window(child, L"ChatView · 게임 창 별도 출력 (실험)");
+        expect(GetDlgItem(video, 201) && GetDlgItem(video, 202) && GetDlgItem(video, 204) && GetDlgItem(video, 205),
+            "window and separate-output controls are integrated in companion");
+        expect(SendDlgItemMessageW(video, 201, CB_GETCURSEL, 0, 0) == CB_ERR &&
+            SendDlgItemMessageW(video, 202, CB_GETCURSEL, 0, 0) == CB_ERR, "capture targets are never preselected");
+        choose(video, 204);
+        WindowQuery unexpected{child.pid, L"ChatView · 창 영상 출력"};
+        EnumWindows(find_window, reinterpret_cast<LPARAM>(&unexpected));
+        expect(!unexpected.found, "missing selection does not open an output or capture desktop");
+        choose(video, 205);
+        expect(IsWindowVisible(hud) != FALSE, "video stop preserves visible local HUD");
         expect_no_obs_module(child.pid);
         {
             Child duplicate(argv[1]);
@@ -131,7 +144,7 @@ int wmain(int argc, wchar_t **argv)
             MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'Q')) != FALSE,
             "request normal companion shutdown");
         child.expect_exit(0U);
-        std::cout << "Companion entry, consent, connection UI, no OBS modules, duplicate and exit passed\n";
+        std::cout << "Companion entry, consent, chat/video selection UI, no OBS modules, duplicate and exit passed\n";
     } catch (const std::exception &error) {
         std::cerr << "Companion test failed: " << error.what() << '\n';
         return 1;

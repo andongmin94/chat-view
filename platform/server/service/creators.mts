@@ -2,6 +2,7 @@
 import { DisplayAccess, DisplayAccessError } from '../chat/display-access.mts';
 import { SessionStore, hashSecret, validSecret } from '../chat/session-store.mts';
 import type { Membership } from '../chat/session-store.mts';
+import { CampaignActivity } from '../ads/activity.mts';
 import { UNKNOWN_OUTPUT } from '../chat/broadcast-output.mts';
 import type { OutputView } from '../chat/broadcast-output.mts';
 import { ChzzkError } from '../chzzk/api.mts';
@@ -31,6 +32,7 @@ type Options = {
 // protected provider grant after restart; no new hardware/pairing credential.
 export class Creators {
   readonly sessions: SessionStore;
+  readonly activity: CampaignActivity;
   #options: Options;
   #now: () => number;
   #creators = new Map<string, Creator>();
@@ -41,6 +43,7 @@ export class Creators {
   #revokedAt = new Map<string, number>();
   constructor(options: Options) {
     this.#options = options; this.sessions = options.sessions; this.#now = options.now ?? Date.now;
+    this.activity = new CampaignActivity(this.sessions.database, this.#now);
   }
   #context(channel: Channel): Creator {
     const existing = this.#creators.get(channel.channelId);
@@ -79,6 +82,7 @@ export class Creators {
   #retire(c: Creator) {
     c.epoch++; c.tokens = undefined; c.expires = 0; c.refreshing = undefined; c.validating = undefined;
     clearTimeout(c.timer); clearTimeout(c.retry); c.retry = undefined;
+    this.activity.clear(c.channel.channelId);
     c.access.clear(); this.#stopChat(c); c.gateway.changed();
   }
   #suspend(c: Creator, revoke: boolean) {
@@ -233,7 +237,10 @@ export class Creators {
     if (!entry || !entry.creator.access.active(entry.id)) throw new DisplayAccessError(401);
     // Rechecked after the bounded body read; a late request cannot revive a
     // revoked/rotated lease. The gateway separately verifies output scope.
-    return entry.creator.gateway.report(token, report);
+    const membership = entry.creator.access.membership(entry.id);
+    if (!membership) throw new DisplayAccessError(401);
+    return entry.creator.gateway.report(token, report, receipt =>
+      this.activity.record(entry.creator.channel.channelId, membership, receipt));
   }
   // Public rendering must not load protected grants or start a subscription.
   outputFor(owner: string, membership: Membership): OutputView {
@@ -267,7 +274,7 @@ export class Creators {
   }
   async close(): Promise<void> {
     if (this.#closed) return;
-    this.#closed = true; this.#lifetime.abort();
+    this.#closed = true; this.#lifetime.abort(); this.activity.close();
     for (const c of this.#creators.values()) {
       // Closing the process is not a signout or provider revocation.
       this.#retire(c); c.gateway.close(); c.access.close();

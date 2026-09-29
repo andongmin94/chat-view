@@ -3,8 +3,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import { DisplayAccess, DisplayAccessError } from './display-access.mts';
-import { BroadcastOutput, UNKNOWN_OUTPUT } from './broadcast-output.mts';
-import type { OutputView } from './broadcast-output.mts';
+import { BroadcastOutput, UNKNOWN_OUTPUT, OUTPUT_LIFETIME_MS, parseOutputReport } from './broadcast-output.mts';
+import type { OutputView, OutputAcceptance } from './broadcast-output.mts';
 import type { Membership } from './session-store.mts';
 import { nativeChatSnapshot } from '../../web/native-chat.js';
 
@@ -51,12 +51,18 @@ export class DisplayGateway {
     output = new BroadcastOutput()) {
     this.#access = access; this.#origin = origin; this.#snapshot = snapshot; this.#output = output;
   }
-  report(token: unknown, value: unknown) {
+  report(token: unknown, value: unknown, record?: (receipt: OutputAcceptance) => void) {
     if (this.#closed) throw new DisplayAccessError(503);
     const grant = this.#access.authenticateOutput(token);
     if (this.#clients.get(grant.id)?.readyState !== WebSocket.OPEN) throw new DisplayAccessError(409);
-    const sequence = this.#output.record(grant.id, value);
-    this.changed(); return { accepted: true, sequence };
+    const report = parseOutputReport(value), sequence = this.#output.record(grant.id, report);
+    // Persistence observes only authenticated, ordered, live-lease reports.
+    // Failure rejects this HTTP request but never stops private chat delivery.
+    try {
+      record?.({ leaseId: grant.id, generation: this.#output.generation, report,
+        validForMs: Math.min(OUTPUT_LIFETIME_MS - report.sampleAgeMs, this.#access.remaining(grant.id)) });
+    } finally { this.changed(); }
+    return { accepted: true, sequence };
   }
   // Read-only availability for this exact approved sender. Reuses the same
   // observation/expiry as private connection status, never inventing ad evidence.

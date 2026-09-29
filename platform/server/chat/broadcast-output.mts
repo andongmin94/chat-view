@@ -11,6 +11,9 @@ export type OutputView = typeof UNKNOWN_OUTPUT | Readonly<{
 export type OutputReport = Readonly<{
   sequence: number; streaming: boolean; recording: boolean; sampleAgeMs: number;
 }>;
+// Internal acceptance metadata. Never serialized into an HTTP or display reply.
+export type OutputAcceptance = Readonly<{ leaseId: string; generation: number;
+  validForMs: number; report: OutputReport }>;
 export function parseOutputReport(value: unknown): OutputReport {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new DisplayAccessError(400);
   const v = value as Record<string, unknown>;
@@ -56,6 +59,8 @@ export async function readOutputReport(request: IncomingMessage): Promise<Output
 // Receiver timestamps express a recent client report, not verified broadcast.
 export class BroadcastOutput {
   #now: () => number;
+  #generation = 0;
+  get generation(): number { return this.#generation; }
   #last?: { leaseId: string; sequence: number; at: number; expires: number;
     streaming: boolean; recording: boolean };
   constructor(now: () => number = () => performance.now()) { this.#now = now; }
@@ -80,6 +85,8 @@ export class BroadcastOutput {
   clear(leaseId: string): void {
     // Retire visibility, not ordering: reconnecting the same still-valid lease
     // must not accept an old report sequence or resurrect its old observation.
-    if (this.#last?.leaseId === leaseId) this.#last.expires = 0;
+    if (this.#last?.leaseId === leaseId && this.#last.expires !== 0) {
+      this.#last.expires = 0; this.#generation++;
+    }
   }
 }

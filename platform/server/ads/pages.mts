@@ -48,7 +48,7 @@ export function servePublicAd(request: IncomingMessage, response: ServerResponse
 export function campaignsPage(status: CampaignStatus, csrf: string, origin: string, authorized: boolean): string {
   const form = (path: string, label: string) => `<form method="post" action="${path}"><input type="hidden" name="csrf" value="${csrf}"><button>${label}</button></form>`;
   const source = status.sourceId ? `${origin}/public/ads/${status.sourceId}` : undefined;
-  return `<p><a href="/account">내 연결 관리</a></p>
+  return `<p><a href="/account">내 연결 관리</a> · <a href="/campaigns/activity">비지급 활동 기록</a></p>
 <p><strong>시험 광고 · 지급 없음</strong> — 이 단계에서는 시청 실적, HP, 수익을 계산하지 않습니다.</p>
 <section><h2>${escape(TEST_CAMPAIGN.brand)} · ${escape(TEST_CAMPAIGN.title)}</h2>
 <p>${escape(TEST_CAMPAIGN.description)}</p><p>권장 브라우저 소스 크기: <strong>960 × 180</strong></p>
@@ -56,7 +56,7 @@ ${authorized ? form(`/campaigns/${TEST_CAMPAIGN.id}/select`, status.selected ? '
   : '<p>캠페인을 선택하려면 앱에서 치지직을 다시 승인하세요.</p>'}</section>
 <p>현재 선택: <strong>${status.selected ? '시험 캠페인 선택됨' : '없음'}</strong></p>
 ${form('/campaigns/stop', '공개 배너 중지')}
-<p>선택하려면 이 계정의 송출 역할 승인이 필요합니다. 선택은 해당 승인에 묶이고, 그 연결의 로그아웃·철회 시 해제됩니다.</p>
+<p>선택하려면 이 계정의 송출 역할 승인이 필요합니다. 선택은 해당 승인에 묶이고, 그 연결의 로그아웃·철회 시 해제됩니다. 선택 중 받은 출력 보고의 비지급 활동 구간은 계정별로 최대 7일·1,000건 보관하며, 광고 시청시간으로 계산하지 않습니다.</p>
 ${source ? `<h2>OBS 공개 배너 연결</h2><p>이 주소는 공개 배너만 읽습니다. 로그인·채팅 표시키가 아니며, 계정 관리나 개인 채팅에는 접근할 수 없습니다.</p>
 <label for="source-url">OBS 브라우저 소스 URL</label><textarea id="source-url" readonly rows="3" style="width:100%">${escape(source)}</textarea>
 <p><a href="${escape(source)}" target="_blank" rel="noopener noreferrer">공개 배너 미리보기</a></p>

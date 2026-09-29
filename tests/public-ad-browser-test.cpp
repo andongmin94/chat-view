@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Actual browser document/HTTP rendering, NOT an OBS capture or exposure test.
 #include <Windows.h>
-#include <WebView2.h>
+#include <objbase.h>
 #include <wrl.h>
+#include <WebView2.h>
 #include <functional>
 #include <iostream>
 #include <memory>

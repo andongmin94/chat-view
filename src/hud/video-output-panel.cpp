@@ -131,12 +131,26 @@ void VideoOutputPanel::refresh()
         } catch (...) { *c.failed = true; return FALSE; }
     }, reinterpret_cast<LPARAM>(&context));
     if (failed) throw std::runtime_error("Video selection unavailable");
-    for (const auto &source : sources_) SendDlgItemMessageW(panel_, kSource, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(source.title.c_str()));
-    for (const auto &monitor : monitors_) {
-        const auto &r = monitor.info.rcMonitor;
-        const std::wstring label = std::wstring(monitor.info.szDevice) + L" · " +
-            std::to_wstring(r.right - r.left) + L"×" + std::to_wstring(r.bottom - r.top);
-        SendDlgItemMessageW(panel_, kMonitor, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+    // A failed control insertion must never shift displayed labels away from
+    // the validated window/monitor entries subsequently selected by index.
+    const auto append = [&](int control, const wchar_t *label, size_t index) {
+        if (SendDlgItemMessageW(panel_, control, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label)) != static_cast<LRESULT>(index))
+            throw std::runtime_error("Video selection insertion failed");
+    };
+    try {
+        for (size_t i = 0; i < sources_.size(); ++i) append(kSource, sources_[i].title.c_str(), i);
+        for (size_t i = 0; i < monitors_.size(); ++i) {
+            const auto &monitor = monitors_[i];
+            const auto &r = monitor.info.rcMonitor;
+            const std::wstring label = std::wstring(monitor.info.szDevice) + L" · " +
+                std::to_wstring(r.right - r.left) + L"×" + std::to_wstring(r.bottom - r.top);
+            append(kMonitor, label.c_str(), i);
+        }
+    } catch (...) {
+        sources_.clear(); monitors_.clear();
+        SendDlgItemMessageW(panel_, kSource, CB_RESETCONTENT, 0, 0);
+        SendDlgItemMessageW(panel_, kMonitor, CB_RESETCONTENT, 0, 0);
+        throw;
     }
     // No preselected target; starting always requires the user's two choices.
     notice(monitors_.empty() ? L"별도 확장 화면이 없습니다. 복제 화면을 출력 대상으로 사용하지 않습니다." : L"게임 창과 별도 출력 화면을 선택하세요. 자동 선택/재시작하지 않습니다.");
@@ -175,8 +189,11 @@ void VideoOutputPanel::start()
     output_ = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kOutputClass, L"ChatView · 창 영상 출력",
         WS_POPUP | WS_CLIPCHILDREN, r.left, r.top, r.right - r.left, r.bottom - r.top, nullptr, nullptr, GetModuleHandleW(nullptr), this);
     if (!output_) throw std::runtime_error("Video output unavailable");
-    cover_ = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_BLACKRECT,
-        0, 0, r.right - r.left, r.bottom - r.top, output_, nullptr, GetModuleHandleW(nullptr), nullptr);
+    // A distinct owned top-level window stays above the flip-model surface;
+    // never rely on GDI painting into the GPU presentation HWND to mask it.
+    cover_ = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"STATIC", L"",
+        WS_POPUP | WS_VISIBLE | SS_BLACKRECT, r.left, r.top, r.right - r.left, r.bottom - r.top,
+        output_, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!cover_) { DestroyWindow(output_); output_ = nullptr; throw std::runtime_error("Video cover unavailable"); }
     ShowWindow(output_, SW_SHOWNOACTIVATE);
     requested_ = capture_.start(source_, output_);

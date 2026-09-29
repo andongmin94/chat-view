@@ -8,6 +8,8 @@
 
 # ChatView (챗뷰)
 
+[공식 사이트](https://andongmin.com/chat-view/) · [사용 가이드](https://andongmin.com/chat-view/guide/) · [릴리즈 노트](https://andongmin.com/chat-view/guide/release/history/)
+
 Electron + React + Vite 로 제작한 데스크톱용 "채팅 오버레이 제어/뷰어" 애플리케이션입니다. 
 스트리밍/방송 화면에 특정 서비스의 실시간 채팅을 투명한 오버레이 창 형태로 띄워 고정하거나 상호작용을 제어할 수 있습니다.
 
@@ -51,7 +53,7 @@ Electron + React + Vite 로 제작한 데스크톱용 "채팅 오버레이 제�
 ## 프로젝트 구조 (요약)
 ```
 chat-view/
- ├─ docs/               # VitePress 기반 문서 (사이트 hero 등)
+ ├─ docs/               # 기존 VitePress 문서 소스 (공개 문서는 공식 사이트에서 관리)
  └─ packages/           # 실제 앱 (Electron + React)
      ├─ public/         # 아이콘, 폰트, 정적 자원
      ├─ src/

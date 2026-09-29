@@ -11,8 +11,8 @@ import path from "node:path";
 
 const ogTitle = "챗뷰";
 const ogDescription = "모니터 하나로 위플랩 / 치지직 / 숲 채팅 모니터링";
-const ogUrl = "https://chat-view.andongmin.com";
-const ogImage = "https://chat-view.andongmin.com/logo.png";
+const ogUrl = "https://andongmin.com/chat-view/";
+const ogImage = "https://andongmin.com/chat-view/logo.png";
 
 async function generateReleaseNotes(releases: ReleaseNoteData[]) {
   const releaseDir = path.resolve(__dirname, "../guide/release");
@@ -87,19 +87,17 @@ const config = async (): Promise<UserConfig> => {
     // 릴리즈 문서 자동 생성
     await generateReleaseNotes(allReleases);
   } else {
-    // 개발용 더미 릴리즈 목록
-    allReleases = [{ version: "v0.0.0", body: "" }];
-
-    console.log("🧪 개발 모드: API 호출 대신 더미 데이터 사용");
+    console.log("🧪 개발 모드: 릴리즈 API 호출 생략");
   }
 
   // 사이드바 설정 부분을 동적으로 생성
   const releaseItems = allReleases.map((release) => ({
     text: release.version,
-    link: `/guide/release/${release.version}`,
+    link: `${ogUrl}guide/release/${release.version}/`,
   }));
 
   return {
+    base: "/chat-view/",
     title: "챗뷰",
     description: "GUI Library for Desktop App Development",
     vite: {
@@ -110,7 +108,7 @@ const config = async (): Promise<UserConfig> => {
     },
 
     head: [
-      ["link", { rel: "icon", type: "image/png", href: "/logo.png" }],
+      ["link", { rel: "icon", type: "image/svg+xml", href: "/chat-view/logo.svg" }],
       ["link", { rel: "organization", href: "https://github.com/andongmin94" }],
       ["meta", { property: "og:type", content: "website" }],
       ["meta", { property: "og:title", content: ogTitle }],
@@ -187,7 +185,10 @@ const config = async (): Promise<UserConfig> => {
           },
           {
             text: "릴리즈 노트",
-            items: releaseItems, // 동적으로 생성된 릴리즈 항목
+            items: [
+              { text: "전체 릴리즈 노트", link: `${ogUrl}guide/release/history/` },
+              ...releaseItems,
+            ],
           },
         ],
       },
@@ -198,9 +199,14 @@ const config = async (): Promise<UserConfig> => {
       },
     },
     transformPageData(pageData) {
-      const canonicalUrl = `${ogUrl}/${pageData.relativePath}`
-        .replace(/\/index\.md$/, "/")
+      // 공개 사이트에 대응 페이지가 없는 기존 문서는 canonical을 지정하지 않는다.
+      if (["maintainer.md", "guide/soop.md"].includes(pageData.relativePath)) {
+        return pageData;
+      }
+      const canonicalPath = pageData.relativePath
+        .replace(/(^|\/)index\.md$/, "$1")
         .replace(/\.md$/, "/");
+      const canonicalUrl = new URL(canonicalPath, ogUrl).href;
       pageData.frontmatter.head ??= [];
       pageData.frontmatter.head.unshift([
         "link",

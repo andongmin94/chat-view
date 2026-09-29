@@ -5,7 +5,7 @@ title: 챗뷰
 titleTemplate: 채팅 모니터링 프로그램
 
 hero:
-  name: 챗뷰 v0.0.0
+  name: 챗뷰 v0.2.4
   text: 채팅 모니터링 프로그램
   tagline: 모니터 하나로 위플랩 / 치지직 / 숲 채팅 모니터링
   image:
@@ -14,7 +14,7 @@ hero:
   actions:
     - theme: brand
       text: 챗뷰 가이드
-      link: /guide/
+      link: https://andongmin.com/chat-view/guide/
     - theme: alt
       text: 사용 방법 (Youtube)
       link: https://youtu.be/15xH4RvpjAE
@@ -27,16 +27,8 @@ features:
       light: /windows-black.svg
       width: 100px
     title: Windows 다운로드
-    linkText: 무설치판 (0 MB)
-    link: https://github.com/andongmin94/chat-view/releases/download/v0.0.0/ChatView.exe
-
-  - icon:
-      dark: /windows-white.svg
-      light: /windows-black.svg
-      width: 100px
-    title: Windows 다운로드
-    linkText: .msi 설치형 (0 MB)
-    link: https://github.com/andongmin94/chat-view/releases/download/v0.0.0/ChatView-0.0.0-x64.msi
+    linkText: 무설치판 (11 MB)
+    link: https://github.com/andongmin94/chat-view/releases/download/v0.2.4/ChatView.exe
 
 # WINDOWS_DOWNLOADS_END
 

@@ -7,6 +7,8 @@ import { DisplayAccessError } from '../chat/display-access.mts';
 import { requestedRole } from '../chat/connection-role.mts';
 import { hashSecret, validSecret } from '../chat/session-store.mts';
 import { Creators } from './creators.mts';
+import type { BrowserIdentity } from './creators.mts';
+import type { Channel } from '../chzzk/api.mts';
 import { readOutputReport } from '../chat/broadcast-output.mts';
 import { Campaigns, CampaignError } from '../ads/campaigns.mts';
 import { activityPage } from '../ads/activity-page.mts';
@@ -17,8 +19,15 @@ const escape = (value: string) => value.replace(/[&<>"']/gu,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const COOKIE = '__Host-chatview';
 const BROWSER_MS = 60 * 60 * 1000;
-type Browser = { key: string; csrf: string; expires: number; controller: AbortController; owner?: string;
-  attempt?: { digest: string; loginId: string; expires: number } };
+const AUTHORIZATION_MS = 300_000;
+const MANAGEMENT_PAGES = ['/account', '/campaigns', '/campaigns/activity'] as const;
+type ManagementPage = typeof MANAGEMENT_PAGES[number];
+type Destination = { loginId: string } | { page: ManagementPage };
+type Attempt = { digest: string; destination: Destination; expires: number; used: boolean; controller: AbortController };
+type Browser = { key: string; csrf: string; expires: number; controller: AbortController; owner?: string; channel?: Channel;
+  attempt?: Attempt; pending?: { identity: BrowserIdentity; page: ManagementPage; expires: number } };
+const managementPage = (path: string): path is ManagementPage =>
+  MANAGEMENT_PAGES.some(page => page === path);
 
 function auth(request: IncomingMessage, scheme: string): string {
   let count = 0;
@@ -99,7 +108,7 @@ export class PlatformApplication {
   #prune() {
     for (const b of this.#browsers.values()) if (b.expires <= Date.now()) this.#drop(b);
   }
-  #drop(b: Browser) { b.controller.abort(); this.#browsers.delete(b.key); }
+  #drop(b: Browser) { b.controller.abort(); b.attempt?.controller.abort(); this.#browsers.delete(b.key); }
   #browser(request: IncomingMessage): Browser | undefined {
     this.#prune();
     const values = (request.headers.cookie ?? '').split(';').map(v => v.trim()).filter(v => v.startsWith(`${COOKIE}=`));
@@ -107,11 +116,11 @@ export class PlatformApplication {
     const token = values[0]!.slice(COOKIE.length + 1);
     return validSecret(token) ? this.#browsers.get(hashSecret(token)) : undefined;
   }
-  #createBrowser(response: ServerResponse, owner?: string): Browser {
+  #createBrowser(response: ServerResponse, channel?: Channel): Browser {
     this.#prune();
     if (this.#browsers.size >= 256) throw new DisplayAccessError(429);
     const token = nonce(), b: Browser = { key: hashSecret(token), csrf: nonce(),
-      expires: Date.now() + BROWSER_MS, controller: new AbortController(), owner };
+      expires: Date.now() + BROWSER_MS, controller: new AbortController(), owner: channel?.channelId, channel };
     this.#browsers.set(b.key, b);
     response.setHeader('Set-Cookie', `${COOKIE}=${token}; Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=3600`);
     return b;
@@ -121,6 +130,76 @@ export class PlatformApplication {
   }
   #form(b: Browser, path: string, label: string) {
     return `<form method="post" action="${path}"><input type="hidden" name="csrf" value="${b.csrf}"><button>${label}</button></form>`;
+  }
+  #beginAuthorization(b: Browser, destination: Destination): string {
+    b.attempt?.controller.abort();
+    b.pending = undefined;
+    const state = nonce();
+    b.attempt = { digest: hashSecret(state), destination, expires: Date.now() + AUTHORIZATION_MS,
+      used: false, controller: new AbortController() };
+    return state;
+  }
+  #currentAttempt(b: Browser, attempt: Attempt) {
+    this.#live(b);
+    if (b.attempt !== attempt || attempt.expires <= Date.now() || attempt.controller.signal.aborted)
+      throw new DisplayAccessError(401);
+  }
+  #signInPage(response: ServerResponse, b: Browser, page: ManagementPage, status: number) {
+    this.#page(response, '브라우저 관리 로그인', `<p>브라우저 로그인이 없거나 만료됐습니다. 앱의 채팅 연결과 PC 승인은 그대로입니다.</p>
+<p>치지직에서 관리할 계정으로 로그인한 뒤 계속하세요. 다음 화면에서 채널을 확인해야 관리 화면에 들어갑니다.</p>
+${this.#form(b, `${page}/login`, '치지직으로 브라우저 로그인')}
+<p>이 로그인은 PC 연결·역할을 새로 승인하지 않습니다. 앱 채팅 계정과 같다고 자동으로 판단하지 않습니다.</p>
+<p>브라우저 창은 개인 HUD의 캡처 보호 대상이 아닙니다.</p>`, status);
+  }
+  #accountNotice(b: Browser) {
+    const channel = b.channel ?? this.#creators.describe(b.owner!).channel;
+    return `<section aria-label="브라우저 관리 계정"><p>현재 브라우저 관리 채널: <strong>${escape(channel.channelName)}</strong></p>
+<p>앱의 채팅 계정과 다를 수 있습니다. 캠페인·연결을 변경하기 전에 채널을 확인하세요.</p>
+${this.#form(b, '/account/switch', '브라우저 관리 계정 바꾸기')}
+<p>계정 전환은 이 브라우저만 로그아웃합니다. 치지직에서 원하는 계정으로 전환한 뒤 다시 로그인하세요.</p></section>`;
+  }
+  async #callback(request: IncomingMessage, response: ServerResponse, url: URL) {
+    const b = this.#browser(request), state = url.searchParams.get('state');
+    const attempt = b?.attempt;
+    if (!b || !attempt || attempt.used || attempt.expires <= Date.now() || !validSecret(state) ||
+        url.searchParams.getAll('state').length !== 1 ||
+        !timingSafeEqual(Buffer.from(hashSecret(state)), Buffer.from(attempt.digest))) throw new DisplayAccessError(400);
+    const code = url.searchParams.get('code'), refused = url.searchParams.has('error');
+    if (refused ? url.searchParams.getAll('error').length !== 1 || url.searchParams.has('code')
+      : !code || code.length > 8192 || url.searchParams.getAll('code').length !== 1) throw new DisplayAccessError(400);
+    attempt.used = true; // Replay is forbidden even during provider I/O or after failure.
+    const destination = attempt.destination;
+    try {
+      if (refused) throw new DisplayAccessError(400);
+      this.#currentAttempt(b, attempt);
+      const signal = AbortSignal.any([b.controller.signal, attempt.controller.signal,
+        AbortSignal.timeout(Math.max(1, Math.min(b.expires, attempt.expires) - Date.now()))]);
+      if ('loginId' in destination) {
+        this.login.view(destination.loginId);
+        const channel = await this.#creators.authorize(code!, state, signal);
+        this.#currentAttempt(b, attempt); this.login.view(destination.loginId);
+        this.#drop(b); this.#createBrowser(response, channel);
+        this.#redirect(response, `/login/${destination.loginId}`); return;
+      }
+      // Fresh provider identity, NOT a native-token exchange or new subscription.
+      const identity = await this.#creators.identifyBrowser(code!, state, signal);
+      this.#currentAttempt(b, attempt);
+      this.#drop(b);
+      const confirmation = this.#createBrowser(response);
+      confirmation.pending = { identity, page: destination.page, expires: attempt.expires };
+      this.#redirect(response, '/account/confirm');
+    } catch (error) {
+      // A late/superseded callback cannot overwrite the newer browser cookie.
+      if ('page' in destination) {
+        this.#currentAttempt(b, attempt);
+        b.attempt = undefined; attempt.controller.abort();
+        this.#page(response, '브라우저 로그인 미완료', `<p>취소되었거나 로그인을 확인하지 못했습니다. 앱 연결은 변경하지 않았습니다.</p>
+<p><a href="${destination.page}">관리 로그인으로 돌아가기</a></p>`,
+          error instanceof DisplayAccessError ? error.status : 503);
+        return;
+      }
+      throw error;
+    }
   }
   async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     this.#headers(response);
@@ -133,18 +212,7 @@ export class PlatformApplication {
         servePublicAd(request, response, url.pathname, this.#campaigns); return;
       }
       if (url.pathname === '/callback' && request.method === 'GET') {
-        const b = this.#browser(request), state = url.searchParams.get('state'), code = url.searchParams.get('code');
-        if (!b?.attempt || b.attempt.expires <= Date.now() || !validSecret(state) || !code || code.length > 8192 ||
-            url.searchParams.getAll('state').length !== 1 || url.searchParams.getAll('code').length !== 1 ||
-            !timingSafeEqual(Buffer.from(hashSecret(state)), Buffer.from(b.attempt.digest))) throw new DisplayAccessError(400);
-        const id = b.attempt.loginId;
-        b.attempt = undefined;
-        this.login.view(id);
-        const channel = await this.#creators.authorize(code, state,
-          AbortSignal.any([b.controller.signal, AbortSignal.timeout(Math.max(1, b.expires - Date.now()))]));
-        this.#live(b); this.login.view(id);
-        this.#drop(b); this.#createBrowser(response, channel.channelId);
-        this.#redirect(response, `/login/${id}`); return;
+        await this.#callback(request, response, url); return;
       }
       if (request.headers['sec-fetch-site'] === 'cross-site' || url.search) throw new DisplayAccessError(403);
       if (url.pathname.startsWith('/display/')) {
@@ -207,20 +275,38 @@ ${this.#form(b, `/login/${id}/approve`, '이 채널과 요청 역할로 연결')
 : this.#form(b, `/login/${id}/connect`, '치지직으로 로그인')}
 ${this.#form(b, `/login/${id}/deny`, '취소')}`); return;
       }
+      if (request.method === 'GET' && url.pathname === '/account/confirm') {
+        if (!b?.pending || b.pending.expires <= Date.now()) {
+          this.#page(response, '브라우저 로그인 확인 만료', '<p>확인 요청이 없거나 만료됐습니다.</p><p><a href="/account">다시 로그인</a></p>', 401); return;
+        }
+        this.#page(response, '관리할 채널 확인', `<p>치지직에서 확인한 채널: <strong>${escape(b.pending.identity.channel.channelName)}</strong></p>
+<p>이 채널의 계정·시험 광고·활동 기록을 관리할까요? 앱의 채팅 계정은 바뀌지 않습니다.</p>
+${this.#form(b, '/account/confirm', '이 채널로 관리 계속')}
+${this.#form(b, '/account/switch', '다른 채널로 다시 로그인')}
+${this.#form(b, '/account/cancel', '취소')}
+<p>이 화면을 확인하기 전에는 관리 권한이 생기지 않습니다. 브라우저 창은 HUD 캡처 보호 대상이 아닙니다.</p>`); return;
+      }
+      const management = url.pathname === '/' ? '/account' : url.pathname;
+      if (request.method === 'GET' && managementPage(management) && !b?.owner) {
+        b ??= this.#createBrowser(response);
+        if (b.pending && b.pending.expires > Date.now()) { this.#redirect(response, '/account/confirm'); return; }
+        b.pending = undefined;
+        this.#signInPage(response, b, management, management === '/account' ? 200 : 401); return;
+      }
       if (request.method === 'GET' && url.pathname === '/campaigns/activity') {
         if (!b?.owner) throw new DisplayAccessError(401);
-        this.#page(response, '시험 캠페인 활동 기록', activityPage(this.#creators.activity.summary(b.owner))); return;
+        this.#page(response, '시험 캠페인 활동 기록', this.#accountNotice(b) + activityPage(this.#creators.activity.summary(b.owner))); return;
       }
       if (request.method === 'GET' && url.pathname === '/campaigns') {
         if (!b?.owner) throw new DisplayAccessError(401);
-        this.#page(response, '시험 캠페인 · 공개 배너', campaignsPage(
+        this.#page(response, '시험 캠페인 · 공개 배너', this.#accountNotice(b) + campaignsPage(
           this.#campaigns.status(b.owner), b.csrf, this.#origin, this.#creators.describe(b.owner).authorized)); return;
       }
       if (request.method === 'GET' && url.pathname === '/healthz') { response.writeHead(204); response.end(); return; }
       if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/account')) {
-        if (!b?.owner) { this.#page(response, 'ChatView', '<p>챗뷰 앱에서 로그인 버튼을 눌러 채팅을 연결하세요.</p>'); return; }
+        if (!b?.owner) throw new DisplayAccessError(401);
         const account = this.#creators.describe(b.owner);
-        this.#page(response, '내 채팅과 연결', `<p>채널: <strong>${escape(account.channel.channelName)}</strong></p>
+        this.#page(response, '내 채팅과 연결', `${this.#accountNotice(b)}<p>채널: <strong>${escape(account.channel.channelName)}</strong></p>
 <p>채팅 상태: ${escape(account.chatState)} · ${account.authorized ? '치지직 승인 유효' : '앱에서 치지직 재로그인 필요'}</p>
 ${account.connections.map(connection => `<section><p>${connection.role === 'gaming' ? '게임 PC · 개인 HUD' : '송출 PC · OBS 역할'}<br>
 연결: ${connection.connectionId}</p>${this.#form(b!, `/connections/${connection.connectionId}/revoke`, '이 연결 해제')}</section>`).join('')}
@@ -231,14 +317,34 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
 <p>저장된 승인이 유효하면 서비스 재시작 뒤에도 PC 연결을 복원합니다. 권한 철회나 갱신 중단으로 재승인이 필요할 때는 앱에서 다시 로그인하세요.</p>`); return;
       }
       if (request.method !== 'POST') throw new DisplayAccessError(404);
-      if (!b || request.headers.origin !== this.#origin) throw new DisplayAccessError(403);
+      if (request.headers.origin !== this.#origin) throw new DisplayAccessError(403);
+      if (!b) throw new DisplayAccessError(
+        /^\/(?:account(?:\/|$)|campaigns(?:\/|$)|connections\/)/u.test(url.pathname) ? 401 : 403);
       await csrfForm(request, b.csrf); this.#live(b);
+      const loginPage = url.pathname.endsWith('/login') ? url.pathname.slice(0, -6) : '';
+      if (managementPage(loginPage)) {
+        if (b.owner || b.pending) throw new DisplayAccessError(409);
+        const state = this.#beginAuthorization(b, { page: loginPage });
+        this.#redirect(response, this.#authorizeUrl(state)); return;
+      }
+      if (url.pathname === '/account/confirm') {
+        const pending = b.pending;
+        if (!pending || pending.expires <= Date.now()) throw new DisplayAccessError(401);
+        const channel = this.#creators.confirmBrowserIdentity(pending.identity);
+        this.#drop(b); this.#createBrowser(response, channel);
+        this.#redirect(response, pending.page); return;
+      }
+      if (url.pathname === '/account/switch' || url.pathname === '/account/cancel') {
+        const page = b.pending?.page ?? (b.attempt && 'page' in b.attempt.destination ? b.attempt.destination.page : '/account');
+        // Explicit browser-only reset. Old forms and in-flight callbacks die with it.
+        this.#drop(b); this.#createBrowser(response);
+        this.#redirect(response, page); return;
+      }
       const action = /^\/login\/([a-f0-9]{32})\/(connect|deny|approve)$/u.exec(url.pathname);
       if (action) {
         const id = action[1]!, intent = this.login.view(id);
         if (action[2] === 'connect') {
-          const state = nonce();
-          b.attempt = { digest: hashSecret(state), loginId: id, expires: Date.now() + 300_000 };
+          const state = this.#beginAuthorization(b, { loginId: id });
           this.#redirect(response, this.#authorizeUrl(state)); return;
         }
         if (action[2] === 'deny') this.login.deny(id);
@@ -277,7 +383,8 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
       }
       if (url.pathname === '/account/revoke') {
         const owner = b.owner;
-        for (const browser of this.#browsers.values()) if (browser.owner === owner) this.#drop(browser);
+        for (const browser of this.#browsers.values())
+          if (browser.owner === owner || browser.pending?.identity.channel.channelId === owner) this.#drop(browser);
         const upstream = await this.#creators.revoke(owner);
         this.#page(response, '연결 해제', `<p>챗뷰의 해당 계정 PC 연결을 모두 해제했습니다.</p><p>${upstream
           ? '치지직 권한 철회도 완료했습니다.' : '치지직 권한 철회는 확인하지 못했습니다. 치지직의 연결 관리에서 확인하세요.'}</p>`); return;
@@ -289,6 +396,11 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
       const status = error instanceof DisplayAccessError || error instanceof CampaignError ? error.status : 503;
       if (request.url?.startsWith('/public/ads/')) {
         response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(); return;
+      }
+      if (status === 401 && request.method === 'POST' &&
+          /^\/(?:account(?:\/|$)|campaigns(?:\/|$)|connections\/)/u.test(request.url ?? '')) {
+        this.#page(response, '관리 로그인 필요',
+          '<p>브라우저 확인이 만료됐습니다. 요청한 변경은 자동으로 다시 실행하지 않습니다.</p><p><a href="/account">관리 로그인으로 돌아가기</a></p>', 401); return;
       }
       response.writeHead(status, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify({ error: 'ChatView request unavailable' }));
@@ -311,4 +423,3 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
     for (const b of this.#browsers.values()) this.#drop(b);
   }
 }
-

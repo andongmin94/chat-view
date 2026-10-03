@@ -13,6 +13,9 @@ import type { DisplayGateway } from '../chat/display-gateway.mts';
 import { ProviderGrants } from './provider-grants.mts';
 import type { StoredProviderGrant } from './provider-grants.mts';
 
+// Server-only, short-lived login proof. Never accepted from an HTTP body or URL.
+export type BrowserIdentity = Readonly<{ channel: Channel; revision: number }>;
+
 type Chat = Pick<ChzzkChatSession, 'start' | 'stop' | 'snapshot'>;
 type Gateway = Pick<DisplayGateway, 'changed' | 'upgrade' | 'close' | 'report' | 'outputFor'>;
 type Provider = Pick<ChzzkApi, 'exchangeCode' | 'getUser' | 'refresh' | 'revoke'>;
@@ -111,6 +114,30 @@ export class Creators {
       this.#revokedAt.set(c.channel.channelId, ++this.#revision);
       this.#options.grants.revokeOwner(c.channel.channelId);
     } else if (revision) this.#options.grants.discard(c.channel.channelId, revision);
+  }
+  async identifyBrowser(code: string, state: string, signal: AbortSignal): Promise<BrowserIdentity> {
+    if (this.#closed) throw new DisplayAccessError(503);
+    const revision = this.#revision;
+    const lifetime = AbortSignal.any([signal, this.#lifetime.signal]);
+    const tokens = await this.#options.api.exchangeCode(code, state, lifetime);
+    const channel = await this.#options.api.getUser(tokens.accessToken, lifetime);
+    lifetime.throwIfAborted();
+    if (!channel.channelId || channel.channelId.length > 256 ||
+        (this.#revokedAt.get(channel.channelId) ?? 0) > revision) throw new DisplayAccessError(403);
+    // Do not install these tokens, rotate existing grants, stop chat or create
+    // a PC approval. Provider revoke is global for the app/user, not cleanup
+    // for a browser-only identity check. Let these transient tokens go unused.
+    return { channel, revision };
+  }
+  confirmBrowserIdentity(identity: BrowserIdentity): Channel {
+    if (this.#closed || (this.#revokedAt.get(identity.channel.channelId) ?? 0) > identity.revision)
+      throw new DisplayAccessError(401);
+    // A newly identified channel may have no ChatView provider grant/PCs yet.
+    // Supply an empty account view without installing a grant. Existing saved
+    // authority is restored by #get as before, never by this browser proof.
+    if (!this.#creators.has(identity.channel.channelId) && !this.#options.grants.load(identity.channel.channelId))
+      this.#context(identity.channel);
+    return identity.channel;
   }
   async authorize(code: string, state: string, signal?: AbortSignal): Promise<Channel> {
     if (this.#closed) throw new DisplayAccessError(503);
@@ -308,4 +335,3 @@ export class Creators {
     this.#leases.clear(); this.#creators.clear();
   }
 }
-

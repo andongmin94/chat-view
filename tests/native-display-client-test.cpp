@@ -14,7 +14,8 @@
 
 namespace chatview {
 struct NativeChatConnectionTestAccess {
-    static HWND dialog(NativeChatConnection &c) { c.open_dialog(); return c.dialog_; }
+    static HWND dialog(NativeChatConnection &c) { return c.dialog_; }
+    static HWND host(NativeChatConnection &c) { return c.host_; }
     static NativeChatSurface &surface(NativeChatConnection &c) { return c.surface_; }
     static bool active(NativeChatConnection &c) { return c.active_; }
     static const std::optional<DisplayConnectionState> &connection(NativeChatConnection &c) { return c.connection_state_; }
@@ -111,8 +112,38 @@ void gateway_ui(const std::wstring &origin)
     });
     hud.show_ready();
     await([&] { return WaitForSingleObject(ready.get(), 0) == WAIT_OBJECT_0; }, "HUD startup", &connection);
+    const HWND host = chatview::NativeChatConnectionTestAccess::host(connection);
+    const UINT open_message = RegisterWindowMessageW(chatview::kOpenNativeChatMessageName);
+    const UINT query_message = RegisterWindowMessageW(chatview::kQueryNativeChatMessageName);
+    expect(host && open_message && query_message, "native control endpoints attached to the real HUD");
+    const auto query = [&] {
+        DWORD_PTR result = 0;
+        expect(SendMessageTimeoutW(host, query_message, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK,
+            40, &result) != 0, "bounded read-only native query");
+        return chatview::decode_native_chat_status(static_cast<std::uint64_t>(result));
+    };
+    const auto open = [&](WPARAM argument = 0) {
+        DWORD_PTR result = 0;
+        expect(SendMessageTimeoutW(host, open_message, argument, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK,
+            1500, &result) != 0, "bounded native panel command");
+        return result;
+    };
+    expect(query() == chatview::NativeChatStatus::Idle, "read-only query does not create a login");
+    expect(open(1) == 0 && !chatview::NativeChatConnectionTestAccess::dialog(connection),
+        "native control rejects unexpected payload before opening a panel");
+    expect(open() == 1, "registered command opens the existing native panel");
     HWND dialog = chatview::NativeChatConnectionTestAccess::dialog(connection);
-    expect(dialog != nullptr, "open native connection panel");
+    expect(dialog && open() == 1 && dialog == chatview::NativeChatConnectionTestAccess::dialog(connection),
+        "repeat open reuses one panel without a duplicate connection");
+    expect(query() == chatview::NativeChatStatus::Idle && !chatview::NativeChatConnectionTestAccess::active(connection),
+        "open acknowledgement is not approval, transport or navigation");
+    // A local test changes only this panel's affinity; an open request must not
+    // silently repair/ignore lost protection or reveal that window.
+    ShowWindow(dialog, SW_HIDE);
+    expect(SetWindowDisplayAffinity(dialog, WDA_NONE) != FALSE, "inject lost panel protection");
+    expect(open() == 0 && !IsWindowVisible(dialog), "open refused when existing panel protection is lost");
+    expect(SetWindowDisplayAffinity(dialog, WDA_EXCLUDEFROMCAPTURE) != FALSE, "restore test panel protection");
+    expect(open() == 1 && IsWindowVisible(dialog), "open succeeds only after protection is restored");
     expect_video_scope(dialog);
     expect(control_text(dialog, 109).find(L"송출 PC") != std::wstring::npos, "panel identifies OBS runtime role before consent");
     expect(control_text(dialog, 110).find(L"확인되지 않음") != std::wstring::npos, "no session claim before authorization");
@@ -122,6 +153,8 @@ void gateway_ui(const std::wstring &origin)
     expect(GetDlgItem(dialog, 102) == nullptr && GetDlgItem(dialog, 107) != nullptr, "login panel has no manual key input");
     auto &surface = chatview::NativeChatConnectionTestAccess::surface(connection);
     await([&] { return surface.rendered_messages() == 1U; }, "WinHTTP gateway frame rendered", &connection);
+    await([&] { return query() == chatview::NativeChatStatus::Receiving; },
+        "query reports receiving only after native rendering acknowledgement", &connection);
     const auto &state = chatview::NativeChatConnectionTestAccess::connection(connection);
     expect(state && state->membership.role == chatview::DisplayRole::Streaming &&
         state->gaming_connections == 0 && state->streaming_connections == 1,
@@ -135,14 +168,22 @@ void gateway_ui(const std::wstring &origin)
         document.querySelector('#messages li .content').textContent === '안녕 😀 <img onerror=evil()>' &&
         document.querySelectorAll('#messages img,#messages script').length === 0
     )JS", connection) == L"true", "real DOM Unicode/inert markup");
+    const auto approved_membership = state->membership;
+    expect(open() == 1 && dialog == chatview::NativeChatConnectionTestAccess::dialog(connection) &&
+        chatview::NativeChatConnectionTestAccess::connection(connection)->membership == approved_membership,
+        "opening an approved connection does not replace its membership");
     std::cout << "rendered\n" << std::flush;
     await([&] { return !chatview::NativeChatConnectionTestAccess::active(connection); }, "grant revoke ends native delivery", &connection);
     expect(!chatview::NativeChatConnectionTestAccess::connection(connection), "revocation clears native session state");
+    expect(query() == chatview::NativeChatStatus::Idle, "revocation removes receiving status from the local query");
     expect(control_text(dialog, 110).find(L"확인되지 않음") != std::wstring::npos, "revocation clears session status text");
     expect_video_scope(dialog);
     await([&] { return evaluate(core.Get(), L"document.querySelectorAll('#messages li').length === 0", connection) == L"true"; },
           "revocation clears actual DOM", &connection);
-    connection.close(); hud.destroy();
+    connection.close();
+    expect(query() == chatview::NativeChatStatus::Unavailable && open() == 0,
+        "closed connection removes its subclass instead of leaving a stale handler");
+    hud.destroy();
 }
 void transport(const std::wstring &origin, const std::wstring &ticket, const std::string &mode)
 {

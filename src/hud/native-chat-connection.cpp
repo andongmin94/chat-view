@@ -3,6 +3,7 @@
 #include "hud/saved-connection.hpp"
 #include "hud/hud-window.hpp"
 #include <shellapi.h>
+#include <commctrl.h>
 #include <string_view>
 #include <utility>
 
@@ -27,10 +28,46 @@ NativeChatConnection::NativeChatConnection(HudWindow &hud, DisplayRole role, Bro
         return reinterpret_cast<INT_PTR>(ShellExecuteW(window, L"open", url, nullptr, nullptr, SW_SHOWNORMAL)) > 32;
     }), role_(role)
 {
+    open_message_ = RegisterWindowMessageW(kOpenNativeChatMessageName);
+    query_message_ = RegisterWindowMessageW(kQueryNativeChatMessageName);
+    // This component and the HUD share an owner thread. Use the system's
+    // subclass chain rather than replacing HudWindow's procedure or input path.
+    if (open_message_ && query_message_ && hud_.window_ &&
+        SetWindowSubclass(hud_.window_, host_procedure, kConnectHotkey,
+                          reinterpret_cast<DWORD_PTR>(this))) host_ = hud_.window_;
     hotkey_ = RegisterHotKey(nullptr, kConnectHotkey, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'C') != FALSE;
     if (!hotkey_) OutputDebugStringW(L"[ChatView HUD] Native chat connection hotkey unavailable\n");
 }
 NativeChatConnection::~NativeChatConnection() { close(); }
+NativeChatStatus NativeChatConnection::local_status() const noexcept
+{
+    if (closed_) return NativeChatStatus::Unavailable;
+    if (signing_out_) return NativeChatStatus::SigningOut;
+    if (!active_) return NativeChatStatus::Idle;
+    if (hud_.shutting_down_ || hud_.system_suppressed() || hud_.capture_exclusion_failed_ || hud_.capture_risk_)
+        return NativeChatStatus::Paused;
+    if (awaiting_login_) return NativeChatStatus::AwaitingApproval;
+    if (reconnecting_ || !client_.running()) return NativeChatStatus::Reconnecting;
+    if (ready_ && displayed_subscribed_ && connection_state_ && surface_.ready())
+        return NativeChatStatus::Receiving;
+    return NativeChatStatus::Connecting;
+}
+LRESULT CALLBACK NativeChatConnection::host_procedure(HWND window, UINT message,
+    WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR data)
+{
+    auto *self = reinterpret_cast<NativeChatConnection *>(data);
+    if (message == self->open_message_ || message == self->query_message_) {
+        // No pointer/string marshalling, authentication or remote commands.
+        if (wparam || lparam || self->closed_) return 0;
+        if (message == self->query_message_) return static_cast<LRESULT>(self->local_status());
+        return self->open_dialog() ? 1 : 0;
+    }
+    if (message == WM_NCDESTROY) {
+        RemoveWindowSubclass(window, host_procedure, id);
+        self->host_ = nullptr;
+    }
+    return DefSubclassProc(window, message, wparam, lparam);
+}
 bool NativeChatConnection::dispatch(MSG &message) noexcept
 {
     if (!message.hwnd && message.message == WM_HOTKEY && message.wParam == kConnectHotkey) { open_dialog(); return true; }
@@ -46,20 +83,30 @@ void NativeChatConnection::show_connection_state() noexcept
         SetDlgItemTextW(dialog_, kSession, summary.c_str());
     } catch (...) { SetDlgItemTextW(dialog_, kSession, L"세션 상태를 확인하지 못했습니다."); }
 }
-void NativeChatConnection::open_dialog() noexcept
+bool NativeChatConnection::open_dialog() noexcept
 {
+    if (closed_ || opening_dialog_) return false;
+    opening_dialog_ = true;
+    struct Reset { bool &flag; ~Reset() { flag = false; } } reset{opening_dialog_};
     try {
-        if (hud_.shutting_down_ || hud_.system_suppressed() || hud_.capture_exclusion_failed_) return;
-        if (dialog_) { ShowWindow(dialog_, SW_SHOWNORMAL); SetForegroundWindow(dialog_); return; }
+        if (hud_.shutting_down_ || hud_.system_suppressed() || hud_.capture_exclusion_failed_ ||
+            hud_.capture_risk_ || !hud_.capture_exclusion_intact()) return false;
+        if (dialog_) {
+            DWORD affinity = 0;
+            if (!GetWindowDisplayAffinity(dialog_, &affinity) || affinity != WDA_EXCLUDEFROMCAPTURE) return false;
+            show_connection_state();
+            ShowWindow(dialog_, SW_SHOWNORMAL); SetForegroundWindow(dialog_);
+            return IsWindowVisible(dialog_) != FALSE;
+        }
         WNDCLASSW klass{}; klass.lpfnWndProc = procedure; klass.hInstance = GetModuleHandleW(nullptr);
         klass.lpszClassName = kClass; klass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         klass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
-        if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
+        if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
         dialog_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT, kClass,
             L"ChatView · 자체 채팅 연결 (개발 검증)", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
             CW_USEDEFAULT, CW_USEDEFAULT, 600, 490, nullptr, nullptr, klass.hInstance, this);
-        if (!dialog_) return;
-        if (!SetWindowDisplayAffinity(dialog_, WDA_EXCLUDEFROMCAPTURE)) { DestroyWindow(dialog_); dialog_ = nullptr; return; }
+        if (!dialog_) return false;
+        if (!SetWindowDisplayAffinity(dialog_, WDA_EXCLUDEFROMCAPTURE)) { DestroyWindow(dialog_); dialog_ = nullptr; return false; }
         const UINT dpi = GetDpiForWindow(dialog_);
         const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
         SetWindowPos(dialog_, nullptr, 0, 0, scale(600), scale(490), SWP_NOMOVE | SWP_NOZORDER);
@@ -86,7 +133,7 @@ void NativeChatConnection::open_dialog() noexcept
         // reports and transient notices. Local status never certifies video.
         HWND scope = add(L"STATIC", L"수신 영상의 HUD 제외: 미검증\n채팅 연결·OBS 활성 보고는 영상 검증이 아닙니다.",
             0, kVideoScope, 20, 404, 550, 40);
-        if (!origin || !scope) { DestroyWindow(dialog_); dialog_ = nullptr; return; }
+        if (!origin || !scope) { DestroyWindow(dialog_); dialog_ = nullptr; return false; }
         SendMessageW(origin, EM_SETLIMITTEXT, 2048, 0);
         if (auto saved = load_connection()) {
             SetWindowTextW(origin, saved->origin.c_str());
@@ -96,7 +143,9 @@ void NativeChatConnection::open_dialog() noexcept
         }
         show_connection_state();
         ShowWindow(dialog_, SW_SHOWNORMAL); SetForegroundWindow(dialog_); SetFocus(origin);
+        return IsWindowVisible(dialog_) != FALSE;
     } catch (...) { if (dialog_) { DestroyWindow(dialog_); dialog_ = nullptr; } }
+    return false;
 }
 LRESULT CALLBACK NativeChatConnection::procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
@@ -273,6 +322,8 @@ void NativeChatConnection::tick() noexcept
 }
 void NativeChatConnection::close() noexcept
 {
+    closed_ = true;
+    if (host_) { RemoveWindowSubclass(host_, host_procedure, kConnectHotkey); host_ = nullptr; }
     auto_connect_pending_ = false; client_.stop();
     connection_state_.reset();
     pending_.clear(); active_ = false; awaiting_login_ = false; surface_.close();

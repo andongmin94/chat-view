@@ -1,8 +1,13 @@
 target_sources(chat-view-hud PRIVATE
     src/hud/display-client.cpp src/hud/native-chat-connection.cpp src/hud/saved-connection.cpp)
-target_link_libraries(chat-view-hud PRIVATE winhttp windowsapp gdi32 crypt32)
+target_link_libraries(chat-view-hud PRIVATE winhttp windowsapp gdi32 crypt32 comctl32)
 
 if(BUILD_TESTING)
+    add_executable(chat-view-native-chat-control-test tests/native-chat-control-test.cpp)
+    target_include_directories(chat-view-native-chat-control-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_warnings(chat-view-native-chat-control-test)
+    add_test(NAME chat-view-native-chat-control COMMAND chat-view-native-chat-control-test)
+
     find_program(CHATVIEW_NODE_EXECUTABLE node REQUIRED)
     add_executable(chat-view-native-display-client-test
         tests/native-display-client-test.cpp
@@ -15,7 +20,7 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(chat-view-native-display-client-test PRIVATE
         chat-view-common "${WEBVIEW2_LOADER_LIBRARY}"
-        bcrypt d3d11 dcomp dxgi ole32 shell32 user32 gdi32 wtsapi32 winhttp windowsapp version crypt32)
+        bcrypt d3d11 dcomp dxgi ole32 shell32 user32 gdi32 wtsapi32 winhttp windowsapp version crypt32 comctl32)
     target_compile_definitions(chat-view-native-display-client-test PRIVATE WEBVIEW2_STATIC)
     chatview_enable_win32(chat-view-native-display-client-test)
     chatview_enable_warnings(chat-view-native-display-client-test)
@@ -48,7 +53,7 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(chat-view-native-logout-test PRIVATE
         chat-view-common "${WEBVIEW2_LOADER_LIBRARY}"
-        bcrypt d3d11 dcomp dxgi ole32 shell32 user32 gdi32 wtsapi32 winhttp windowsapp version crypt32)
+        bcrypt d3d11 dcomp dxgi ole32 shell32 user32 gdi32 wtsapi32 winhttp windowsapp version crypt32 comctl32)
     target_compile_definitions(chat-view-native-logout-test PRIVATE WEBVIEW2_STATIC)
     chatview_enable_win32(chat-view-native-logout-test)
     chatview_enable_warnings(chat-view-native-logout-test)
@@ -68,7 +73,7 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(chat-view-native-output-test PRIVATE
         chat-view-common "${WEBVIEW2_LOADER_LIBRARY}"
-        bcrypt d3d11 dcomp dxgi ole32 shell32 user32 gdi32 wtsapi32 winhttp windowsapp version crypt32)
+        bcrypt d3d11 dcomp dxgi ole32 shell32 user32 gdi32 wtsapi32 winhttp windowsapp version crypt32 comctl32)
     target_compile_definitions(chat-view-native-output-test PRIVATE WEBVIEW2_STATIC)
     chatview_enable_win32(chat-view-native-output-test)
     chatview_enable_warnings(chat-view-native-output-test)

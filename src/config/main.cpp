@@ -2,6 +2,7 @@
 
 #include "common/chat-config.hpp"
 #include "common/hud-health.hpp"
+#include "common/native-chat-control.hpp"
 #include "common/stream-readiness.hpp"
 #include "common/win32-handle.hpp"
 #include "common/window-messages.hpp"
@@ -38,8 +39,11 @@ constexpr int kCloseButtonId = 1005;
 constexpr int kDiagnosticsButtonId = 1006;
 constexpr int kRecoveryButtonId = 1007;
 constexpr int kVideoScopeId = 1008;
+constexpr int kNativeConnectId = 1009;
+constexpr int kNativeStatusId = 1010;
+constexpr int kExternalHintId = 1011;
 constexpr int kWindowWidthDip = 960;
-constexpr int kWindowHeightDip = 620;
+constexpr int kWindowHeightDip = 740;
 constexpr int kMinimumUrlLength = 0;
 constexpr int kMaximumUrlLength = 2048;
 
@@ -398,7 +402,7 @@ ReadinessPresentation readiness_presentation(
         return {L"●  HUD NOT READY — OBS status is unavailable.", kColorError};
     case Blocker::ChatNotConfigured:
         return {
-            L"●  HUD NOT READY — Save a supported chat URL.",
+            L"●  HUD NOT READY — Connect ChatView or apply an external chat page.",
             kColorError};
     case Blocker::RestartCircuitOpen:
         return {
@@ -453,7 +457,7 @@ const wchar_t *recovery_action_label(
 {
     switch (action) {
     case chatview::StreamRecoveryAction::FocusChatUrl:
-        return L"Enter chat URL";
+        return L"Enter external URL";
     case chatview::StreamRecoveryAction::RestartHud:
         return L"Restart HUD";
     case chatview::StreamRecoveryAction::OpenHudInteraction:
@@ -581,6 +585,28 @@ bool query_hud_health(
 
     health = decoded;
     return true;
+}
+
+chatview::NativeChatStatus query_native_chat(HWND hud) noexcept
+{
+    if (hud == nullptr) return chatview::NativeChatStatus::Unavailable;
+    const UINT message = RegisterWindowMessageW(chatview::kQueryNativeChatMessageName);
+    DWORD_PTR value = 0U;
+    if (!message || !SendMessageTimeoutW(hud, message, 0U, 0L,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT,
+            kHudHealthQueryTimeoutMs, &value)) return chatview::NativeChatStatus::Unavailable;
+    return chatview::decode_native_chat_status(value);
+}
+
+bool can_open_native_chat(const chatview::ControlStatusSnapshot &snapshot,
+                         bool health_available, const chatview::HudHealthSnapshot &health) noexcept
+{
+    return health_available && health.state != chatview::HudPageState::SystemPaused &&
+        health.state != chatview::HudPageState::SystemResuming &&
+        chatview::has_control_status_flag(snapshot, chatview::ControlStatusHudRunning) &&
+        chatview::has_control_status_flag(snapshot, chatview::ControlStatusSceneGraphReady) &&
+        !chatview::has_control_status_flag(snapshot, chatview::ControlStatusCaptureRisk) &&
+        !chatview::has_control_status_flag(snapshot, chatview::ControlStatusDisplayCaptureActive);
 }
 
 bool send_hud_control_message(HWND hud, UINT message) noexcept
@@ -773,6 +799,9 @@ private:
                 return 0L;
             }
             switch (LOWORD(wparam)) {
+            case kNativeConnectId:
+                open_native_connection();
+                return 0L;
             case kSaveButtonId:
                 save_and_apply();
                 return 0L;
@@ -848,7 +877,15 @@ private:
         if (video_scope_ != nullptr) {
             SetWindowLongPtrW(video_scope_, GWLP_ID, kVideoScopeId);
         }
-        url_label_ = create_static(L"Broadcast or chat URL");
+        native_label_ = create_static(L"ChatView service connection");
+        native_button_ = create_button(L"ChatView connection...", kNativeConnectId, BS_PUSHBUTTON);
+        native_value_ = create_static(L"Connection status unavailable");
+        if (native_value_) SetWindowLongPtrW(native_value_, GWLP_ID, kNativeStatusId);
+        external_hint_ = create_static(
+            L"Applying an external page replaces the current chat display; it does not log out.\n"
+            L"Service addresses and sign-in belong in the ChatView connection panel above.");
+        if (external_hint_) SetWindowLongPtrW(external_hint_, GWLP_ID, kExternalHintId);
+        url_label_ = create_static(L"External chat page URL (optional)");
         url_edit_ = CreateWindowExW(
             WS_EX_CLIENTEDGE,
             L"EDIT",
@@ -895,7 +932,7 @@ private:
         recovery_button_ = create_button(
             L"Fix now", kRecoveryButtonId, BS_PUSHBUTTON);
         save_button_ = create_button(
-            L"Save & Apply", kSaveButtonId, BS_DEFPUSHBUTTON);
+            L"Apply external page", kSaveButtonId, BS_PUSHBUTTON);
         edit_button_ = create_button(
             L"Move / Resize", kEditButtonId, BS_PUSHBUTTON);
         restart_button_ = create_button(
@@ -905,10 +942,14 @@ private:
         close_button_ = create_button(
             L"Close", kCloseButtonId, BS_PUSHBUTTON);
 
-        const std::array<HWND, 23U> required{
+        const std::array<HWND, 27U> required{
             title_,
             subtitle_,
             video_scope_,
+            native_label_,
+            native_button_,
+            native_value_,
+            external_hint_,
             url_label_,
             url_edit_,
             provider_value_,
@@ -1006,7 +1047,7 @@ private:
         if (input.empty()) {
             set_colored_text(
                 provider_value_,
-                L"●  Not configured",
+                L"●  No external page configured",
                 kColorMuted,
                 provider_color_);
             return;
@@ -1026,9 +1067,18 @@ private:
         set_colored_text(
             provider_value_,
             L"●  " + provider_name(normalized) +
-                L" URL recognized",
+                L" external URL recognized",
             kColorGood,
             provider_color_);
+    }
+
+    void refresh_native_status(HWND hud)
+    {
+        native_status_ = query_native_chat(hud);
+        set_colored_text(native_value_, chatview::native_chat_status_text(native_status_),
+            native_status_ == chatview::NativeChatStatus::Receiving ? kColorGood : kColorMuted,
+            native_color_);
+        if (!hud) EnableWindow(native_button_, FALSE);
     }
 
     void refresh_runtime_status(bool force)
@@ -1049,6 +1099,7 @@ private:
         if (!status_reader_.read(snapshot)) {
             snapshot_available_ = false;
             latest_health_available_ = false;
+            refresh_native_status(nullptr);
             set_colored_text(
                 obs_value_,
                 L"●  Status unavailable",
@@ -1110,6 +1161,14 @@ private:
                              : nullptr;
         const bool health_available =
             query_hud_health(hud, health);
+        refresh_native_status(hud);
+        EnableWindow(native_button_,
+            can_open_native_chat(snapshot, health_available, health) &&
+            native_status_ != chatview::NativeChatStatus::Unavailable ? TRUE : FALSE);
+        // An old external page's Ready must not stand in for pending approval.
+        if (health_available && chatview::has_native_chat_flow(native_status_)) {
+            health = {chatview::native_chat_page_state(native_status_), chatview::HudProvider::Chzzk, 0U};
+        }
         latest_health_available_ = health_available;
         if (health_available) {
             latest_health_ = health;
@@ -1217,7 +1276,7 @@ private:
     {
         chatview::ChatConfig config;
         const bool chat_configured =
-            chatview::load_chat_config(config);
+            chatview::has_native_chat_flow(native_status_) || chatview::load_chat_config(config);
         const chatview::StreamReadinessResult result =
             chatview::evaluate_stream_readiness({
                 obs_connected,
@@ -1233,8 +1292,10 @@ private:
             presentation.text,
             presentation.color,
             readiness_color_);
-        set_recovery_action(
-            chatview::recovery_action_for(result.blocker));
+        native_recovery_ = result.blocker == chatview::StreamReadinessBlocker::ChatNotConfigured ||
+            (chatview::has_native_chat_flow(native_status_) &&
+             result.blocker == chatview::StreamReadinessBlocker::LoginRequired);
+        set_recovery_action(chatview::recovery_action_for(result.blocker));
     }
 
     void set_recovery_action(chatview::StreamRecoveryAction action)
@@ -1244,6 +1305,12 @@ private:
             return;
         }
 
+        if (native_recovery_) {
+            SetWindowTextW(recovery_button_, L"Open ChatView connection");
+            EnableWindow(recovery_button_, IsWindowEnabled(native_button_));
+            ShowWindow(recovery_button_, SW_SHOWNOACTIVATE);
+            return;
+        }
         if (action == chatview::StreamRecoveryAction::None) {
             EnableWindow(recovery_button_, FALSE);
             ShowWindow(recovery_button_, SW_HIDE);
@@ -1258,6 +1325,7 @@ private:
 
     void perform_recovery_action()
     {
+        if (native_recovery_) { open_native_connection(); return; }
         switch (recovery_action_) {
         case chatview::StreamRecoveryAction::FocusChatUrl:
             focus_chat_url();
@@ -1283,6 +1351,39 @@ private:
         }
     }
 
+    void open_native_connection()
+    {
+        // Re-read the destination and guards on the click, never reuse a PID
+        // from the last poll. Acknowledgement means panel visible, not signed in.
+        chatview::ControlStatusSnapshot snapshot;
+        if (!connected_ || !status_reader_.parent_alive() || !status_reader_.read(snapshot)) {
+            refresh_native_status(nullptr);
+            set_feedback(L"OBS/HUD status unavailable; no connection window was requested.", kColorWarning);
+            return;
+        }
+        const HWND hud = hud_window_for_process(snapshot.hud_process_id);
+        chatview::HudHealthSnapshot health;
+        const bool health_available = query_hud_health(hud, health);
+        if (!hud || !can_open_native_chat(snapshot, health_available, health)) {
+            set_feedback(L"The connection panel is unavailable under current HUD protection.", kColorWarning);
+            return;
+        }
+        const UINT message = RegisterWindowMessageW(chatview::kOpenNativeChatMessageName);
+        if (message) (void)AllowSetForegroundWindow(snapshot.hud_process_id);
+        DWORD_PTR accepted = 0U;
+        if (!message || !SendMessageTimeoutW(hud, message, 0U, 0L,
+                SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT,
+                kHudControlTimeoutMs, &accepted)) {
+            set_feedback(L"Connection panel opening was not confirmed. Check the HUD before retrying.", kColorWarning);
+            return;
+        }
+        set_feedback(accepted == 1U
+            ? L"Connection panel opened. Sign in or manage the existing approval there."
+            : L"The HUD declined to open its connection panel; no sign-in was started.",
+            accepted == 1U ? kColorText : kColorWarning);
+        refresh_runtime_status(false);
+    }
+
     void focus_chat_url()
     {
         ShowWindow(window_, SW_RESTORE);
@@ -1290,7 +1391,7 @@ private:
         SetFocus(url_edit_);
         SendMessageW(url_edit_, EM_SETSEL, 0U, -1L);
         set_feedback(
-            L"Paste the current broadcast or chat URL, then choose Save & Apply.",
+            L"Enter a supported external page URL, then choose Apply external page.",
             kColorWarning);
     }
 
@@ -1397,6 +1498,7 @@ private:
 
     void set_disconnected_status()
     {
+        refresh_native_status(nullptr);
         set_colored_text(
             obs_value_,
             L"●  Not connected — open from OBS Tools menu",
@@ -1585,7 +1687,11 @@ private:
     LRESULT color_static(HDC device, HWND control) const
     {
         COLORREF color = kColorText;
-        if (control == subtitle_) {
+        if (control == native_value_) {
+            color = native_color_;
+        } else if (control == external_hint_) {
+            color = kColorMuted;
+        } else if (control == subtitle_) {
             color = readiness_color_;
         } else if (control == video_scope_) {
             color = kColorWarning;
@@ -1662,9 +1768,13 @@ private:
             DEFAULT_PITCH | FF_DONTCARE,
             L"Segoe UI");
 
-        const std::array<HWND, 24U> body_controls{
+        const std::array<HWND, 28U> body_controls{
             subtitle_,
             video_scope_,
+            native_label_,
+            native_button_,
+            native_value_,
+            external_hint_,
             url_edit_,
             provider_value_,
             status_group_,
@@ -1702,7 +1812,8 @@ private:
             WM_SETFONT,
             reinterpret_cast<WPARAM>(title_font_),
             TRUE);
-        const std::array<HWND, 6U> labels{
+        const std::array<HWND, 7U> labels{
+            native_label_,
             url_label_,
             obs_label_,
             hud_label_,
@@ -1760,27 +1871,31 @@ private:
         move(subtitle_, 34, 61, 892, 24);
         move(recovery_button_, 34, 92, 240, 38);
         move(video_scope_, 290, 90, 636, 44);
-        move(url_label_, 34, 145, 300, 22);
-        move(url_edit_, 34, 172, 892, 32);
-        move(provider_value_, 36, 210, 888, 24);
-        move(status_group_, 28, 247, 904, 226);
-        move(obs_label_, 52, 279, 190, 24);
-        move(obs_value_, 248, 279, 650, 24);
-        move(hud_label_, 52, 315, 190, 24);
-        move(hud_value_, 248, 315, 650, 24);
-        move(safety_label_, 52, 351, 190, 24);
-        move(safety_value_, 248, 351, 650, 24);
-        move(output_label_, 52, 387, 190, 24);
-        move(output_value_, 248, 387, 650, 24);
-        move(recovery_label_, 52, 423, 190, 24);
-        move(recovery_value_, 248, 423, 650, 24);
-        move(feedback_, 34, 483, 570, 24);
-        move(save_button_, 34, 529, 142, 38);
-        move(edit_button_, 186, 529, 142, 38);
-        move(restart_button_, 338, 529, 142, 38);
-        move(diagnostics_button_, 490, 529, 198, 38);
-        move(close_button_, 806, 529, 120, 38);
-        move(version_, 680, 485, 246, 22);
+        move(native_label_, 34, 145, 400, 22);
+        move(native_button_, 34, 173, 240, 36);
+        move(native_value_, 290, 175, 636, 40);
+        move(url_label_, 34, 225, 500, 22);
+        move(url_edit_, 34, 252, 672, 32);
+        move(save_button_, 718, 251, 208, 34);
+        move(provider_value_, 36, 289, 888, 24);
+        move(external_hint_, 36, 315, 888, 38);
+        move(status_group_, 28, 363, 904, 226);
+        move(obs_label_, 52, 395, 190, 24);
+        move(obs_value_, 248, 395, 650, 24);
+        move(hud_label_, 52, 431, 190, 24);
+        move(hud_value_, 248, 431, 650, 24);
+        move(safety_label_, 52, 467, 190, 24);
+        move(safety_value_, 248, 467, 650, 24);
+        move(output_label_, 52, 503, 190, 24);
+        move(output_value_, 248, 503, 650, 24);
+        move(recovery_label_, 52, 539, 190, 24);
+        move(recovery_value_, 248, 539, 650, 24);
+        move(feedback_, 34, 599, 892, 40);
+        move(edit_button_, 34, 653, 142, 38);
+        move(restart_button_, 186, 653, 142, 38);
+        move(diagnostics_button_, 338, 653, 198, 38);
+        move(close_button_, 806, 653, 120, 38);
+        move(version_, 556, 661, 230, 22);
     }
 
     void center_on_primary_monitor()
@@ -1831,6 +1946,13 @@ private:
     HWND title_ = nullptr;
     HWND subtitle_ = nullptr;
     HWND video_scope_ = nullptr;
+    HWND native_label_ = nullptr;
+    HWND native_button_ = nullptr;
+    HWND native_value_ = nullptr;
+    HWND external_hint_ = nullptr;
+    chatview::NativeChatStatus native_status_ = chatview::NativeChatStatus::Unavailable;
+    bool native_recovery_ = false;
+    COLORREF native_color_ = kColorMuted;
     HWND url_label_ = nullptr;
     HWND url_edit_ = nullptr;
     HWND provider_value_ = nullptr;

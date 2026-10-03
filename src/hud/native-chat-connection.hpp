@@ -2,6 +2,7 @@
 #pragma once
 #include "hud/display-client.hpp"
 #include "hud/native-chat-surface.hpp"
+#include "common/native-chat-control.hpp"
 #include <Windows.h>
 #include <optional>
 #include <string>
@@ -16,7 +17,7 @@ public:
     NativeChatConnection(const NativeChatConnection &) = delete;
     NativeChatConnection &operator=(const NativeChatConnection &) = delete;
     bool dispatch(MSG &message) noexcept;
-    void open_dialog() noexcept;
+    bool open_dialog() noexcept;
     void tick() noexcept;
     void observe_outputs(ObsOutputObservation sample) noexcept { client_.observe_outputs(sample); }
     [[nodiscard]] DWORD wait_timeout() const noexcept { return active_ || auto_connect_pending_ || signing_out_ ? 100U : INFINITE; }
@@ -24,6 +25,8 @@ public:
 private:
     friend struct NativeChatConnectionTestAccess;
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
+    static LRESULT CALLBACK host_procedure(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+    NativeChatStatus local_status() const noexcept;
     void connect() noexcept;
     void begin(std::wstring origin, std::wstring credential, bool local, DisplayAuthentication mode) noexcept;
     bool open_surface() noexcept;
@@ -38,7 +41,12 @@ private:
     std::optional<DisplayConnectionState> connection_state_;
     DisplayClient client_;
     NativeChatSurface surface_;
+    HWND host_ = nullptr;
     HWND dialog_ = nullptr;
+    UINT open_message_ = 0U;
+    UINT query_message_ = 0U;
+    bool opening_dialog_ = false;
+    bool closed_ = false;
     bool hotkey_ = false;
     bool active_ = false;
     bool ready_ = false;

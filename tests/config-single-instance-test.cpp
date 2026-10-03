@@ -2,6 +2,7 @@
 
 #include "common/control-status.hpp"
 #include "common/hud-health.hpp"
+#include "common/native-chat-control.hpp"
 #include "common/win32-handle.hpp"
 #include "common/window-messages.hpp"
 
@@ -25,6 +26,9 @@ constexpr int kEditButtonId = 1003;
 constexpr int kRestartButtonId = 1004;
 constexpr int kRecoveryButtonId = 1007;
 constexpr int kVideoScopeId = 1008;
+constexpr int kNativeConnectId = 1009;
+constexpr int kNativeStatusId = 1010;
+constexpr int kExternalHintId = 1011;
 constexpr DWORD kWindowTimeoutMs = 8000U;
 constexpr DWORD kProcessExitTimeoutMs = 5000U;
 
@@ -32,6 +36,11 @@ std::atomic_bool edit_message_received{false};
 std::atomic<chatview::HudPageState> reported_health{chatview::HudPageState::Ready};
 UINT edit_message = 0U;
 UINT health_message = 0U;
+UINT native_open_message = 0U, native_query_message = 0U;
+std::atomic<std::uint64_t> native_reply{static_cast<std::uint64_t>(chatview::NativeChatStatus::Idle)};
+std::atomic<unsigned> native_open_requests{0U};
+std::atomic<LRESULT> native_open_reply{1};
+std::atomic_bool native_bad_payload{false};
 
 class MappedStatus final {
 public:
@@ -103,6 +112,15 @@ bool wait_until(
 LRESULT CALLBACK fake_hud_window_proc(
     HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
+    if (message == native_query_message && native_query_message != 0U) {
+        if (wparam || lparam) native_bad_payload.store(true);
+        return static_cast<LRESULT>(native_reply.load());
+    }
+    if (message == native_open_message && native_open_message != 0U) {
+        if (wparam || lparam) native_bad_payload.store(true);
+        native_open_requests.fetch_add(1U);
+        return native_open_reply.load();
+    }
     if (message == edit_message && edit_message != 0U) {
         edit_message_received.store(true, std::memory_order_release);
         return 0L;
@@ -246,6 +264,22 @@ bool video_scope_present(HWND parent)
         !child_text_contains(parent, L"Private HUD safety active");
 }
 
+bool connection_layout_present(HWND parent)
+{
+    RECT client{}, connect{}, status{}, url{}, hint{}, apply{}, overlap{};
+    if (!GetClientRect(parent, &client)) return false;
+    const auto bounds = [&](int id, RECT &rect) {
+        HWND control = GetDlgItem(parent, id);
+        if (!control || !IsWindowVisible(control) || !GetWindowRect(control, &rect)) return false;
+        MapWindowPoints(nullptr, parent, reinterpret_cast<POINT *>(&rect), 2);
+        return rect.left >= 0 && rect.top >= 0 && rect.right <= client.right && rect.bottom <= client.bottom;
+    };
+    return bounds(kNativeConnectId, connect) && bounds(kNativeStatusId, status) &&
+        bounds(kUrlEditId, url) && bounds(kExternalHintId, hint) && bounds(kSaveButtonId, apply) &&
+        !IntersectRect(&overlap, &connect, &status) && !IntersectRect(&overlap, &url, &apply) &&
+        status.bottom <= url.top && url.bottom <= hint.top;
+}
+
 bool post_command(HWND window, int identifier, HWND control) noexcept
 {
     return PostMessageW(
@@ -352,7 +386,9 @@ int wmain(int argument_count, wchar_t **arguments)
         chatview::kToggleEditMessageName);
     health_message = RegisterWindowMessageW(
         chatview::kQueryHudHealthMessageName);
-    if (edit_message == 0U || health_message == 0U) {
+    native_open_message = RegisterWindowMessageW(chatview::kOpenNativeChatMessageName);
+    native_query_message = RegisterWindowMessageW(chatview::kQueryNativeChatMessageName);
+    if (!edit_message || !health_message || !native_open_message || !native_query_message) {
         return fail(L"Failed to register fake HUD messages");
     }
 
@@ -427,9 +463,9 @@ int wmain(int argument_count, wchar_t **arguments)
                            control_center, L"YouTube chat ready") &&
                        child_text_contains(
                            control_center,
-                           L"HUD NOT READY — Save a supported chat URL") &&
+                           L"HUD NOT READY — Connect ChatView or apply an external chat page") &&
                        child_text_contains(
-                           control_center, L"Enter chat URL") &&
+                           control_center, L"Open ChatView connection") &&
                        video_scope_present(control_center);
             },
             kWindowTimeoutMs)) {
@@ -451,6 +487,65 @@ int wmain(int argument_count, wchar_t **arguments)
         return fail(
             L"The Control Center action controls were not created",
             first.process.get());
+    }
+
+    const HWND native_button = GetDlgItem(control_center, kNativeConnectId);
+    if (!native_button || !IsWindowEnabled(native_button) ||
+        !GetDlgItem(control_center, kNativeStatusId) || !GetDlgItem(control_center, kExternalHintId) ||
+        !child_text_contains(control_center, L"External chat page URL (optional)") ||
+        !connection_layout_present(control_center)) {
+        DestroyWindow(fake_hud);
+        return fail(L"Native connection and external page controls were not separated", first.process.get());
+    }
+    // Opening the existing native panel is not implicit URL saving or approval.
+    if (!post_command(control_center, kNativeConnectId, native_button) ||
+        !wait_until([&] {
+            return native_open_requests.load() == 1U &&
+                child_text_contains(control_center, L"Connection panel opened") &&
+                child_text_contains(control_center, L"Not connected — open the connection panel");
+        }, kWindowTimeoutMs) || native_bad_payload.load() ||
+        std::filesystem::exists(profile / L"ChatView" / L"config.ini")) {
+        DestroyWindow(fake_hud);
+        return fail(L"Opening the connection panel altered configuration or implied approval", first.process.get());
+    }
+    native_open_reply.store(0);
+    if (!post_command(control_center, kNativeConnectId, native_button) ||
+        !wait_until([&] {
+            return native_open_requests.load() == 2U &&
+                child_text_contains(control_center, L"The HUD declined to open its connection panel");
+        }, kWindowTimeoutMs)) {
+        DestroyWindow(fake_hud);
+        return fail(L"A refused native open request was reported as successful", first.process.get());
+    }
+    native_open_reply.store(1);
+    // The external page continues to report Ready. Native approval phases must
+    // nevertheless determine native readiness without requiring a saved URL.
+    using Native = chatview::NativeChatStatus;
+    for (const Native phase : {Native::Receiving, Native::AwaitingApproval, Native::Connecting,
+            Native::Reconnecting, Native::SigningOut, Native::Paused, Native::Idle}) {
+        native_reply.store(static_cast<std::uint64_t>(phase));
+        if (!wait_until([&] {
+            return child_text_contains(control_center, chatview::native_chat_status_text(phase)) &&
+                child_text_contains(control_center, phase == Native::Receiving ? L"LOCAL HUD READY" : L"HUD NOT READY") &&
+                video_scope_present(control_center);
+        }, kWindowTimeoutMs)) {
+            DestroyWindow(fake_hud);
+            return fail(L"Native phase inherited stale external-page readiness or required an external URL", first.process.get());
+        }
+    }
+    native_reply.store(0x100000004ULL); // Low bits alone would look like Receiving.
+    if (!wait_until([&] {
+            return child_text_contains(control_center, L"Connection status unavailable") &&
+                !IsWindowEnabled(native_button) &&
+                child_text_contains(control_center, L"HUD NOT READY") && video_scope_present(control_center);
+        }, kWindowTimeoutMs)) {
+        DestroyWindow(fake_hud);
+        return fail(L"Invalid native reply was truncated into an approved connection", first.process.get());
+    }
+    native_reply.store(static_cast<std::uint64_t>(Native::Idle));
+    if (!wait_until([&] { return IsWindowEnabled(native_button); }, kWindowTimeoutMs)) {
+        DestroyWindow(fake_hud);
+        return fail(L"Native panel action did not recover after an invalid reply", first.process.get());
     }
 
     constexpr wchar_t kInputUrl[] =
@@ -520,6 +615,16 @@ int wmain(int argument_count, wchar_t **arguments)
         return fail(
             L"The local HUD gate did not report active Display Capture",
             first.process.get());
+    }
+
+    const auto opened_before_risk = native_open_requests.load();
+    if (IsWindowEnabled(native_button) ||
+        !post_command(control_center, kNativeConnectId, native_button) ||
+        !wait_until([&] { return child_text_contains(control_center,
+                L"The connection panel is unavailable under current HUD protection"); }, kWindowTimeoutMs) ||
+        native_open_requests.load() != opened_before_risk) {
+        DestroyWindow(fake_hud);
+        return fail(L"Native open bypassed the current capture-risk guard", first.process.get());
     }
 
     publish(

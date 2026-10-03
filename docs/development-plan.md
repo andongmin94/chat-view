@@ -1,6 +1,6 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-03 (Asia/Seoul). 시작 기준 `637fda159522e93f1d26831b7de11a3fe5e65ab1`. 이번 변경은 **현재 연결에서 기존 브라우저 계정·시험 광고·활동 관리로 진입**, 그리고 직전 #345의 연결창 재열기 실패 경로 보완이다. 코드 기준은 이 문서와 같은 구현 커밋이다. 옛 ZIP/패치를 적용하지 않는다.
+갱신: 2026-10-03 (Asia/Seoul). 시작 기준 `637fda159522e93f1d26831b7de11a3fe5e65ab1`. 이번 변경은 **현재 연결에서 기존 브라우저 계정·시험 광고·활동 관리로 진입**, 그리고 직전 #345의 연결창 재열기 실패 경로 보완이다. 구현 코드는 **`d66dc0a86cd3686b3ce991cc6f9b37276f0fd4f6`**다. 옛 ZIP/패치를 적용하지 않는다.
 이 파일이 현재 작업 목록이다. 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md)를 따른다.
 
 ## 현재 위치와 완료 기준
@@ -13,7 +13,7 @@
 
 직전 Windows #345는 빌드 성공, routine **37/38**이며 실제 Control Center에서 같은 연결창을 다시 여는 검사만 실패했다. 이 패널을 완전 불투명 layered 창으로 만들고 처음 보이기 전에도 affinity를 검증하도록 보완했다. 재열기 때 보호가 없으면 거절하는 기존 동작은 유지한다. 이 변경의 Windows 회귀 결과가 나오기 전에는 실패를 종료 처리하지 않는다.
 
-**다음 흐름:** 이번 Windows 실행 결과/새 실패부터 확인한다. 관리 페이지 진입 후 **브라우저 세션 만료·다른 계정 상태의 명시적 복구 안내**를 기존 인증 흐름에 연결하되, 새 PC 승인·기기등록·표시키를 만들거나 native 권한을 브라우저 관리 권한으로 바꾸지 않는다. D4 Q4/Q5와 물리 영상 확인은 남아 있다.
+**다음 흐름:** **Windows #346 / 37132307532** 결과/새 실패부터 확인한다. 관리 페이지 진입 후 **브라우저 세션 만료·다른 계정 상태의 명시적 복구 안내**를 기존 인증 흐름에 연결하되, 새 PC 승인·기기등록·표시키를 만들거나 native 권한을 브라우저 관리 권한으로 바꾸지 않는다. D4 Q4/Q5와 물리 영상 확인은 남아 있다.
 
 ## G1. 한 화면의 작업과 개인 채팅
 
@@ -67,7 +67,7 @@
 | --- | --- | --- |
 | D1 | `82f36a6`/#294 반복3 첫 gateway frame 표시 미확인. | G4 신뢰성/R-01, 원인 미확정. routine만으로 종료하지 않음. |
 | D2 | #292 후반 핸들 +104>64; #294 초기 +284>256, 후반 +8. | R-02, 기존 한도 유지. |
-| D4 | 설정 책임 혼합·캡처 시험 Q4/Q5 종료 순서.`085c4e3`/#345에서 same native panel reopens from Control Center 실패. 이번 layered/초기 affinity 검증 보완. | 새 Windows 결과 대기, Q4/Q5 미검토. 이전 실패 원인을 검증 없이 확정하지 않음. |
+| D4 | 설정 책임 혼합·캡처 시험 Q4/Q5 종료 순서. `085c4e3`/#345에서 same native panel reopens from Control Center 실패. 이번 layered/초기 affinity 검증 보완. | 새 Windows 결과 대기, Q4/Q5 미검토. 이전 실패 원인을 검증 없이 확정하지 않음. |
 | D6 | `9e9863a`/#339 WGC 첫 픽셀 10초 실패, 35/36. 진단만 추가한 `b7550af`/#340에서 미재현. | G3-03 첫 표시, 원인 미확정. routine만으로 종료하지 않음. |
 
 D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-investigation.md](resource-growth-investigation.md)에만 유지한다.
@@ -78,12 +78,13 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 - **변경:** NativeChatConnection의 opaque layered 패널·첫 표시 전 affinity 검증·같은 HWND 재열기 거절 유지, 고정 `/account` 시스템 브라우저 진입. 서비스 origin은 기존 DisplayClient.start 검증 후에만 보관하는 비밀 없는 내비게이션 대상이다. eligibility는 기존 수신/복귀 상태에서 파생한다. 인증 저장·프로토콜·서버 권한·WGC·캡처 정책·의존성 버전·lockfile은 바꾸지 않았다.
 - **추가 회귀:** 기존 전환 6개 시나리오/각45초·CTest180초와 기존 검사 모두 유지. 실제 Control Center/생산 HUD 구성요소/WinHTTP/WebView2 경로에서 숨겨진 패널 affinity, 완전 불투명, 같은 HWND 재열기, 관리 URL, 재진입 차단, 열기 실패 후 채팅 유지, 편집 주소 무시, 외부 표시 보존, 미승인/철회/로그아웃 후 거절, 독립 경고의 실제 글꼴/영역을 검사하도록 확장했다. 브라우저 실행 경계는 시험 callback이며 실제 시스템 브라우저를 실행한 증거가 아니다.
 - **브라우저 권한 계약:** 새 Node HTTP 검사 3개는 기존 계정/캠페인/활동 route, 쿠키 인증, native 토큰으로 관리권한을 얻지 못함, 다른 브라우저 계정 분리, 브라우저 로그아웃이 native 연결을 철회하지 않음을 다룬다. 새 서버 endpoint나 자동 로그인 전달은 없다.
-- **직접 확인:** 최신 원본 native CPP/HPP와 전환 테스트의 Git blob hash가 로컬 복사와 일치함을 확인했다. 새 Node 검사 구문과 변경 diff를 확인했다. 로컬 Windows SDK/런타임과 잠금 패키지 설치가 없어 Windows 실행·전체 Node 검사를 성공으로 세지 않는다.
-- **이번 원격 검사:** 구현 커밋 push 후 정확한 Windows/CHZZK 실행 ID와 결과를 확인해 여기에 기록한다. 아직 실행 성공을 주장하지 않는다. 이전 #44 계약 성공은 이번 변경의 근거가 아니다. qualification·광고 workflow를 따로 시작하지 않는다.
+- **직접 확인:** 최신 원본 native CPP/HPP와 전환 테스트의 Git blob hash가 로컬 복사와 일치함을 확인했다. 수정 제품 2개/테스트 2개의 원격 blob도 로컬 바이트와 일치했다. 새 Node 검사 구문과 변경 diff를 확인했다. 로컬 Windows SDK/런타임과 잠금 패키지 설치가 없어 Windows 실행·전체 Node 검사를 성공으로 세지 않는다.
+- **같은 코드의 Node 계약:** **`d66dc0a` / CHZZK #45 / 37132307625**의 Windows/Linux × Node22/24 네 환경에서 잠금 의존성 설치·audit·전체 테스트·strict type·manifest 무변경 단계가 모두 성공했다. 신규 브라우저 권한 HTTP 검사 3개를 포함하지만, 이것은 native CTest의 시스템 브라우저 실행 또는 GUI 성공을 대신하지 않는다.
+- **이번 Windows:** **`d66dc0a` / Windows #346 / 37132307532 / job 111229697183**은 마지막 확인 시 **Build and test ChatView 실행 중**이다. 새 패널 재열기/관리 진입의 6개 Windows 시나리오와 이전 #345 실패의 해소는 아직 미확인이다. qualification·광고 workflow를 별도 실행하지 않았고 문서 갱신은 코드 검사를 취소하지 않는다.
 - **미검증:** 실제 브라우저 인증 복원·실계정·실제 OBS 전체 사용자 세션·물리 두 화면/캡처카드/수신 녹화·게임/다중 GPU/OS 오버레이/잠금/hotplug/장시간 자원·오디오·호스팅·qualification.
 
 ### 다음 세션 재개
 
-OBS 최신 ref에서 `AGENTS.md` → `PRODUCT.md` → `docs/development-workflow.md` → `docs/architecture.md` → 이 문서를 읽는다. 이번 Windows 결과와 재열기 실패 경로부터 확인한다. 다음은 **관리 진입 뒤 브라우저 세션 만료·다른 계정 상태의 복구 안내**다. 기존 브라우저 인증·native 승인 경계를 유지하고 PC 재승인/기기등록/표시키/옛 ZIP을 만들지 않는다. 게임 PC OBS·HP/단가/지급 규칙을 임의로 추가하지 않는다. D4 Q4/Q5와 물리 영상은 남기고 D6는 routine 재성공만으로 닫지 않는다. qualification은 배포 후보에서 한다.
+OBS 최신 ref에서 `AGENTS.md` → `PRODUCT.md` → `docs/development-workflow.md` → `docs/architecture.md` → 이 문서를 읽는다. **Windows #346 / 37132307532** 결과와 재열기 실패 경로부터 확인한다. 다음은 **관리 진입 뒤 브라우저 세션 만료·다른 계정 상태의 복구 안내**다. 기존 브라우저 인증·native 승인 경계를 유지하고 PC 재승인/기기등록/표시키/옛 ZIP을 만들지 않는다. 게임 PC OBS·HP/단가/지급 규칙을 임의로 추가하지 않는다. D4 Q4/Q5와 물리 영상은 남기고 D6는 routine 재성공만으로 닫지 않는다. qualification은 배포 후보에서 한다.
 
 미확정 입력: 실제 앱/채널·수집 조건/할당량, 투컴 배선/기기, HP/보상 규격, 인프라. 비밀키를 대화/공개 저장소에 넣지 않으며 입력 부재로 목표를 변경하지 않는다.

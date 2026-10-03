@@ -114,8 +114,14 @@ test('expired, consumed or cancelled return allowance cannot reopen a cross-site
     assert.equal(ordinary.status, 200, 'short landing lifetime does not silently approve or erase valid pending consent');
     const cancelled = await f.post('/account/cancel', { cookie: b.current, csrf: csrf(await ordinary.text()) });
     const freshCookie = cookie(cancelled);
-    for (const value of [b.current, freshCookie])
-      assert.equal((await get(f, b.path, { ...navigation, Cookie: value })).status, 403);
+    for (const value of [b.current, freshCookie]) {
+      const back = await get(f, b.path, { ...navigation, Cookie: value });
+      assert.equal(back.status, 403, 'friendly recovery never restores the consumed allowance');
+      assert.equal(back.headers.get('referrer-policy'), 'no-referrer');
+      const html = await back.text();
+      assert.match(html, /href="\/account"/u);
+      assert.doesNotMatch(html, /<form|channel|csrf/u);
+    }
     b = await callback(f);
     assert.equal((await get(f, b.path, { Cookie: b.current })).status, 200);
     assert.equal((await get(f, b.path, { ...navigation, Cookie: b.current })).status, 403,
@@ -137,5 +143,22 @@ test('HTML forms keep exact Origin/CSRF checks instead of accepting opaque origi
       }, body: new URLSearchParams({ csrf: browser.csrf }) })).status, 403);
     }
     assert.equal((await f.post('/account/login', browser)).status, 303);
+  } finally { await f.close(); }
+});
+
+test('callback error documents keep their query out of subsequent navigation', async () => {
+  const f = await fixture();
+  try {
+    const entry = await f.request('/account');
+    const b = { cookie: cookie(entry), csrf: csrf(await entry.text()) };
+    const redirect = await f.post('/account/login', b);
+    const state = new URL(redirect.headers.get('location')!).searchParams.get('state');
+    const error = await f.request(`/callback?state=${state}&error=synthetic-denial`, { headers: { Cookie: b.cookie } });
+    assert.equal(error.status, 400);
+    assert.equal(error.headers.get('referrer-policy'), 'no-referrer');
+    const html = await error.text();
+    assert.match(html, /href="\/account"/u);
+    assert.doesNotMatch(html, /synthetic-denial|<form/u);
+    assert.deepEqual(f.store.connections('alice'), []);
   } finally { await f.close(); }
 });

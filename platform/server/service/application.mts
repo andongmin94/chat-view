@@ -97,10 +97,11 @@ export class PlatformApplication {
   #json(response: ServerResponse, value: unknown) {
     response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(value));
   }
-  #page(response: ServerResponse, title: string, content: string, status = 200) {
+  #page(response: ServerResponse, title: string, content: string, status = 200,
+    referrerPolicy: 'same-origin' | 'no-referrer' = 'same-origin') {
     // no-referrer serializes Origin as null on HTML form POSTs. Keep same-
     // origin CSRF checks intact and disclose no Referer to external sites.
-    response.setHeader('Referrer-Policy', 'same-origin');
+    response.setHeader('Referrer-Policy', referrerPolicy);
     response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
     response.end(`<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>ChatView · ${title}</title>
 <style>body{font:16px/1.7 system-ui;max-width:720px;margin:48px auto;padding:0 24px}h1{font-size:28px}form{margin:12px 0}button{font:inherit;padding:10px 16px;cursor:pointer}small{display:block}</style>
@@ -189,7 +190,7 @@ ${this.#form(b, '/account/switch', '브라우저 관리 계정 바꾸기')}
     const code = url.searchParams.get('code'), refused = url.searchParams.has('error');
     if (refused ? url.searchParams.getAll('error').length !== 1 || url.searchParams.has('code')
       : !code || code.length > 8192 || url.searchParams.getAll('code').length !== 1) throw new DisplayAccessError(400);
-    attempt.used = true; // Replay is forbidden even during provider I/O or after failure.
+    attempt.used = true;
     const destination = attempt.destination;
     try {
       if (refused) throw new DisplayAccessError(400);
@@ -204,7 +205,6 @@ ${this.#form(b, '/account/switch', '브라우저 관리 계정 바꾸기')}
         const browser = this.#createBrowser(response, channel);
         this.#callbackRedirect(response, browser, `/login/${destination.loginId}`, attempt.expires); return;
       }
-      // Fresh provider identity, NOT a native-token exchange or new subscription.
       const identity = await this.#creators.identifyBrowser(code!, state, signal);
       this.#currentAttempt(b, attempt);
       this.#drop(b);
@@ -212,13 +212,12 @@ ${this.#form(b, '/account/switch', '브라우저 관리 계정 바꾸기')}
       confirmation.pending = { identity, page: destination.page, expires: attempt.expires };
       this.#callbackRedirect(response, confirmation, '/account/confirm', attempt.expires);
     } catch (error) {
-      // A late/superseded callback cannot overwrite the newer browser cookie.
       if ('page' in destination) {
         this.#currentAttempt(b, attempt);
         b.attempt = undefined; attempt.controller.abort();
         this.#page(response, '브라우저 로그인 미완료', `<p>취소되었거나 로그인을 확인하지 못했습니다. 앱 연결은 변경하지 않았습니다.</p>
 <p><a href="${destination.page}">관리 로그인으로 돌아가기</a></p>`,
-          error instanceof DisplayAccessError ? error.status : 503);
+          error instanceof DisplayAccessError ? error.status : 503, 'no-referrer');
         return;
       }
       throw error;
@@ -362,7 +361,6 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
       }
       if (url.pathname === '/account/switch' || url.pathname === '/account/cancel') {
         const page = b.pending?.page ?? (b.attempt && 'page' in b.attempt.destination ? b.attempt.destination.page : '/account');
-        // Explicit browser-only reset. Old forms and in-flight callbacks die with it.
         this.#drop(b); this.#createBrowser(response);
         this.#redirect(response, page); return;
       }
@@ -422,6 +420,14 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
       const status = error instanceof DisplayAccessError || error instanceof CampaignError ? error.status : 503;
       if (request.url?.startsWith('/public/ads/')) {
         response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(); return;
+      }
+      if (status === 403 && request.method === 'GET' && request.url === '/account/confirm' &&
+          request.headers['sec-fetch-mode'] === 'navigate' && request.headers['sec-fetch-dest'] === 'document') {
+        // Back can retain the original cross-site redirect metadata. Do not
+        // renew its consumed allowance or reveal identity; offer a safe next step.
+        this.#page(response, '브라우저 로그인 확인 만료',
+          '<p>이 확인 페이지를 다시 열 수 없습니다. 관리 화면에서 현재 로그인 상태를 확인하세요.</p><p><a href="/account">다시 로그인</a></p>',
+          403, 'no-referrer'); return;
       }
       if (status === 401 && request.method === 'POST' &&
           /^\/(?:account(?:\/|$)|campaigns(?:\/|$)|connections\/)/u.test(request.url ?? '')) {

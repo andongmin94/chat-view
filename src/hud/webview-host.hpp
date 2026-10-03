@@ -33,6 +33,8 @@ public:
     void close() noexcept;
 
     [[nodiscard]] bool ready() const noexcept;
+    // Selection, not successful loading or server authentication. Exposes no URL.
+    [[nodiscard]] bool external_page_selected() const noexcept { return ready_ && !current_url_.empty(); }
     void resize() noexcept;
     void notify_parent_position_changed() noexcept;
     [[nodiscard]] bool navigate(const std::wstring &url) noexcept;

@@ -8,6 +8,7 @@ import { DisplayGateway } from '../server/chat/display-gateway.mts';
 import { fixture } from '../tests/fixtures/service.mts';
 
 const executable = process.argv[2]; assert(executable, 'native switch executable required');
+const configExecutable = process.argv[3]; assert(configExecutable, 'Control Center executable required');
 for (const mode of ['memory', 'remembered', 'unrelated', 'revoked', 'mismatch', 'logout-failure']) {
   const f = await fixture({ createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot) });
   let child: ReturnType<typeof spawn> | undefined;
@@ -50,7 +51,7 @@ for (const mode of ['memory', 'remembered', 'unrelated', 'revoked', 'mismatch', 
       }
       await handle(request, response);
     };
-    child = spawn(executable, [mode], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: false });
+    child = spawn(executable, [mode, configExecutable], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: false });
     const exited = once(child, 'exit'); child.stdin!.write(`${f.origin}\n${other.lease.sessionToken}\n`);
     let buffer = '', errors = '', failure: unknown, externalSeen = false;
     let browserTask: Promise<void> | undefined;

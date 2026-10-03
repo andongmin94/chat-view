@@ -64,7 +64,7 @@ if(BUILD_TESTING)
     set_tests_properties(chat-view-native-logout PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
 
     add_executable(chat-view-native-chat-switch-test
-        tests/native-chat-switch-test.cpp
+        tests/native-chat-switch-test.cpp tests/control-center-driver.hpp
         src/hud/display-client.cpp src/hud/native-chat-connection.cpp src/hud/saved-connection.cpp
         src/hud/native-chat-surface.cpp src/hud/webview-host.cpp
         src/hud/hud-window.cpp src/hud/hud-placement.cpp
@@ -78,10 +78,11 @@ if(BUILD_TESTING)
     target_compile_definitions(chat-view-native-chat-switch-test PRIVATE WEBVIEW2_STATIC)
     chatview_enable_win32(chat-view-native-chat-switch-test)
     chatview_enable_warnings(chat-view-native-chat-switch-test)
+    add_dependencies(chat-view-native-chat-switch-test chat-view-config)
     add_test(NAME chat-view-native-chat-switch
         COMMAND "${CHATVIEW_NODE_EXECUTABLE}" --experimental-strip-types
         "${CMAKE_CURRENT_SOURCE_DIR}/platform/tools/native-chat-switch-test.mts"
-        $<TARGET_FILE:chat-view-native-chat-switch-test>)
+        $<TARGET_FILE:chat-view-native-chat-switch-test> $<TARGET_FILE:chat-view-config>)
     set_tests_properties(chat-view-native-chat-switch PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
 
     add_executable(chat-view-native-output-test

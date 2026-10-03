@@ -36,10 +36,12 @@ private:
     void end(const wchar_t *notice, bool preserve_host = false) noexcept;
     void notice(const wchar_t *text) noexcept;
     void show_connection_state() noexcept;
+    void show_display_status() noexcept;
     HudWindow &hud_;
     BrowserLauncher browser_;
     const DisplayRole role_;
     std::optional<DisplayConnectionState> connection_state_;
+    std::optional<NativeChatStatus> displayed_status_;
     DisplayClient client_;
     NativeChatSurface surface_;
     HWND host_ = nullptr;

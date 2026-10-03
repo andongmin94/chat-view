@@ -175,7 +175,12 @@ void gateway_ui(const std::wstring &origin)
     std::cout << "rendered\n" << std::flush;
     await([&] { return !chatview::NativeChatConnectionTestAccess::active(connection); }, "grant revoke ends native delivery", &connection);
     expect(!chatview::NativeChatConnectionTestAccess::connection(connection), "revocation clears native session state");
-    expect(query() == chatview::NativeChatStatus::Idle, "revocation removes receiving status from the local query");
+    await([&] {
+        const auto phase = query();
+        expect(phase == chatview::NativeChatStatus::Stopping || phase == chatview::NativeChatStatus::Idle,
+            "revocation immediately removes receiving and return eligibility");
+        return phase == chatview::NativeChatStatus::Idle;
+    }, "revoked worker finishes without a retained return approval", &connection, 2000U);
     expect(control_text(dialog, 110).find(L"확인되지 않음") != std::wstring::npos, "revocation clears session status text");
     expect_video_scope(dialog);
     await([&] { return evaluate(core.Get(), L"document.querySelectorAll('#messages li').length === 0", connection) == L"true"; },

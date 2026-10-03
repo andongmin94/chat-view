@@ -7,9 +7,11 @@
 #include "common/chat-config.hpp"
 #include "common/window-messages.hpp"
 #include "common/win32-handle.hpp"
+#include "control-center-driver.hpp"
 #include <Windows.h>
 #include <objbase.h>
 #include <wrl/event.h>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -34,10 +36,13 @@ namespace {
 using Access = chatview::NativeChatConnectionTestAccess;
 using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::Callback;
+using Status = chatview::NativeChatStatus;
+std::unique_ptr<ControlCenterDriver> center;
 constexpr wchar_t kExternal[] = L"https://www.youtube.com/live_chat?is_popout=1&v=chatview123";
 void expect(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
 void pump(chatview::NativeChatConnection &chat)
 {
+    if (center) center->pulse();
     MSG message{};
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
         expect(message.message != WM_QUIT, "HUD stays alive");
@@ -58,6 +63,32 @@ void await(chatview::NativeChatConnection &chat, const std::function<bool()> &do
 std::wstring text(HWND dialog, int id)
 {
     wchar_t value[1024]{}; GetDlgItemTextW(dialog, id, value, 1024); return value;
+}
+void expect_status(chatview::NativeChatConnection &chat, Status expected)
+{
+    const UINT query = RegisterWindowMessageW(chatview::kQueryNativeChatMessageName);
+    expect(query != 0, "register current display query");
+    await(chat, [&] {
+        const auto status = chatview::decode_native_chat_status(static_cast<std::uint64_t>(
+            SendMessageW(Access::host(chat), query, 0, 0)));
+        return status == expected && text(Access::dialog(chat), 113) == chatview::native_chat_status_text_ko(expected) &&
+            (IsWindowEnabled(GetDlgItem(Access::dialog(chat), 112)) != FALSE) == chatview::can_request_native_chat_return(expected) &&
+            (!center || center->matches(expected));
+    }, "Control Center, native status and return button agree");
+    if (center) expect(center->video_warning(), "Control Center keeps independent video warning");
+    const HWND label = GetDlgItem(Access::dialog(chat), 113);
+    RECT client{}; expect(GetClientRect(label, &client) != FALSE, "display status bounds");
+    const auto value = text(Access::dialog(chat), 113);
+    const HDC dc = GetDC(label); expect(dc != nullptr, "display text measurement");
+    const auto font = reinterpret_cast<HFONT>(SendMessageW(label, WM_GETFONT, 0, 0));
+    const auto old = font ? SelectObject(dc, font) : nullptr;
+    RECT required{0, 0, client.right, 0};
+    const int height = DrawTextW(dc, value.c_str(), static_cast<int>(value.size()), &required,
+        DT_LEFT | DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+    if (old && old != HGDI_ERROR) SelectObject(dc, old);
+    ReleaseDC(label, dc);
+    expect(height > 0 && required.bottom <= client.bottom && required.right <= client.right,
+        "display status fits the actual native control/font");
 }
 std::wstring evaluate(ICoreWebView2 *core, const wchar_t *script, chatview::NativeChatConnection &chat)
 {
@@ -108,10 +139,17 @@ EventRegistrationToken mock_external(ICoreWebView2 *core)
 }
 void external(chatview::NativeChatConnection &chat, ICoreWebView2 *core)
 {
-    expect(chatview::save_chat_config({kExternal}), "save existing normalized external configuration");
-    const UINT change = RegisterWindowMessageW(chatview::kConfigChangedMessageName);
-    expect(change != 0, "existing apply message");
-    SendMessageW(Access::host(chat), change, 0, 0);
+    if (center) {
+        center->edit_external(kExternal);
+        expect_status(chat, Status::Receiving); // Editing settings does not change the actual display.
+        center->apply_external();
+        await(chat, [&] { return !Access::active(chat); }, "real Control Center applies external page");
+    } else {
+        expect(chatview::save_chat_config({kExternal}), "save existing normalized external configuration");
+        const UINT change = RegisterWindowMessageW(chatview::kConfigChangedMessageName);
+        expect(change != 0, "existing apply message");
+        SendMessageW(Access::host(chat), change, 0, 0);
+    }
     expect(!Access::active(chat) && !Access::surface(chat).ready() && !Access::membership(chat),
         "external apply synchronously fences delivery before navigation");
     await(chat, [&] {
@@ -119,8 +157,10 @@ void external(chatview::NativeChatConnection &chat, ICoreWebView2 *core)
             L"document.querySelector('#external-marker')?.textContent === 'External fixture'", chat) == L"true";
     }, "external page loads after display stop");
     expect(evaluate(core, L"privateFrames === 0", chat) == L"true", "no private snapshot reaches the external document");
+    expect_status(chat, Status::ExternalPageResumable);
 }
-void run(const std::wstring &origin, const std::wstring &other, const std::string &mode)
+void run(const std::wstring &origin, const std::wstring &other, const std::string &mode,
+         const std::filesystem::path &config_executable)
 {
     wchar_t temporary[MAX_PATH]{}; expect(GetTempPathW(MAX_PATH, temporary) != 0, "temporary root");
     const auto profile = std::wstring(temporary) + L"ChatView-Switch-" + std::to_wstring(GetCurrentProcessId());
@@ -134,9 +174,18 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     });
     hud.show_ready();
     await(chat, [&] { return WaitForSingleObject(ready.get(), 0) == WAIT_OBJECT_0; }, "HUD startup");
-    expect(chat.open_dialog(), "existing connection panel");
+    if (mode == "memory") {
+        center = std::make_unique<ControlCenterDriver>(); center->start(config_executable);
+        await(chat, [&] { return center->matches(Status::Idle) && IsWindowEnabled(GetDlgItem(center->window(), 1009)); },
+            "actual Control Center finds production HUD");
+        center->open_panel();
+        await(chat, [&] { return Access::dialog(chat) && IsWindowVisible(Access::dialog(chat)); }, "Control Center opens existing native panel");
+        expect(!std::filesystem::exists(std::filesystem::path(profile) / L"ChatView" / L"config.ini"),
+            "open/query never saves an external URL");
+    } else expect(chat.open_dialog(), "existing connection panel");
     const HWND dialog = Access::dialog(chat);
     expect(GetDlgItem(dialog, 112) != nullptr, "explicit current-approval return button");
+    expect_status(chat, Status::Idle);
     command(dialog, 112);
     expect(!Access::client(chat).running(), "return without a current approval does not log in");
     SetDlgItemTextW(dialog, 101, origin.c_str());
@@ -144,6 +193,7 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     SendDlgItemMessageW(dialog, 107, BM_SETCHECK, mode == "remembered" ? BST_CHECKED : BST_UNCHECKED, 0);
     command(dialog, 104);
     await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "initial private chat renders");
+    expect_status(chat, Status::Receiving);
     const auto initial = Access::membership(chat);
     expect(initial.has_value(), "initial approved membership");
     ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(Access::surface(chat));
@@ -151,8 +201,19 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     if (mode == "unrelated") expect(chatview::save_connection({origin, other, true}), "unrelated saved account fixture");
     external(chat, core.Get());
     expect(Access::client(chat).can_resume_current(), "ordinary external switch retains current approval");
+    if (center) {
+        // Empty Apply chooses setup, not a falsely reported external page. The
+        // retained approval still permits a request, without creating new consent.
+        center->edit_external(L""); center->apply_external();
+        expect_status(chat, Status::IdleResumable);
+        center->edit_external(kExternal); center->apply_external();
+        expect_status(chat, Status::ExternalPageResumable);
+        await(chat, [&] { return evaluate(core.Get(), L"typeof privateFrames === 'number'", chat) == L"true"; }, "external fixture returns");
+        SendMessageW(dialog, WM_CLOSE, 0, 0); center->open_panel();
+        await(chat, [&] { return IsWindowVisible(dialog); }, "same native panel reopens from Control Center");
+        expect(Access::dialog(chat) == dialog, "Control Center reuses one panel and approval");
+    }
     // Wait for the server to inspect the stopped connection/revoke when needed.
-    // Delivery is stopped here; the UI does not need to service a live request.
     std::cout << "external-ready\n" << std::flush;
     std::string next; std::getline(std::cin, next); expect(next == "continue", "server transition acknowledged");
     expect(evaluate(core.Get(), L"privateFrames === 0", chat) == L"true", "late server changes do not enter external document");
@@ -165,33 +226,45 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
         await(chat, [&] { return !Access::client(chat).running() && !Access::active(chat); }, "invalid resumed approval stops");
         expect(!Access::membership(chat) && Access::surface(chat).rendered_messages() == 0,
             "revoked or substituted membership never publishes private chat");
-        if (mode == "revoked") expect(!Access::client(chat).can_resume_current(), "server denial removes return authority");
+        if (mode == "revoked") {
+            expect(!Access::client(chat).can_resume_current(), "server denial removes return authority");
+            expect_status(chat, Status::Idle);
+        }
     } else {
         await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "same approval returns to native chat");
+        expect_status(chat, Status::Receiving);
         expect(Access::membership(chat)->membership == initial->membership, "exact role/session/connection survives return");
         auto saved = chatview::load_connection();
         if (mode == "remembered") expect(saved.has_value(), "remembered connection preserved");
         else if (mode == "unrelated") expect(saved && saved->credential == other, "return preserves unrelated stored account");
         else expect(!saved, "return never persists memory-only approval despite edited checkbox");
         if (saved) SecureZeroMemory(saved->credential.data(), saved->credential.size() * sizeof(wchar_t));
-        // A second ordinary stop also permits explicit return without a browser.
         command(dialog, 105);
         await(chat, [&] { return !Access::client(chat).running(); }, "ordinary stop completes", 2000U);
+        expect_status(chat, Status::IdleResumable);
         command(dialog, 112);
         await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "return after ordinary stop");
+        expect_status(chat, Status::Receiving);
         expect(Access::membership(chat)->membership == initial->membership, "stop/return preserves membership");
+        if (center) external(chat, core.Get());
         command(dialog, 108);
         await(chat, [&] { return !Access::signing_out(chat) && !Access::client(chat).running(); }, "explicit logout completes");
         expect(!Access::client(chat).can_resume_current(), "logout intent cannot be undone by return");
+        expect_status(chat, center ? Status::ExternalPage : Status::Idle);
         command(dialog, 112);
         expect(!Access::client(chat).running(), "return after logout never renews or opens a browser");
         if (mode == "logout-failure") {
             command(dialog, 108);
             await(chat, [&] { return !Access::signing_out(chat) && !Access::client(chat).running(); }, "explicit logout retry");
+            expect_status(chat, Status::Idle);
         }
     }
     expect(text(dialog, 111).find(L"수신 영상의 HUD 제외: 미검증") != std::wstring::npos,
         "switching never changes the video verification boundary");
+    if (center) {
+        center->request_close(); await(chat, [&] { return center->exited(); }, "Control Center closes independently", 5000U);
+        expect(center->succeeded(), "Control Center exits successfully"); center.reset();
+    }
     core->remove_WebResourceRequested(resource);
     chat.close(); hud.destroy();
 }
@@ -199,15 +272,16 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
 int main(int argc, char **argv)
 {
     try {
-        expect(argc == 2, "test mode");
+        expect(argc == 3, "test mode and Control Center executable");
         std::string origin, other;
         std::getline(std::cin, origin); std::getline(std::cin, other);
         expect(origin.size() < 2048U && other.size() == 64U, "bounded fixture input");
         expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM startup");
-        try { run(std::wstring(origin.begin(), origin.end()), std::wstring(other.begin(), other.end()), argv[1]); }
-        catch (...) { CoUninitialize(); throw; }
+        try { run(std::wstring(origin.begin(), origin.end()), std::wstring(other.begin(), other.end()), argv[1],
+            std::filesystem::absolute(argv[2])); }
+        catch (...) { center.reset(); CoUninitialize(); throw; }
         CoUninitialize();
-        std::cout << "Native external-page switch and exact-approval return passed\n"; return 0;
+        std::cout << "Native external-page switch, local presentation and exact-approval return passed\n"; return 0;
     } catch (const std::exception &error) {
         std::cerr << "Native chat switch failed: " << error.what() << '\n'; return 1;
     }

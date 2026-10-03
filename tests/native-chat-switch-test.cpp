@@ -1,0 +1,214 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Real HUD/WebView2 and WinHTTP; provider, external page and consent are fixtures.
+#include "hud/display-client.hpp"
+#include "hud/hud-window.hpp"
+#include "hud/native-chat-connection.hpp"
+#include "hud/saved-connection.hpp"
+#include "common/chat-config.hpp"
+#include "common/window-messages.hpp"
+#include "common/win32-handle.hpp"
+#include <Windows.h>
+#include <objbase.h>
+#include <wrl/event.h>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <string>
+
+namespace chatview {
+struct NativeChatConnectionTestAccess {
+    static HWND host(NativeChatConnection &c) { return c.host_; }
+    static HWND dialog(NativeChatConnection &c) { return c.dialog_; }
+    static bool active(NativeChatConnection &c) { return c.active_; }
+    static bool signing_out(NativeChatConnection &c) { return c.signing_out_; }
+    static DisplayClient &client(NativeChatConnection &c) { return c.client_; }
+    static NativeChatSurface &surface(NativeChatConnection &c) { return c.surface_; }
+    static auto membership(NativeChatConnection &c) { return c.connection_state_; }
+};
+struct NativeChatSurfaceTestAccess {
+    static ICoreWebView2 *core(NativeChatSurface &s) { return s.webview_.Get(); }
+};
+}
+namespace {
+using Access = chatview::NativeChatConnectionTestAccess;
+using Microsoft::WRL::ComPtr;
+using Microsoft::WRL::Callback;
+constexpr wchar_t kExternal[] = L"https://www.youtube.com/live_chat?is_popout=1&v=chatview123";
+void expect(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
+void pump(chatview::NativeChatConnection &chat)
+{
+    MSG message{};
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+        expect(message.message != WM_QUIT, "HUD stays alive");
+        if (chat.dispatch(message)) continue;
+        TranslateMessage(&message); DispatchMessageW(&message);
+    }
+    chat.tick();
+}
+void await(chatview::NativeChatConnection &chat, const std::function<bool()> &done,
+           const char *message, ULONGLONG duration = 15000U)
+{
+    const auto deadline = GetTickCount64() + duration;
+    while (!done()) {
+        expect(GetTickCount64() < deadline, message); pump(chat);
+        MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    }
+}
+std::wstring text(HWND dialog, int id)
+{
+    wchar_t value[1024]{}; GetDlgItemTextW(dialog, id, value, 1024); return value;
+}
+std::wstring evaluate(ICoreWebView2 *core, const wchar_t *script, chatview::NativeChatConnection &chat)
+{
+    struct Result { bool done = false; HRESULT status = E_FAIL; std::wstring value; };
+    auto result = std::make_shared<Result>();
+    expect(SUCCEEDED(core->ExecuteScript(script, Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+        [result](HRESULT status, LPCWSTR value) -> HRESULT {
+            result->status = status; if (value) result->value = value; result->done = true; return S_OK;
+        }).Get())), "queue DOM inspection");
+    await(chat, [&] { return result->done; }, "DOM inspection completes");
+    expect(SUCCEEDED(result->status), "DOM inspection succeeds"); return result->value;
+}
+void command(HWND dialog, int id) { SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED), 0); }
+// Supply a fixed external-origin document without changing navigation policy,
+// disabling TLS checks, making internet requests or adding production hooks.
+EventRegistrationToken mock_external(ICoreWebView2 *core)
+{
+    ComPtr<ICoreWebView2_2> second;
+    expect(SUCCEEDED(core->QueryInterface(IID_PPV_ARGS(&second))), "WebView2 environment interface");
+    ComPtr<ICoreWebView2Environment> environment;
+    expect(SUCCEEDED(second->get_Environment(&environment)), "existing WebView2 environment");
+    expect(SUCCEEDED(core->AddWebResourceRequestedFilter(kExternal, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT)), "external fixture filter");
+    EventRegistrationToken token{};
+    expect(SUCCEEDED(core->add_WebResourceRequested(Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+        [environment](ICoreWebView2 *, ICoreWebView2WebResourceRequestedEventArgs *args) -> HRESULT {
+            ComPtr<ICoreWebView2WebResourceRequest> request;
+            if (FAILED(args->get_Request(&request))) return E_FAIL;
+            LPWSTR uri = nullptr;
+            const bool matches = SUCCEEDED(request->get_Uri(&uri)) && uri && std::wstring(uri) == kExternal;
+            CoTaskMemFree(uri); if (!matches) return S_OK;
+            constexpr char html[] = "<!doctype html><meta charset='utf-8'><div id='external-marker'>External fixture</div>"
+                "<script>globalThis.privateFrames=0;window.chrome.webview.addEventListener('message',e=>{"
+                "if(e.data&&e.data.type==='chat-snapshot')++globalThis.privateFrames;});</script>";
+            ComPtr<IStream> stream;
+            if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream))) return E_FAIL;
+            ULONG written = 0;
+            if (FAILED(stream->Write(html, static_cast<ULONG>(sizeof(html) - 1U), &written)) || written != static_cast<ULONG>(sizeof(html) - 1U))
+                return E_FAIL;
+            LARGE_INTEGER zero{};
+            if (FAILED(stream->Seek(zero, STREAM_SEEK_SET, nullptr))) return E_FAIL;
+            ComPtr<ICoreWebView2WebResourceResponse> response;
+            const auto result = environment->CreateWebResourceResponse(stream.Get(), 200, L"OK",
+                L"Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; script-src 'unsafe-inline'",
+                &response);
+            return SUCCEEDED(result) ? args->put_Response(response.Get()) : result;
+        }).Get(), &token)), "external fixture response");
+    return token;
+}
+void external(chatview::NativeChatConnection &chat, ICoreWebView2 *core)
+{
+    expect(chatview::save_chat_config({kExternal}), "save existing normalized external configuration");
+    const UINT change = RegisterWindowMessageW(chatview::kConfigChangedMessageName);
+    expect(change != 0, "existing apply message");
+    SendMessageW(Access::host(chat), change, 0, 0);
+    expect(!Access::active(chat) && !Access::surface(chat).ready() && !Access::membership(chat),
+        "external apply synchronously fences delivery before navigation");
+    await(chat, [&] {
+        return !Access::client(chat).running() && evaluate(core,
+            L"document.querySelector('#external-marker')?.textContent === 'External fixture'", chat) == L"true";
+    }, "external page loads after display stop");
+    expect(evaluate(core, L"privateFrames === 0", chat) == L"true", "no private snapshot reaches the external document");
+}
+void run(const std::wstring &origin, const std::wstring &other, const std::string &mode)
+{
+    wchar_t temporary[MAX_PATH]{}; expect(GetTempPathW(MAX_PATH, temporary) != 0, "temporary root");
+    const auto profile = std::wstring(temporary) + L"ChatView-Switch-" + std::to_wstring(GetCurrentProcessId());
+    expect(CreateDirectoryW(profile.c_str(), nullptr) != FALSE, "isolated profile");
+    expect(SetEnvironmentVariableW(L"LOCALAPPDATA", profile.c_str()) != FALSE, "isolated storage");
+    chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    chatview::HudWindow hud;
+    expect(hud.create(GetModuleHandleW(nullptr), ready.get()), "create real HUD");
+    chatview::NativeChatConnection chat(hud, chatview::DisplayRole::Streaming, [](HWND, const wchar_t *) {
+        std::cout << "browser-opened\n" << std::flush; return true;
+    });
+    hud.show_ready();
+    await(chat, [&] { return WaitForSingleObject(ready.get(), 0) == WAIT_OBJECT_0; }, "HUD startup");
+    expect(chat.open_dialog(), "existing connection panel");
+    const HWND dialog = Access::dialog(chat);
+    expect(GetDlgItem(dialog, 112) != nullptr, "explicit current-approval return button");
+    command(dialog, 112);
+    expect(!Access::client(chat).running(), "return without a current approval does not log in");
+    SetDlgItemTextW(dialog, 101, origin.c_str());
+    SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
+    SendDlgItemMessageW(dialog, 107, BM_SETCHECK, mode == "remembered" ? BST_CHECKED : BST_UNCHECKED, 0);
+    command(dialog, 104);
+    await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "initial private chat renders");
+    const auto initial = Access::membership(chat);
+    expect(initial.has_value(), "initial approved membership");
+    ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(Access::surface(chat));
+    const auto resource = mock_external(core.Get());
+    if (mode == "unrelated") expect(chatview::save_connection({origin, other, true}), "unrelated saved account fixture");
+    external(chat, core.Get());
+    expect(Access::client(chat).can_resume_current(), "ordinary external switch retains current approval");
+    // Wait for the server to inspect the stopped connection/revoke when needed.
+    // Delivery is stopped here; the UI does not need to service a live request.
+    std::cout << "external-ready\n" << std::flush;
+    std::string next; std::getline(std::cin, next); expect(next == "continue", "server transition acknowledged");
+    expect(evaluate(core.Get(), L"privateFrames === 0", chat) == L"true", "late server changes do not enter external document");
+    // Edited controls and unrelated stored credentials must not retarget return.
+    SetDlgItemTextW(dialog, 101, L"https://not-the-current-service.invalid");
+    SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_UNCHECKED, 0);
+    SendDlgItemMessageW(dialog, 107, BM_SETCHECK, BST_CHECKED, 0);
+    command(dialog, 112); command(dialog, 112);
+    if (mode == "revoked" || mode == "mismatch") {
+        await(chat, [&] { return !Access::client(chat).running() && !Access::active(chat); }, "invalid resumed approval stops");
+        expect(!Access::membership(chat) && Access::surface(chat).rendered_messages() == 0,
+            "revoked or substituted membership never publishes private chat");
+        if (mode == "revoked") expect(!Access::client(chat).can_resume_current(), "server denial removes return authority");
+    } else {
+        await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "same approval returns to native chat");
+        expect(Access::membership(chat)->membership == initial->membership, "exact role/session/connection survives return");
+        auto saved = chatview::load_connection();
+        if (mode == "remembered") expect(saved.has_value(), "remembered connection preserved");
+        else if (mode == "unrelated") expect(saved && saved->credential == other, "return preserves unrelated stored account");
+        else expect(!saved, "return never persists memory-only approval despite edited checkbox");
+        if (saved) SecureZeroMemory(saved->credential.data(), saved->credential.size() * sizeof(wchar_t));
+        // A second ordinary stop also permits explicit return without a browser.
+        command(dialog, 105);
+        await(chat, [&] { return !Access::client(chat).running(); }, "ordinary stop completes", 2000U);
+        command(dialog, 112);
+        await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "return after ordinary stop");
+        expect(Access::membership(chat)->membership == initial->membership, "stop/return preserves membership");
+        command(dialog, 108);
+        await(chat, [&] { return !Access::signing_out(chat) && !Access::client(chat).running(); }, "explicit logout completes");
+        expect(!Access::client(chat).can_resume_current(), "logout intent cannot be undone by return");
+        command(dialog, 112);
+        expect(!Access::client(chat).running(), "return after logout never renews or opens a browser");
+        if (mode == "logout-failure") {
+            command(dialog, 108);
+            await(chat, [&] { return !Access::signing_out(chat) && !Access::client(chat).running(); }, "explicit logout retry");
+        }
+    }
+    expect(text(dialog, 111).find(L"수신 영상의 HUD 제외: 미검증") != std::wstring::npos,
+        "switching never changes the video verification boundary");
+    core->remove_WebResourceRequested(resource);
+    chat.close(); hud.destroy();
+}
+}
+int main(int argc, char **argv)
+{
+    try {
+        expect(argc == 2, "test mode");
+        std::string origin, other;
+        std::getline(std::cin, origin); std::getline(std::cin, other);
+        expect(origin.size() < 2048U && other.size() == 64U, "bounded fixture input");
+        expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM startup");
+        try { run(std::wstring(origin.begin(), origin.end()), std::wstring(other.begin(), other.end()), argv[1]); }
+        catch (...) { CoUninitialize(); throw; }
+        CoUninitialize();
+        std::cout << "Native external-page switch and exact-approval return passed\n"; return 0;
+    } catch (const std::exception &error) {
+        std::cerr << "Native chat switch failed: " << error.what() << '\n'; return 1;
+    }
+}

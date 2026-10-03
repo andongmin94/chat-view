@@ -28,6 +28,10 @@ public:
                              DisplayAuthentication authentication = DisplayAuthentication::OneTime,
                              DisplayRole role = DisplayRole::Gaming) noexcept;
     void stop() noexcept;
+    // Explicit in-process return only: no disk lookup, login, role change or
+    // persistence side effect. Refuses a running or logout-requested context.
+    [[nodiscard]] bool can_resume_current() const noexcept;
+    [[nodiscard]] bool resume_current() noexcept;
     // Only the validated local OBS transport supplies these observations.
     // Sampling does no I/O; an independent cancellable worker reports them.
     void observe_outputs(ObsOutputObservation sample) noexcept;

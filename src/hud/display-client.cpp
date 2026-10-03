@@ -276,6 +276,7 @@ struct DisplayClient::State {
     std::wstring login_url;
     std::wstring origin;
     std::wstring renewal;
+    std::optional<DisplayMembership> approved_membership;
     std::wstring output_token;
     ObsOutputObservation output_sample;
     ULONGLONG output_expires = 0U;
@@ -335,6 +336,43 @@ void DisplayClient::stop() noexcept
     if (!state_) return;
     SetEvent(state_->cancel.get()); SetEvent(state_->logout_cancel.get()); SetEvent(state_->output_cancel.get());
     state_->finish(DisplayStatus::Ended);
+}
+bool DisplayClient::can_resume_current() const noexcept
+{
+    if (!state_) return false;
+    std::lock_guard lock(state_->mutex);
+    return state_->finished.load() && !state_->logout_requested &&
+        state_->approved_membership.has_value() && key(state_->renewal);
+}
+bool DisplayClient::resume_current() noexcept
+{
+    try {
+        if (!can_resume_current()) return false;
+        // finished is published after both I/O workers have exited. Reuse that
+        // exact context, not the edited origin field or another saved account.
+        if (worker_.joinable()) worker_.join();
+        const auto state = state_;
+        std::wstring credential; SecretWipe wipe{credential};
+        {
+            std::lock_guard lock(state->mutex);
+            credential = state->renewal;
+            require(ResetEvent(state->cancel.get()) && ResetEvent(state->logout_cancel.get()) &&
+                ResetEvent(state->output_cancel.get()) && ResetEvent(state->output_changed.get()));
+            state->latest = {DisplayStatus::Connecting, {}, false};
+            state->login_url.clear(); state->pending = true;
+            state->expires = 0; state->last_frame = 0;
+            erase(state->output_token); state->output_expires = 0; state->output_sample = {};
+            state->finished.store(false);
+        }
+        // Saved selects renewal authentication; it never writes a DPAPI file.
+        // A memory-only approval therefore remains memory-only on this path.
+        worker_ = std::thread(&DisplayClient::run, state, state->origin,
+            std::move(credential), state->local, DisplayAuthentication::Saved);
+        return true;
+    } catch (...) {
+        if (state_) { state_->finish(DisplayStatus::Failed); state_->finished.store(true); }
+        return false;
+    }
 }
 bool DisplayClient::sign_out() noexcept
 {
@@ -503,7 +541,7 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
         const DWORD flags = target.secure ? WINHTTP_FLAG_SECURE : 0;
         if (state->role == DisplayRole::Streaming) output_worker = std::thread(&DisplayClient::run_outputs, state);
         std::optional<winrt::Windows::Data::Json::JsonObject> approved_lease;
-        std::optional<DisplayMembership> bound_membership;
+        auto bound_membership = state->approved_membership;
         ULONGLONG approved_started = 0U;
         if (authentication == DisplayAuthentication::Browser || authentication == DisplayAuthentication::BrowserRemember) {
             const bool keep = authentication == DisplayAuthentication::BrowserRemember;
@@ -564,7 +602,6 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                 const auto approved = membership(lease.GetNamedObject(L"membership"));
                 if (approved.role != state->role) throw RoleMismatch{};
                 require(!bound_membership || *bound_membership == approved);
-                bound_membership = approved;
                 std::wstring output_token; SecretWipe wipe_output{output_token};
                 if (state->role == DisplayRole::Streaming) {
                     require(lease.GetNamedString(L"outputScope") == L"broadcast:report");
@@ -591,6 +628,8 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                     renewable = true;
                     { std::lock_guard lock(state->mutex); state->reusable = true; }
                 }
+                bound_membership = approved;
+                { std::lock_guard lock(state->mutex); state->approved_membership = approved; }
                 const auto expires = started + static_cast<ULONGLONG>(duration);
                 const auto renew = started + static_cast<ULONGLONG>(duration * 0.8);
                 network(GetTickCount64() < renew);

@@ -20,7 +20,7 @@ public:
     bool open_dialog() noexcept;
     void tick() noexcept;
     void observe_outputs(ObsOutputObservation sample) noexcept { client_.observe_outputs(sample); }
-    [[nodiscard]] DWORD wait_timeout() const noexcept { return active_ || auto_connect_pending_ || signing_out_ ? 100U : INFINITE; }
+    [[nodiscard]] DWORD wait_timeout() const noexcept { return active_ || auto_connect_pending_ || signing_out_ || client_.running() ? 100U : INFINITE; }
     void close() noexcept;
 private:
     friend struct NativeChatConnectionTestAccess;
@@ -28,6 +28,7 @@ private:
     static LRESULT CALLBACK host_procedure(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
     NativeChatStatus local_status() const noexcept;
     void connect() noexcept;
+    void resume_current() noexcept;
     void begin(std::wstring origin, std::wstring credential, bool local, DisplayAuthentication mode) noexcept;
     bool open_surface() noexcept;
     void forget() noexcept;

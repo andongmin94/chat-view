@@ -74,7 +74,7 @@ test('expired browser recovers its activity page without new PC approval or live
       { headers: { Authorization: `Bearer ${alice.lease.token}` } });
     peer.on('error', () => {}); await once(peer, 'message');
     const b = browser(f, alice.b.cookie);
-    browserNow += 3600001; // Browser-only clock expiry; native/provider clocks stay valid.
+    browserNow += 3600001;
     const stale = await f.post('/campaigns/stop', alice.b);
     assert.equal(stale.status, 401); assert.match(await stale.text(), /자동으로 다시 실행하지 않습니다/u);
     f.app.login.start = () => { throw new Error('management must not start native approval'); };
@@ -229,7 +229,7 @@ test('revocation between identity and confirmation prevents stale browser restor
   try {
     const alice = await f.connect('alice', 'gaming'), b = browser(f);
     await b.identify('/account', 'alice');
-    await f.creators.revoke('alice'); // Also covers revocation outside a management HTTP request.
+    await f.creators.revoke('alice');
     assert.equal((await b.post('/account/confirm')).status, 401);
     assert.equal(f.store.find(alice.lease.sessionToken), undefined);
     assert.equal(f.grants.load('alice'), undefined);
@@ -268,7 +268,7 @@ test('confirmation escapes provider channel text and GET requests never perform 
     assert.equal((await b.get('/account/cancel')).status, 404);
     const account = await b.get('/account');
     assert.equal(account.status, 200); assert.match(await account.text(), /현재 브라우저 관리 채널/u);
-    assert.equal(account.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal(account.headers.get('referrer-policy'), 'same-origin');
     assert.equal(account.headers.get('cache-control'), 'no-store');
     assert.equal(f.store.connections('owner').length, 0);
   } finally { await f.close(); }

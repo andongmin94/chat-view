@@ -3,10 +3,35 @@
 // deliberately supplied by the fixture, not evidence of browser behavior.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { request } from 'node:http';
 import { fixture } from './fixtures/service.mts';
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 const navigation = { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' };
+// Undici overwrites Sec-Fetch-Mode with cors. Use raw HTTP only in this
+// protocol-negative fixture so the intended navigate/document values reach
+// the server; actual browser generation is checked by the Chromium flow.
+function get(f: Fixture, path: string, headers: Record<string, string>): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const req = request(f.origin + path, { method: 'GET', headers }, response => {
+      const chunks: Buffer[] = []; let size = 0;
+      response.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > 262144) { response.destroy(new Error('Fixture response too large')); return; }
+        chunks.push(chunk);
+      });
+      response.on('error', reject);
+      response.on('end', () => {
+        const out = new Headers();
+        for (let i = 0; i < response.rawHeaders.length; i += 2)
+          out.append(response.rawHeaders[i]!, response.rawHeaders[i + 1]!);
+        resolve(new Response(Buffer.concat(chunks).toString('utf8'), { status: response.statusCode!, headers: out }));
+      });
+    });
+    req.setTimeout(5000, () => req.destroy(new Error('Fixture request timeout')));
+    req.on('error', reject); req.end();
+  });
+}
 const cookie = (response: Response) => response.headers.get('set-cookie')!.split(';')[0]!;
 const csrf = (html: string) => /name="csrf" value="([a-f0-9]{64})"/u.exec(html)![1]!;
 async function callback(f: Fixture, native = false) {
@@ -28,7 +53,7 @@ test('only the rotated browser gets one exact top-level callback landing, never 
   const f = await fixture();
   try {
     const b = await callback(f);
-    const read = (path: string, headers: Record<string, string>) => f.request(path, { headers });
+    const read = (path: string, headers: Record<string, string>) => get(f, path, headers);
     assert.equal((await read(b.path, navigation)).status, 403);
     assert.equal((await read(b.path, { ...navigation, Cookie: b.old })).status, 403);
     assert.equal((await read('/campaigns', { ...navigation, Cookie: b.current })).status, 403);
@@ -62,14 +87,14 @@ test('native callback lands only on its initiating request and still needs expli
   try {
     const b = await callback(f, true);
     assert(b.pending);
-    assert.equal((await f.request('/account/confirm', { headers: { ...navigation, Cookie: b.current } })).status, 403);
-    assert.equal((await f.request('/login/' + '0'.repeat(32), { headers: { ...navigation, Cookie: b.current } })).status, 403);
-    const response = await f.request(b.path, { headers: { ...navigation, Cookie: b.current } });
+    assert.equal((await get(f, '/account/confirm', { ...navigation, Cookie: b.current })).status, 403);
+    assert.equal((await get(f, '/login/' + '0'.repeat(32), { ...navigation, Cookie: b.current })).status, 403);
+    const response = await get(f, b.path, { ...navigation, Cookie: b.current });
     assert.equal(response.status, 200);
     const proof = csrf(await response.text());
     assert.equal(f.app.login.view(b.pending.id).role, 'gaming');
     assert.deepEqual(f.store.connections('alice'), []);
-    assert.equal((await f.request(b.path, { headers: { ...navigation, Cookie: b.current } })).status, 403);
+    assert.equal((await get(f, b.path, { ...navigation, Cookie: b.current })).status, 403);
     assert.equal((await f.post(`/login/${b.pending.id}/approve`, { cookie: b.current, csrf: proof })).status, 200);
     const result = await f.native(`/display/login/${b.pending.id}`, 'ChatView-Login', b.pending.verifier);
     assert.equal(result.status, 200);
@@ -84,21 +109,20 @@ test('expired, consumed or cancelled return allowance cannot reopen a cross-site
   try {
     let b = await callback(f);
     now += 30_000;
-    assert.equal((await f.request(b.path, { headers: { ...navigation, Cookie: b.current } })).status, 403);
-    const ordinary = await f.request(b.path, { headers: { Cookie: b.current } });
+    assert.equal((await get(f, b.path, { ...navigation, Cookie: b.current })).status, 403);
+    const ordinary = await get(f, b.path, { Cookie: b.current });
     assert.equal(ordinary.status, 200, 'short landing lifetime does not silently approve or erase valid pending consent');
     const cancelled = await f.post('/account/cancel', { cookie: b.current, csrf: csrf(await ordinary.text()) });
     const freshCookie = cookie(cancelled);
     for (const value of [b.current, freshCookie])
-      assert.equal((await f.request(b.path, { headers: { ...navigation, Cookie: value } })).status, 403);
+      assert.equal((await get(f, b.path, { ...navigation, Cookie: value })).status, 403);
     b = await callback(f);
-    assert.equal((await f.request(b.path, { headers: { Cookie: b.current } })).status, 200);
-    assert.equal((await f.request(b.path, { headers: { ...navigation, Cookie: b.current } })).status, 403,
+    assert.equal((await get(f, b.path, { Cookie: b.current })).status, 200);
+    assert.equal((await get(f, b.path, { ...navigation, Cookie: b.current })).status, 403,
       'a normal first landing also consumes the cross-site allowance');
     assert.deepEqual(f.store.connections('alice'), []);
   } finally { await f.close(); }
 });
-
 
 test('HTML forms keep exact Origin/CSRF checks instead of accepting opaque origins', async () => {
   const f = await fixture();

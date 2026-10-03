@@ -2,6 +2,7 @@
 #include "hud/window-capture.hpp"
 #include "hud/capture-worker-wait.hpp"
 #include "hud/video-layout.hpp"
+#include "hud/video-frame-time.hpp"
 #include <d3d11.h>
 #include <d2d1_1.h>
 #include <dxgi1_2.h>
@@ -156,7 +157,7 @@ struct WindowCapture::State {
     std::atomic<bool> cancel{false}, closed{false}, finished{false};
     std::atomic<WindowCaptureStatus> status{WindowCaptureStatus::Starting};
     std::atomic<unsigned> width{0}, height{0};
-    std::atomic<std::uint64_t> frames{0};
+    std::atomic<std::uint64_t> frames{0}, content_at_ms{0};
 };
 WindowCapture::~WindowCapture() { close(); }
 void WindowCapture::close() noexcept
@@ -184,13 +185,13 @@ bool WindowCapture::start(HWND source, HWND output) noexcept
 }
 void WindowCapture::stop() noexcept
 {
-    if (state_) { state_->cancel.store(true); SetEvent(state_->wake.value); }
+    if (state_) { state_->cancel.store(true); state_->content_at_ms.store(0); SetEvent(state_->wake.value); }
 }
 bool WindowCapture::running() const noexcept { return state_ && !state_->finished.load(); }
 WindowCaptureSnapshot WindowCapture::snapshot() const noexcept
 {
     if (!state_) return {};
-    return {state_->status.load(), state_->width.load(), state_->height.load(), state_->frames.load()};
+    return {state_->status.load(), state_->width.load(), state_->height.load(), state_->frames.load(), state_->content_at_ms.load()};
 }
 void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, DWORD process, DWORD thread) noexcept
 {
@@ -227,7 +228,8 @@ void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, 
             if (state->cancel.load()) break;
             auto frame = capture.pool.TryGetNextFrame();
             if (!frame) {
-                if (GetTickCount64() - last >= 2000) {
+                if (GetTickCount64() - last >= kVideoFrameLifetimeMs) {
+                    state->content_at_ms.store(0);
                     if (painted) { presenter->clear(); painted = false; }
                     state->status.store(WindowCaptureStatus::Waiting);
                 }
@@ -238,16 +240,22 @@ void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, 
             const auto content = frame.ContentSize();
             require(video_size(content.Width, content.Height));
             if (content.Width != size.Width || content.Height != size.Height) {
+                state->content_at_ms.store(0);
                 frame.Close(); presenter->clear(); painted = false;
                 capture.pool.Recreate(presenter->capture_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, content);
                 size = content; state->status.store(WindowCaptureStatus::Waiting); continue;
             }
             if (state->closed.load() || !source_alive(source, process, thread) || state->cancel.load()) { frame.Close(); continue; }
+            // Snapshot the local clock before QPC to conservatively map content
+            // age, never the completion time of a potentially blocking Present.
+            const auto observed = GetTickCount64();
             LARGE_INTEGER counter{}, frequency{};
             require(QueryPerformanceCounter(&counter) && QueryPerformanceFrequency(&frequency) && frequency.QuadPart > 0);
             const double age = static_cast<double>(counter.QuadPart) / static_cast<double>(frequency.QuadPart) -
                 static_cast<double>(frame.SystemRelativeTime().count()) / 10000000.0;
-            if (age > 2.0 || age < -0.1) {
+            const auto content_at = video_frame_time(observed, age);
+            if (!video_frame_fresh(GetTickCount64(), content_at)) {
+                state->content_at_ms.store(0);
                 frame.Close(); presenter->clear(); painted = false; state->status.store(WindowCaptureStatus::Waiting); continue;
             }
             auto access = frame.Surface().as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
@@ -255,11 +263,20 @@ void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, 
             check_hresult(access->GetInterface(__uuidof(ID3D11Texture2D), texture.put_void()));
             presenter->show(texture.get(), content);
             texture = nullptr; access = nullptr; frame.Close();
-            painted = true; last = GetTickCount64();
+            if (state->cancel.load() || state->closed.load() || !source_alive(source, process, thread) ||
+                !video_frame_fresh(GetTickCount64(), content_at)) {
+                state->content_at_ms.store(0);
+                presenter->clear(); painted = false; state->status.store(WindowCaptureStatus::Waiting); continue;
+            }
+            painted = true; last = content_at;
             state->width.store(static_cast<unsigned>(content.Width)); state->height.store(static_cast<unsigned>(content.Height));
+            state->content_at_ms.store(content_at);
             state->frames.fetch_add(1); state->status.store(WindowCaptureStatus::Capturing);
         }
     } catch (...) { final_status = WindowCaptureStatus::Failed; }
+    // Invalidate freshness BEFORE GPU teardown; the owner can independently
+    // cover an old frame even when clear/Present or driver cleanup is delayed.
+    state->content_at_ms.store(0);
     // Keep the output HWND black on stop/failure; only its owner may release it.
     try { if (presenter) presenter->clear(); } catch (...) { final_status = WindowCaptureStatus::Failed; }
     presenter.reset();

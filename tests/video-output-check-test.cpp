@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "hud/video-output-check.hpp"
+#include "hud/video-frame-time.hpp"
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -46,7 +47,36 @@ int main()
         expect(std::wstring_view(chatview::video_check_label(1).data()) == L"000001");
         expect(std::wstring_view(chatview::video_check_label(0xffffff).data()) == L"FFFFFF");
         expect(label.back() == L'\0');
-        std::cout << "Video output check: " << checks << " assertions passed\n";
+
+        using chatview::video_frame_fresh;
+        using chatview::video_frame_time;
+        expect(!video_frame_fresh(1000, 0));
+        expect(video_frame_fresh(1000, 1000));
+        expect(video_frame_fresh(2999, 1000));
+        expect(!video_frame_fresh(3000, 1000));
+        expect(!video_frame_fresh(1000, 1001));
+        expect(video_frame_fresh(maximum, maximum - 1999));
+        expect(!video_frame_fresh(maximum, maximum - 2000));
+        expect(!video_frame_fresh(0, maximum));
+        expect(video_frame_time(10000, 0) == 10000);
+        expect(video_frame_time(10000, -0.1) == 10000);
+        expect(video_frame_time(10000, -0.1001) == 0);
+        expect(video_frame_time(10000, 1.5) == 8500);
+        expect(video_frame_time(10000, 0.0001) == 9999);
+        expect(!video_frame_fresh(10000, video_frame_time(10000, 1.9999)));
+        expect(video_frame_time(10000, 2.0) == 0);
+        expect(video_frame_time(10000, 3.0) == 0);
+        expect(video_frame_time(0, 0) == 0);
+        expect(video_frame_time(500, 0.5) == 0); // No unsigned underflow.
+        expect(video_frame_time(1, 0) == 1);
+        expect(video_frame_time(10000, std::numeric_limits<double>::quiet_NaN()) == 0);
+        expect(video_frame_time(10000, std::numeric_limits<double>::infinity()) == 0);
+        expect(video_frame_time(10000, -std::numeric_limits<double>::infinity()) == 0);
+        const auto captured = video_frame_time(10000, 0.5);
+        expect(video_frame_fresh(11499, captured));
+        expect(!video_frame_fresh(11500, captured)); // A slow present cannot renew content age.
+        expect(!video_frame_fresh(14000, captured));
+        std::cout << "Video output check and frame freshness: " << checks << " assertions passed\n";
         return 0;
     } catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -4,12 +4,14 @@
 // Windows notifications are not an actual lock, hotplug or two-PC recording.
 #include "hud/video-output-panel.hpp"
 #include "hud/video-output-pattern.hpp"
+#include "hud/video-frame-time.hpp"
 #include "hud/hud-window.hpp"
 #include "common/win32-handle.hpp"
 #include <wtsapi32.h>
 #include <dbt.h>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -25,6 +27,7 @@ struct VideoOutputPanelTestAccess {
     static bool releasing(VideoOutputPanel &p) { return p.releasing_; }
     static bool choices_empty(VideoOutputPanel &p) { return p.sources_.empty() && p.monitors_.empty(); }
     static auto &capture(VideoOutputPanel &p) { return p.capture_; }
+    static void apply_snapshot(VideoOutputPanel &p, const WindowCaptureSnapshot &value) { p.update_capture(value); }
     static void place(VideoOutputPanel &p, HWND source) {
         p.output_bounds_ = {500, 30, 820, 270};
         p.source_ = source;
@@ -202,6 +205,34 @@ void pattern_pixels()
     }
     SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc);
 }
+void stale_frame_cover(chatview::VideoOutputPanel &panel, HWND hud)
+{
+    // Keep a real running WGC/GPU output, but feed its production UI consumer
+    // a frozen status timestamp. This tests the owner-side guard, not an actual
+    // driver hang; no production stall or topology override is introduced.
+    auto frozen = Access::capture(panel).snapshot();
+    expect(frozen.status == chatview::WindowCaptureStatus::Capturing &&
+        chatview::video_frame_fresh(GetTickCount64(), frozen.content_at_ms), "real capture publishes fresh content time");
+    const auto now = GetTickCount64();
+    frozen.content_at_ms = now >= chatview::kVideoFrameLifetimeMs ? now - chatview::kVideoFrameLifetimeMs : 0;
+    Access::apply_snapshot(panel, frozen);
+    expect(Access::capture(panel).running() && Access::requested(panel) && IsWindowVisible(Access::cover(panel)),
+        "owner masks expired Capturing status without waiting for worker shutdown");
+    await(black, "stale metadata masks real GPU pixels", 2000);
+    Access::apply_snapshot(panel, frozen);
+    expect(IsWindowVisible(Access::cover(panel)) && black(), "repeated old Capturing status cannot remove black cover");
+    frozen.content_at_ms = std::numeric_limits<std::uint64_t>::max();
+    Access::apply_snapshot(panel, frozen);
+    expect(IsWindowVisible(Access::cover(panel)) && black(), "future content timestamp cannot authorize display");
+    frozen.content_at_ms = 0;
+    Access::apply_snapshot(panel, frozen);
+    expect(IsWindowVisible(Access::cover(panel)) && IsWindowVisible(hud), "missing content time stays black without hiding HUD");
+    await([&] {
+        const auto fresh = Access::capture(panel).snapshot();
+        Access::apply_snapshot(panel, fresh);
+        return !IsWindowVisible(Access::cover(panel)) && video();
+    }, "new fresh content restores this running selection");
+}
 void exercise(const wchar_t *source_executable)
 {
     pattern_pixels();
@@ -242,7 +273,13 @@ void exercise(const wchar_t *source_executable)
     await([&] { return Access::capture(panel).snapshot().frames >= 2; }, "WGC begins only after confirmation", 10000);
     Access::reveal(panel); await(video, "pattern converts to selected game pixels");
     expect(IsWindowVisible(hud_window), "visual check and game conversion preserve private HUD");
+    stale_frame_cover(panel, hud_window);
+    auto late = Access::capture(panel).snapshot();
     SendMessageW(controls, WM_COMMAND, 205, 0); stopped(panel, hud_window);
+    expect(Access::capture(panel).snapshot().content_at_ms == 0, "stop retires previous content time");
+    late.content_at_ms = GetTickCount64();
+    Access::apply_snapshot(panel, late);
+    expect(IsWindowVisible(checked_cover) && black() && !Access::requested(panel), "late fresh status cannot resurrect a stopped selection");
     expect(!Access::accept_for_fixture(panel), "confirmation is not reusable after stop");
     Access::pattern(panel, game);
     SendMessageW(controls, WM_COMMAND, MAKEWPARAM(201, CBN_SELCHANGE), 0);
@@ -300,7 +337,7 @@ void exercise(const wchar_t *source_executable)
     panel.close();
     expect(!Access::capture(panel).running() && !IsWindow(final_output) && !Access::registered(panel), "active final close joins before HWND teardown and unregisters notifications");
     hud.destroy();
-    std::cout << "Production video lifecycle: pattern/confirmation, lock/resume, power, display/device invalidation, HWND reuse, retarget rejection, release consent and active close passed\n";
+    std::cout << "Production video lifecycle: pattern/confirmation, frame-age masking, lock/resume, power, display/device invalidation, HWND reuse, retarget rejection, release consent and active close passed\n";
 }
 }
 int wmain(int argc, wchar_t **argv)

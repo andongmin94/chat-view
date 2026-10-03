@@ -3,6 +3,7 @@
 #include "hud/hud-window.hpp"
 #include "hud/video-layout.hpp"
 #include "hud/video-output-pattern.hpp"
+#include "hud/video-frame-time.hpp"
 #include <dwmapi.h>
 #include <wtsapi32.h>
 #include <dbt.h>
@@ -369,17 +370,25 @@ void VideoOutputPanel::tick() noexcept
         output_ = nullptr; cover_ = nullptr; output_device_.clear(); releasing_ = false;
         notice(L"출력 창을 해제했습니다. 해당 화면의 바탕화면이 보일 수 있습니다.");
     }
-    if (!requested_) return;
-    const auto value = capture_.snapshot();
-    if (value.status == WindowCaptureStatus::Capturing) ShowWindow(cover_, SW_HIDE);
+    update_capture(capture_.snapshot());
+}
+void VideoOutputPanel::update_capture(const WindowCaptureSnapshot &value) noexcept
+{
+    if (!requested_ || closing_) return;
+    // Do not trust a sticky Capturing flag while Present/driver work is slow.
+    // The owner can cover stale content without waiting for the GPU worker.
+    auto status = value.status;
+    if (status == WindowCaptureStatus::Capturing && !video_frame_fresh(GetTickCount64(), value.content_at_ms))
+        status = WindowCaptureStatus::Waiting;
+    if (status == WindowCaptureStatus::Capturing) ShowWindow(cover_, SW_HIDE);
     else if (!mask()) { stop(L"출력 보호를 확인하지 못했습니다."); return; }
-    if (!capture_.running() && value.status != WindowCaptureStatus::Starting) {
+    if (!capture_.running() && status != WindowCaptureStatus::Starting) {
         stop(L"창 종료·최소화 또는 캡처 오류로 중지했습니다. 출력은 검은 화면입니다. 직접 다시 선택하세요."); return;
     }
-    if (value.status == shown_) return;
-    shown_ = value.status;
-    if (value.status == WindowCaptureStatus::Capturing) notice(L"선택 창 영상을 별도 출력 중 · 영상만/SDR · 실제 투컴 송출은 미검증");
-    else if (value.status == WindowCaptureStatus::Waiting) notice(L"새 프레임 대기 · 오래된 영상은 검게 지웠습니다.");
+    if (status == shown_) return;
+    shown_ = status;
+    if (status == WindowCaptureStatus::Capturing) notice(L"선택 창 영상을 별도 출력 중 · 영상만/SDR · 실제 투컴 송출은 미검증");
+    else if (status == WindowCaptureStatus::Waiting) notice(L"새 프레임 대기 · 오래된 영상은 검게 지웠습니다.");
     else if (!capture_.running()) stop(L"창 종료·최소화 또는 캡처 오류로 중지했습니다. 출력은 검은 화면입니다. 직접 다시 선택하세요.");
 }
 LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam)

@@ -11,6 +11,9 @@ struct WindowCaptureSnapshot {
     WindowCaptureStatus status = WindowCaptureStatus::Stopped;
     unsigned width = 0, height = 0;
     std::uint64_t frames = 0;
+    // Conservative content time in the GetTickCount64 domain; zero is invalid.
+    // It must not be advanced to GPU-call completion time.
+    std::uint64_t content_at_ms = 0;
 };
 // WGC window -> bounded GPU copy -> opaque, letterboxed output HWND. No screen
 // capture fallback, encoder, audio, network, provider token or OBS dependency.

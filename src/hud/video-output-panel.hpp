@@ -29,6 +29,7 @@ private:
     void paint_cover(HWND window) noexcept;
     void start();
     void begin_capture();
+    void update_capture(const WindowCaptureSnapshot &value) noexcept;
     void stop(const wchar_t *message) noexcept;
     void release() noexcept;
     void interrupt(const wchar_t *message) noexcept;

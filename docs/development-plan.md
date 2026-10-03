@@ -1,6 +1,6 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-03 (Asia/Seoul). 시작 기준 `bc3363f18b04e02f0a9a5f3a7f480f767178f6d5`. 이번 변경은 **Control Center에서 기존 자체 채팅 연결창 열기와 읽기 전용 연결 상태 표시**다. 코드·검사는 이 문서와 같은 변경에 포함한다. 옛 ZIP/패치를 적용하지 않는다.
+갱신: 2026-10-03 (Asia/Seoul). 시작 기준 `bc3363f18b04e02f0a9a5f3a7f480f767178f6d5`; 구현 코드 **`a767fc174fe507301aa25662204be95a1866e3a1`**. 이번 변경은 **Control Center에서 기존 자체 채팅 연결창 열기와 읽기 전용 연결 상태 표시**다. 옛 ZIP/패치를 적용하지 않는다.
 이 문서가 유일한 현재 작업 목록이다. 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md)를 따른다.
 
 ## 현재 위치와 완료 기준
@@ -11,7 +11,7 @@ OBS Tools의 기존 Control Center에 **ChatView connection...** 버튼과 자�
 
 외부 페이지 URL은 별도 선택 항목으로 표시하고 적용 버튼/교체 안내를 붙였다. 자체 연결이 수신 중이면 외부 URL 저장 없이 로컬 준비 상태를 표시한다. 승인 대기·연결 중·재연결·로그아웃 중에는 이전 외부 페이지의 Ready를 승계하지 않는다. 상태 조회가 실패하면 이전 연결 상태를 재사용하지 않는다. 영상 미검증 안내는 계속 독립적으로 유지한다.
 
-**다음 사용자 흐름:** 자체 채팅과 외부 페이지 사이의 명시적 전환·중지·같은 승인으로 복귀. 먼저 이번 Windows 실행 결과를 확인하고 새 실패를 해결한다. 새 로그인/서버/기기등록을 만들지 않는다.
+**다음 사용자 흐름:** 자체 채팅과 외부 페이지 사이의 명시적 전환·중지·같은 승인으로 복귀. 먼저 **Windows #343 / 37123140129** 결과를 확인하고 새 실패를 해결한다. 새 로그인/서버/기기등록을 만들지 않는다.
 
 ## G1. 한 화면의 작업과 개인 채팅
 
@@ -75,15 +75,15 @@ D3는 `72775a5`/#342의 좁은 문구/표시 검사로 종료, D5는 기존에 �
 ## 이번 근거와 한계
 
 - **시작 확인:** 지정 다섯 문서와 `bc3363f`를 읽었다. **`72775a5`/Windows #342/37120047402/job 111194253733**의 실제 Build and test ChatView 단계와 routine이 성공했다. qualification·설치/패키지 업로드는 생략됐다. 이 결과는 이번 새 코드의 검사로 대신하지 않는다.
-- **제품 코드:** `native-chat-control.hpp`의 payload 없는 open/query와 작은 상태 열거형을 기존 Control Center/HUD에 연결했다. NativeChatConnection이 같은 소유자 스레드에서 Windows SetWindowSubclass를 사용하고 종료/WM_NCDESTROY에 제거한다. 본체 WndProc·OBS 콜백·비동기 로그인 worker를 대체하지 않는다. 클릭 시 실제 대상/보호 상태를 다시 읽고, HUD가 다시 보호를 확인한 뒤 기존 창을 연다. 타임아웃/거절은 성공과 구분한다. 상태에는 토큰·URL·계정/세션 식별자·송출 권한이 없다.
+- **제품 코드:** `a767fc1`에서 `native-chat-control.hpp`의 payload 없는 open/query와 작은 상태 열거형을 기존 Control Center/HUD에 연결했다. NativeChatConnection이 같은 소유자 스레드에서 Windows SetWindowSubclass를 사용하고 종료/WM_NCDESTROY에 제거한다. 본체 WndProc·OBS 콜백·비동기 로그인 worker를 대체하지 않는다. 클릭 시 실제 대상/보호 상태를 다시 읽고, HUD가 다시 보호를 확인한 뒤 기존 창을 연다. 타임아웃/거절은 성공과 구분한다. 상태에는 토큰·URL·계정/세션 식별자·송출 권한이 없다.
 - **표시 책임:** 자체 상태는 기존 클라이언트/렌더러에서 파생하며 별도 인증 저장소가 없다. 수신 중인 자체 연결은 외부 URL을 요구하지 않는다. 승인 대기 등은 이전 페이지의 Ready를 승계하지 않는다. 외부 URL 적용은 기존 명시적 문서 교체이며 로그아웃이 아님을 안내한다. 전환/복귀의 더 세밀한 처리는 다음 흐름이다. 기존 영상 미검증 안내·캡처 가드·복구 판정·서버 권한은 유지했다.
-- **직접 실행:** 새 portable `tests/native-chat-control-test.cpp`를 **GCC/Clang C++20 `-Wall -Wextra -Werror` 각각 66 assertions**, GCC UBSan에서도 같은 66조건 통과. 알려진/알 수 없는 응답 전체 비트·단계 분류·Ready 승계 방지·문구 범위를 검사했다. Windows SDK/런타임이 없어 로컬 native 빌드/GUI 성공으로 세지 않는다.
+- **직접 실행:** 새 portable `tests/native-chat-control-test.cpp`를 **GCC/Clang C++20 `-Wall -Wextra -Werror` 각각 66 assertions**, GCC UBSan에서도 같은 66조건 통과. 알려진/알 수 없는 응답 전체 비트·단계 분류·Ready 승계 방지·문구 범위를 검사했다. 수정 코드/검사의 Git blob이 로컬 파일 바이트와 일치함을 확인했고 필수 컨트롤/폰트 배열 개수도 대조했다. Windows SDK/런타임이 없어 로컬 native 빌드/GUI 성공으로 세지 않는다.
 - **추가 회귀:** 실제 config 실행 파일+합성 IPC에서 새 버튼·거절 응답·외부 URL 미저장·URL 없이 수신 준비·승인 대기/재연결/로그아웃/잘못된 응답·위험 상태 거절·UI 영역 분리를 검사한다. 별도 기존 WinHTTP→실제 HUD/WebView2 fixture에서 등록 메시지 열기·같은 HWND 재사용·예상하지 않은 인수/보호 상실 거절·승인 전후 query·철회/종료 후 handler 제거를 검사한다. 두 fixture를 물리 OBS/실계정 통합으로 세지 않는다. 기존 검사·시간/자원 제한은 유지했다.
-- **이번 Windows:** 아직 미확인이다. 이 코드 커밋의 Windows run을 확인해 정확한 ID와 결과를 갱신한다. 추가한 66조건의 portable 통과를 GUI 성공으로 세지 않는다. 표준 Windows comctl32 링크 외 새 패키지·의존성 버전·lockfile 변경은 없다. 무관한 서버/광고 검사나 전체 qualification을 재실행하지 않는다.
+- **이번 Windows:** **`a767fc1` / Windows #343 / 37123140129 / job 111203058255**는 마지막 확인 시 `Build and test ChatView` 실행 중이다. scope·잠금 의존성 설치·OBS 개발 라이브러리 준비 성공과 ChatView 빌드/테스트 성공을 구분한다. 정확히 이 run 결과를 확인해 갱신한다. 추가한 66조건의 portable 통과를 GUI 성공으로 세지 않는다. 표준 Windows comctl32 링크 외 새 패키지·의존성 버전·lockfile 변경은 없다. 무관한 서버/광고 검사나 전체 qualification을 재실행하지 않았다. 문서 갱신은 이 코드 검사를 취소하지 않는다.
 - **미검증:** 실계정, 실제 전체 Control Center/OBS 사용자 세션, 물리 확장 화면·캡처카드·수신 녹화, 실제 게임·다중 GPU·OS 오버레이·잠금/hotplug·장시간 자원/지연·오디오·호스팅·qualification. D1/D2/D4/D6는 유지한다.
 
 ### 다음 세션 재개
 
-OBS 최신 ref에서 `AGENTS.md` → `PRODUCT.md` → `docs/development-workflow.md` → `docs/architecture.md` → 이 문서를 읽는다. 이번 Windows 결과/새 실패부터 확인한다. 다음 흐름은 **자체 채팅 ↔ 외부 페이지의 명시적 전환·중지·같은 승인으로 복귀**다. 기존 연결창/로그인/캡처 엔진을 재사용하고 게임 PC OBS·기기등록·수동 표시키·옛 ZIP을 추가하지 않는다. D6 재현 시 기존 실패 표본으로 조사하며 동일 코드 반복 성공으로 종료하지 않는다. 패턴→게임→검정 중지/복귀의 수신 녹화는 하드웨어 검증으로 남긴다. HP/단가/지급 규칙은 임의 확정하지 않으며 qualification은 배포 후보에서 한다.
+OBS 최신 ref에서 `AGENTS.md` → `PRODUCT.md` → `docs/development-workflow.md` → `docs/architecture.md` → 이 문서를 읽는다. **Windows #343 / 37123140129**의 결과/새 실패부터 확인한다. 다음 흐름은 **자체 채팅 ↔ 외부 페이지의 명시적 전환·중지·같은 승인으로 복귀**다. 기존 연결창/로그인/캡처 엔진을 재사용하고 게임 PC OBS·기기등록·수동 표시키·옛 ZIP을 추가하지 않는다. D6 재현 시 기존 실패 표본으로 조사하며 동일 코드 반복 성공으로 종료하지 않는다. 패턴→게임→검정 중지/복귀의 수신 녹화는 하드웨어 검증으로 남긴다. HP/단가/지급 규칙은 임의 확정하지 않으며 qualification은 배포 후보에서 한다.
 
 미확정 입력: 실제 앱/채널 승인·수집 이용 조건/할당량, 대표 투컴 배선/기기, HP/보상 규격, 인프라. 비밀키는 대화/공개 저장소에 넣지 않으며 입력 부재를 목표 변경이나 독립 구현 중단의 이유로 삼지 않는다.

@@ -1,6 +1,6 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-03 (Asia/Seoul). 시작 기준 `0c94056c600f3adde8ddec8b605424ee861f831e`. 이번 구현은 이 문서와 같은 코드 커밋의 **외부 페이지 전환 → 현재 승인으로 자체 채팅 복귀**다. 옛 ZIP/패치를 다시 적용하지 않는다.
+갱신: 2026-10-03 (Asia/Seoul). 시작 기준 `0c94056c600f3adde8ddec8b605424ee861f831e`; 구현 **`7bd8b28f709cdaf8f66a8b6fa76d78df96ce3e40` — 외부 페이지 전환 → 현재 승인으로 자체 채팅 복귀**. 옛 ZIP/패치를 다시 적용하지 않는다.
 이 파일이 현재 작업 목록의 유일한 기준이다. 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md)를 따른다.
 
 ## 현재 위치와 완료 기준
@@ -11,7 +11,7 @@
 
 중복 복귀, 승인 없음, 종료 작업 중, 보호 상태에서는 시작하지 않는다. 외부 페이지 적용은 자동 복귀 의도를 취소한다. 명시적 로그아웃을 요청했다면 서버 실패 뒤에도 복귀가 이를 되돌릴 수 없고, 로그아웃 재시도만 가능하다. 서버가 철회/만료를 확인하면 현재 승인을 지운다. 송출 보고 중지는 실제 OBS 중지 명령이 아니며 서버는 기존 보고를 만료시킨다. 영상 미검증 안내와 캡처 보호는 그대로다.
 
-**다음 사용자 흐름:** Control Center의 현재 표시 방식·복귀 가능 상태를 기존 연결창과 일치시키고, 외부 페이지 적용/복귀의 실제 두 실행 파일 연동을 확인한다. 먼저 이번 Windows 실행 결과/새 실패를 확인한다. 새 로그인/기기등록/표시키를 만들지 않는다.
+**다음 사용자 흐름:** Control Center의 현재 표시 방식·복귀 가능 상태를 기존 연결창과 일치시키고, 외부 페이지 적용/복귀의 실제 두 실행 파일 연동을 확인한다. 먼저 **Windows #344 / 37128025173** 결과/새 실패부터 확인한다. 새 로그인/기기등록/표시키를 만들지 않는다.
 
 ## G1. 한 화면의 작업과 개인 채팅
 
@@ -73,14 +73,15 @@ D3·D5는 해당 좁은 범위에서 종료했다. 자원 상세는 [resource-gr
 ## 이번 근거와 한계
 
 - **시작 확인:** 다섯 문서·OBS `0c94056`을 읽었다. 직전 **`a767fc1`/Windows #343/37123140129/job 111203058255**의 Build and test ChatView/routine은 성공했고 qualification·설치/패키지는 생략됐다. 이번 코드의 성공 근거로 대신하지 않는다.
-- **제품 변경:** `DisplayClient`의 기존 private State가 승인된 membership도 보관한다. 수신/보고 작업 종료 뒤에만 같은 State의 취소 이벤트를 재설정하고 기존 갱신 경로로 복귀한다. 원래 origin/role/session/connection을 보존하며 UI·외부 문서에 비밀을 전달하지 않는다. `NativeChatConnection`은 기존 config 알림을 본체보다 먼저 처리해 전달/문서를 분리하고, 같은 연결창에 명시적 복귀 버튼을 추가한다. 외부 페이지 URL 적용, 서버/프로토콜, WGC, 캡처 보호, 의존성/lockfile은 변경하지 않았다.
-- **추가한 flow 검사:** `native-chat-switch-test.cpp` + `platform/tools/native-chat-switch-test.mts`의 6개 시나리오. 실제 HUD/WebView2·WinHTTP·HTTP/SQLite/gateway를 사용하며 제공자와 외부 HTML은 합성이다. 메모리/연결 유지/다른 저장 계정, 명시적 외부 전환·문서 격리·같은 승인 복귀·중복 명령·일반 중지 후 복귀, 서버 철회·다른 membership 응답·로그아웃 실패/재시도를 확인한다. 외부 HTML은 시험에서만 기존 허용 origin 요청에 응답하며 실제 YouTube/치지직 검증이 아니다. 기존 검사·시간/자원 한도는 유지하고 새 CTest만 추가했다.
-- **직접 실행:** Node 22.16.0으로 새 .mts 구문 검사 성공, 변경 diff 공백 검사 성공, 제품 4개/신규 시험 2개의 업로드 blob과 로컬 바이트 일치 확인. 로컬 Windows SDK/런타임과 완전한 locked 의존성 환경이 없어 native 컴파일/GUI·전체 타입/통합 성공으로 세지 않는다. 새 flow는 아직 실행하지 않았다.
-- **이번 원격 검사:** 코드 반영 후 생성되는 정확한 Windows run을 확인해 기록한다. 현재 문서 작성 시 새 코드의 Windows 결과는 미확인이다. 무관한 server/ad 검사나 qualification을 별도로 재실행하지 않는다.
+- **제품 변경:** `7bd8b28`의 `DisplayClient` private State가 승인된 membership도 보관한다. 수신/보고 작업 종료 뒤에만 같은 State의 취소 이벤트를 재설정하고 기존 갱신 경로로 복귀한다. 원래 origin/role/session/connection을 보존하며 UI·외부 문서에 비밀을 전달하지 않는다. `NativeChatConnection`은 기존 config 알림을 본체보다 먼저 처리해 전달/문서를 분리하고, 같은 연결창에 명시적 복귀 버튼을 추가한다. 외부 페이지 URL 적용, 서버/프로토콜, WGC, 캡처 보호, 의존성/lockfile은 변경하지 않았다.
+- **추가한 flow 검사:** `native-chat-switch-test.cpp` + `platform/tools/native-chat-switch-test.mts`의 6개 시나리오. 실제 HUD/WebView2·WinHTTP·HTTP/SQLite/gateway를 사용하며 제공자와 외부 HTML은 합성이다. 메모리/연결 유지/다른 저장 계정, 명시적 외부 전환·문서 격리·같은 승인 복귀·중복 명령·일반 중지 후 복귀, 서버 철회·다른 membership 응답·로그아웃 실패/재시도를 확인하도록 작성했다. 외부 HTML은 시험에서만 기존 허용 origin 요청에 응답하며 실제 YouTube/치지직 검증이 아니다. 기존 검사·시간/자원 한도는 유지하고 새 CTest만 추가했다.
+- **직접 실행:** Node 22.16.0 새 .mts 구문 검사 성공, diff 공백 검사 성공, 제품 4개/시험 2개의 업로드 blob과 로컬 바이트 일치 확인. 로컬 Windows SDK/런타임과 완전한 locked 의존성 환경이 없어 native 컴파일/GUI·전체 타입/통합 성공으로 세지 않는다.
+- **같은 코드의 Node 계약:** **`7bd8b28`/CHZZK #43/37128025219**의 Windows/Linux × Node22/24 네 조합 모두 locked install·audit·기존 전체 계약 테스트·strict type·manifest 무변경 단계 성공. 새 .mts도 타입 검사 대상이지만 native 실행 시나리오는 Windows CTest 전용이므로 이 계약 성공으로 6개 GUI 시나리오가 통과했다고 세지 않는다.
+- **이번 Windows:** **`7bd8b28`/Windows #344/37128025173/job 111217275389**는 마지막 확인 시 OBS 개발 라이브러리 빌드 중, ChatView 빌드/CTest는 대기 상태다. 새 화면 전환 검사 6개와 기존 native 검사 결과는 아직 미확인이다. 정확히 이 run을 확인해 기록한다. 추가 qualification·광고 workflow를 수동 실행하지 않았고 문서 갱신은 코드 검사를 취소하지 않는다.
 - **미검증 유지:** 전체 Control Center/OBS 사용자 세션·실계정·물리 두 화면/캡처카드/수신 녹화·실제 게임/다중 GPU/OS 오버레이/잠금/hotplug/장시간 자원·오디오·호스팅·qualification. D1/D2/D4/D6는 남는다.
 
 ### 다음 세션 재개
 
-OBS 최신 ref에서 `AGENTS.md` → `PRODUCT.md` → `docs/development-workflow.md` → `docs/architecture.md` → 이 문서를 읽는다. 이번 Windows 결과/새 실패부터 확인한다. 다음 흐름은 **Control Center의 현재 표시·복귀 상태와 실제 기존 연결창 사이의 일관된 전환**이다. 구현한 복귀/로그인을 다시 만들지 말고 기존 실제 실행 파일 연결로 마무리한다. 게임 PC OBS·기기등록·수동 표시키·옛 ZIP을 추가하지 않는다. D6 재현은 실패 표본으로 조사하며 동일 코드 반복 성공으로 닫지 않는다. 물리 패턴→게임→검정 중지/복귀의 수신 녹화는 별도다. HP/단가/지급 규칙을 임의로 정하지 않고 qualification은 배포 후보에서 한다.
+OBS 최신 ref에서 `AGENTS.md` → `PRODUCT.md` → `docs/development-workflow.md` → `docs/architecture.md` → 이 문서를 읽는다. **Windows #344/37128025173** 결과/새 실패부터 확인한다. 다음 흐름은 **Control Center의 현재 표시·복귀 상태와 실제 기존 연결창 사이의 일관된 전환**이다. 구현한 복귀/로그인을 다시 만들지 말고 기존 실제 실행 파일 연결로 마무리한다. 게임 PC OBS·기기등록·수동 표시키·옛 ZIP을 추가하지 않는다. D6 재현은 실패 표본으로 조사하며 동일 코드 반복 성공으로 닫지 않는다. 물리 패턴→게임→검정 중지/복귀의 수신 녹화는 별도다. HP/단가/지급 규칙을 임의로 정하지 않고 qualification은 배포 후보에서 한다.
 
 미확정 입력: 실제 앱/채널·수집 조건/할당량, 투컴 배선/기기, HP/보상 규격, 인프라. 비밀키를 대화/공개 저장소에 넣지 않으며 입력 부재로 목표를 변경하지 않는다.

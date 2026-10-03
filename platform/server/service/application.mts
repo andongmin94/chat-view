@@ -318,6 +318,9 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
       }
       if (request.method !== 'POST') throw new DisplayAccessError(404);
       if (request.headers.origin !== this.#origin) throw new DisplayAccessError(403);
+      // A missing/expired browser session can recover; a non-browser
+      // Authorization capability is not a management credential.
+      if (!b && request.headers.authorization !== undefined) throw new DisplayAccessError(403);
       if (!b) throw new DisplayAccessError(
         /^\/(?:account(?:\/|$)|campaigns(?:\/|$)|connections\/)/u.test(url.pathname) ? 401 : 403);
       await csrfForm(request, b.csrf); this.#live(b);

@@ -12,6 +12,21 @@ target_sources(chat-view-hud PRIVATE src/hud/video-output-panel.cpp src/hud/vide
 target_link_libraries(chat-view-hud PRIVATE chat-view-window-capture)
 
 if(BUILD_TESTING)
+    # CI-only libobs ownership regression. This dependency is not linked into
+    # the companion, its window-capture library or any gaming-PC executable.
+    add_executable(chat-view-obs-capture-scene-test
+        tests/obs-capture-scene-test.cpp tests/obs-capture-scene.hpp)
+    target_link_libraries(chat-view-obs-capture-scene-test PRIVATE OBS::libobs)
+    chatview_enable_win32(chat-view-obs-capture-scene-test)
+    chatview_enable_warnings(chat-view-obs-capture-scene-test)
+    add_test(NAME chat-view-obs-capture-scene COMMAND chat-view-obs-capture-scene-test)
+    set_tests_properties(chat-view-obs-capture-scene PROPERTIES TIMEOUT 10
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:OBS::libobs>")
+    if(OBS_RUNTIME_DEPENDENCY_DIR)
+        set_property(TEST chat-view-obs-capture-scene APPEND PROPERTY
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${OBS_RUNTIME_DEPENDENCY_DIR}/bin")
+    endif()
+
     add_executable(chat-view-video-layout-test tests/video-layout-test.cpp)
     target_include_directories(chat-view-video-layout-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
     chatview_enable_warnings(chat-view-video-layout-test)

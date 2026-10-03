@@ -2,6 +2,7 @@
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
+#include "obs-capture-scene.hpp"
 
 #include <graphics/graphics.h>
 #include <graphics/vec2.h>
@@ -54,15 +55,13 @@ struct ProbeWindowData {
 };
 
 struct SceneFixture {
+    explicit SceneFixture(obs_source_t *owned_scene) noexcept : scene(owned_scene) {}
+    chatview::test::CaptureScene scene;
     std::array<char, 128U> monitor_id{};
     std::array<char, 128U> source_name{};
     std::array<char, 256U> error{};
-    obs_source_t *scene_source = nullptr;
-    obs_source_t *display_source = nullptr;
-    obs_sceneitem_t *item = nullptr;
     std::uint32_t base_width = 0U;
     std::uint32_t base_height = 0U;
-    bool manual_showing = false;
 };
 
 std::atomic_bool stopping{false};
@@ -454,10 +453,8 @@ private:
     std::string monitor_id_;
 };
 
-void create_scene_fixture(void *opaque) noexcept
+void create_scene_fixture(SceneFixture &fixture) noexcept
 {
-    auto &fixture = *static_cast<SceneFixture *>(opaque);
-
     obs_video_info video_info{};
     if (!obs_get_video_info(&video_info) ||
         video_info.base_width == 0U || video_info.base_height == 0U) {
@@ -466,18 +463,6 @@ void create_scene_fixture(void *opaque) noexcept
     }
     fixture.base_width = video_info.base_width;
     fixture.base_height = video_info.base_height;
-
-    fixture.scene_source = obs_frontend_get_current_scene();
-    if (fixture.scene_source == nullptr) {
-        set_fixture_error(fixture, "OBS has no current scene");
-        return;
-    }
-
-    obs_scene_t *scene = obs_scene_from_source(fixture.scene_source);
-    if (scene == nullptr) {
-        set_fixture_error(fixture, "The current frontend source is not a scene");
-        return;
-    }
 
     obs_data_t *settings = obs_data_create();
     if (settings == nullptr) {
@@ -490,82 +475,26 @@ void create_scene_fixture(void *opaque) noexcept
     obs_data_set_bool(settings, "capture_cursor", false);
     obs_data_set_bool(settings, "force_sdr", true);
 
-    fixture.display_source = obs_source_create_private(
+    obs_source_t *source = obs_source_create_private(
         kDisplayCaptureSourceId,
         fixture.source_name.data(),
         settings);
     obs_data_release(settings);
-    if (fixture.display_source == nullptr) {
+    if (source == nullptr) {
         set_fixture_error(fixture, "OBS Display Capture source creation failed");
         return;
     }
-
-    fixture.item = obs_scene_add(scene, fixture.display_source);
-    if (fixture.item == nullptr) {
-        set_fixture_error(fixture, "Display Capture could not be added to the current scene");
-        return;
+    const bool attached = fixture.scene.attach(source);
+    obs_source_release(source);
+    if (!attached) {
+        set_fixture_error(fixture, "Display Capture could not be added to the retained scene");
     }
-
-    const vec2 origin{0.0F, 0.0F};
-    obs_sceneitem_set_alignment(
-        fixture.item, OBS_ALIGN_LEFT | OBS_ALIGN_TOP);
-    obs_sceneitem_set_pos(fixture.item, &origin);
-    obs_sceneitem_set_visible(fixture.item, true);
-
-    obs_source_inc_showing(fixture.display_source);
-    fixture.manual_showing = true;
 }
 
-void fit_scene_fixture(void *opaque) noexcept
+void fit_scene_fixture(SceneFixture &fixture) noexcept
 {
-    auto &fixture = *static_cast<SceneFixture *>(opaque);
-    if (fixture.item == nullptr || fixture.display_source == nullptr) {
-        set_fixture_error(fixture, "Display Capture fixture disappeared before fitting");
-        return;
-    }
-
-    const std::uint32_t source_width =
-        obs_source_get_width(fixture.display_source);
-    const std::uint32_t source_height =
-        obs_source_get_height(fixture.display_source);
-    if (source_width == 0U || source_height == 0U) {
-        set_fixture_error(fixture, "Display Capture reported an empty frame size");
-        return;
-    }
-
-    const vec2 origin{0.0F, 0.0F};
-    const vec2 scale{
-        static_cast<float>(fixture.base_width) /
-            static_cast<float>(source_width),
-        static_cast<float>(fixture.base_height) /
-            static_cast<float>(source_height),
-    };
-    obs_sceneitem_set_alignment(
-        fixture.item, OBS_ALIGN_LEFT | OBS_ALIGN_TOP);
-    obs_sceneitem_set_pos(fixture.item, &origin);
-    obs_sceneitem_set_scale(fixture.item, &scale);
-    obs_sceneitem_set_visible(fixture.item, true);
-}
-
-void cleanup_scene_fixture(void *opaque) noexcept
-{
-    auto &fixture = *static_cast<SceneFixture *>(opaque);
-
-    if (fixture.item != nullptr) {
-        obs_sceneitem_remove(fixture.item);
-        fixture.item = nullptr;
-    }
-    if (fixture.manual_showing && fixture.display_source != nullptr) {
-        obs_source_dec_showing(fixture.display_source);
-        fixture.manual_showing = false;
-    }
-    if (fixture.display_source != nullptr) {
-        obs_source_release(fixture.display_source);
-        fixture.display_source = nullptr;
-    }
-    if (fixture.scene_source != nullptr) {
-        obs_source_release(fixture.scene_source);
-        fixture.scene_source = nullptr;
+    if (!fixture.scene.fit(fixture.base_width, fixture.base_height)) {
+        set_fixture_error(fixture, "Display Capture fixture disappeared or reported an empty frame size");
     }
 }
 
@@ -576,9 +505,9 @@ bool wait_for_source_frame(
         GetTickCount64() + kSourceReadyTimeoutMs;
     while (!stopping.load(std::memory_order_acquire) &&
            GetTickCount64() < deadline) {
-        if (fixture.display_source != nullptr &&
-            obs_source_get_width(fixture.display_source) > 0U &&
-            obs_source_get_height(fixture.display_source) > 0U) {
+        if (fixture.scene.source() != nullptr &&
+            obs_source_get_width(fixture.scene.source()) > 0U &&
+            obs_source_get_height(fixture.scene.source()) > 0U) {
             return true;
         }
         Sleep(50U);
@@ -796,18 +725,20 @@ bool wait_for_background_sample(
     return false;
 }
 
-void run_qualification() noexcept
+void run_qualification(obs_source_t *owned_scene) noexcept
 {
     std::string failure;
-    SceneFixture fixture;
+    SceneFixture fixture(owned_scene);
     ProbeWindows probes;
     Pixel background;
     Pixel foreground;
     Pixel protected_foreground;
     Pixel hidden_foreground;
-    bool fixture_created = false;
 
     try {
+        if (stopping.load(std::memory_order_acquire)) {
+            throw std::runtime_error("Qualification was cancelled");
+        }
         if (!probes.create(failure)) {
             throw std::runtime_error(failure);
         }
@@ -827,11 +758,10 @@ void run_qualification() noexcept
             _TRUNCATE);
 
         Sleep(500U);
-        obs_queue_task(
-            OBS_TASK_UI, &create_scene_fixture, &fixture, true);
-        fixture_created =
-            fixture.scene_source != nullptr ||
-            fixture.display_source != nullptr || fixture.item != nullptr;
+        if (stopping.load(std::memory_order_acquire)) {
+            throw std::runtime_error("Qualification was cancelled");
+        }
+        create_scene_fixture(fixture);
         if (fixture.error.front() != '\0') {
             throw std::runtime_error(fixture.error.data());
         }
@@ -839,11 +769,14 @@ void run_qualification() noexcept
         if (!wait_for_source_frame(fixture, failure)) {
             throw std::runtime_error(failure);
         }
-        obs_queue_task(OBS_TASK_UI, &fit_scene_fixture, &fixture, true);
+        fit_scene_fixture(fixture);
         if (fixture.error.front() != '\0') {
             throw std::runtime_error(fixture.error.data());
         }
         Sleep(700U);
+        if (stopping.load(std::memory_order_acquire)) {
+            throw std::runtime_error("Qualification was cancelled");
+        }
 
         if (!probes.show_background_only(failure) ||
             !sample_main_texture(
@@ -938,12 +871,11 @@ void run_qualification() noexcept
             << background_to_protected << '\n'
             << "background_to_hidden=" << background_to_hidden << '\n';
 
-        if (fixture_created) {
-            obs_queue_task(
-                OBS_TASK_UI, &cleanup_scene_fixture, &fixture, true);
-            fixture_created = false;
-        }
+        fixture.scene.close();
         probes.close();
+        if (stopping.load(std::memory_order_acquire)) {
+            throw std::runtime_error("Qualification was cancelled");
+        }
         write_result_atomically(report.str());
         return;
     } catch (const std::exception &error) {
@@ -952,11 +884,9 @@ void run_qualification() noexcept
         failure = "Unknown capture-qualification failure";
     }
 
-    if (fixture_created || fixture.scene_source != nullptr ||
-        fixture.display_source != nullptr || fixture.item != nullptr) {
-        obs_queue_task(
-            OBS_TASK_UI, &cleanup_scene_fixture, &fixture, true);
-    }
+    // Cleanup never queues work to the frontend. Module unload may already be
+    // waiting for this worker, so a synchronous UI request would deadlock.
+    fixture.scene.close();
     probes.close();
 
     std::ostringstream report;
@@ -969,21 +899,41 @@ void run_qualification() noexcept
 
 void on_frontend_event(obs_frontend_event event, void *) noexcept
 {
+    if (qualification_started.load(std::memory_order_acquire) &&
+        (event == OBS_FRONTEND_EVENT_EXIT ||
+         event == OBS_FRONTEND_EVENT_SCENE_CHANGED ||
+         event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGING ||
+         event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP)) {
+        stopping.store(true, std::memory_order_release);
+        return;
+    }
     if (event != OBS_FRONTEND_EVENT_FINISHED_LOADING ||
         result_path.empty() ||
         qualification_started.exchange(true, std::memory_order_acq_rel)) {
         return;
     }
 
+    // This is the sole frontend scene lookup. Transfer its owning reference to
+    // the worker before it starts; never query or wait for the UI from there.
+    obs_source_t *scene = obs_frontend_get_current_scene();
+    if (scene == nullptr || obs_scene_from_source(scene) == nullptr) {
+        obs_source_release(scene);
+        write_result_atomically(
+            "FAIL\npipeline=monitor_capture>scene>main_texture\n"
+            "reason=OBS has no current scene\n");
+        return;
+    }
     try {
-        qualification_thread = std::thread(&run_qualification);
+        qualification_thread = std::thread(&run_qualification, scene);
     } catch (const std::exception &error) {
+        obs_source_release(scene);
         std::ostringstream report;
         report << "FAIL\npipeline=monitor_capture>scene>main_texture\n"
                << "reason=Qualification thread creation failed: "
                << error.what() << '\n';
         write_result_atomically(report.str());
     } catch (...) {
+        obs_source_release(scene);
         write_result_atomically(
             "FAIL\npipeline=monitor_capture>scene>main_texture\n"
             "reason=Qualification thread creation failed\n");

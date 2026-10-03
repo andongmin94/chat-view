@@ -38,6 +38,9 @@ using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::Callback;
 using Status = chatview::NativeChatStatus;
 std::unique_ptr<ControlCenterDriver> center;
+std::wstring management_url;
+unsigned management_attempts = 0, management_opened = 0;
+bool fail_management = false;
 constexpr wchar_t kExternal[] = L"https://www.youtube.com/live_chat?is_popout=1&v=chatview123";
 void expect(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
 void pump(chatview::NativeChatConnection &chat)
@@ -102,6 +105,48 @@ std::wstring evaluate(ICoreWebView2 *core, const wchar_t *script, chatview::Nati
     expect(SUCCEEDED(result->status), "DOM inspection succeeds"); return result->value;
 }
 void command(HWND dialog, int id) { SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED), 0); }
+void management(chatview::NativeChatConnection &chat, ICoreWebView2 *core, bool fail)
+{
+    const HWND dialog = Access::dialog(chat);
+    await(chat, [&] { return IsWindowEnabled(GetDlgItem(dialog, 114)) != FALSE; }, "management action becomes available");
+    const bool active = Access::active(chat);
+    const auto before = Access::membership(chat);
+    LPWSTR uri = nullptr;
+    expect(SUCCEEDED(core->get_Source(&uri)) && uri, "document identity before management");
+    const std::wstring original(uri); CoTaskMemFree(uri);
+    const auto attempts = management_attempts, opened = management_opened;
+    fail_management = fail;
+    command(dialog, 114);
+    expect(management_attempts == attempts + 1 && management_opened == opened + (fail ? 0U : 1U),
+        "one fixed management URL launch per explicit request");
+    expect(text(dialog, 106).find(fail ? L"열지 못했습니다" : L"열기를 요청했습니다") != std::wstring::npos,
+        "launcher failure is not reported as successful navigation or authentication");
+    expect(Access::active(chat) == active && Access::membership(chat).has_value() == before.has_value(),
+        "management does not replace display or account state");
+    if (before) expect(Access::membership(chat)->membership == before->membership, "management preserves exact approval");
+    uri = nullptr;
+    expect(SUCCEEDED(core->get_Source(&uri)) && uri, "document identity after management");
+    const bool unchanged = original == uri; CoTaskMemFree(uri);
+    expect(unchanged, "management never navigates the private or external chat WebView");
+}
+void management_scope(HWND dialog)
+{
+    const HWND scope = GetDlgItem(dialog, 115);
+    const auto value = text(dialog, 115);
+    expect(scope && IsWindowVisible(scope) && value.find(L"브라우저의 로그인 계정") != std::wstring::npos &&
+        value.find(L"HUD 캡처 보호 대상이 아닙니다") != std::wstring::npos, "separate browser identity/privacy notice");
+    RECT bounds{}; expect(GetClientRect(scope, &bounds) != FALSE, "management scope bounds");
+    const HDC dc = GetDC(scope); expect(dc != nullptr, "management scope font DC");
+    const auto font = reinterpret_cast<HFONT>(SendMessageW(scope, WM_GETFONT, 0, 0));
+    const auto old = font ? SelectObject(dc, font) : nullptr;
+    RECT needed{0, 0, bounds.right, 0};
+    const int height = DrawTextW(dc, value.c_str(), static_cast<int>(value.size()), &needed,
+        DT_LEFT | DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+    if (old && old != HGDI_ERROR) SelectObject(dc, old);
+    ReleaseDC(scope, dc);
+    expect(height > 0 && needed.bottom <= bounds.bottom && needed.right <= bounds.right,
+        "browser identity/privacy notice fits its real font and control");
+}
 // Supply a fixed external-origin document without changing navigation policy,
 // disabling TLS checks, making internet requests or adding production hooks.
 EventRegistrationToken mock_external(ICoreWebView2 *core)
@@ -169,7 +214,19 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     chatview::HudWindow hud;
     expect(hud.create(GetModuleHandleW(nullptr), ready.get()), "create real HUD");
-    chatview::NativeChatConnection chat(hud, chatview::DisplayRole::Streaming, [](HWND, const wchar_t *) {
+    management_url = origin + L"/account";
+    chatview::NativeChatConnection chat(hud, chatview::DisplayRole::Streaming, [](HWND window, const wchar_t *url) {
+        const std::wstring target(url);
+        if (target == management_url) {
+            ++management_attempts;
+            if (fail_management) return false;
+            ++management_opened;
+            // A reentrant launcher must not recursively open another browser.
+            command(window, 114);
+            std::cout << "management-opened\n" << std::flush; return true;
+        }
+        expect(target.starts_with(management_url.substr(0, management_url.size() - 8U) + L"/login/"),
+            "browser launch is the exact service account route or existing login intent");
         std::cout << "browser-opened\n" << std::flush; return true;
     });
     hud.show_ready();
@@ -186,6 +243,13 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     const HWND dialog = Access::dialog(chat);
     expect(GetDlgItem(dialog, 112) != nullptr, "explicit current-approval return button");
     expect_status(chat, Status::Idle);
+    expect((GetWindowLongPtrW(dialog, GWL_EXSTYLE) & WS_EX_LAYERED) != 0, "protected panel uses documented layered affinity query");
+    BYTE alpha = 0; DWORD layer_flags = 0;
+    expect(GetLayeredWindowAttributes(dialog, nullptr, &alpha, &layer_flags) && alpha == 255 && layer_flags == LWA_ALPHA,
+        "connection controls stay fully opaque");
+    management_scope(dialog);
+    command(dialog, 114);
+    expect(management_attempts == 0 && !IsWindowEnabled(GetDlgItem(dialog, 114)), "no current connection cannot launch management");
     command(dialog, 112);
     expect(!Access::client(chat).running(), "return without a current approval does not log in");
     SetDlgItemTextW(dialog, 101, origin.c_str());
@@ -198,6 +262,9 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     expect(initial.has_value(), "initial approved membership");
     ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(Access::surface(chat));
     const auto resource = mock_external(core.Get());
+    management(chat, core.Get(), true);
+    management(chat, core.Get(), false);
+    expect(Access::surface(chat).ready(), "browser launch failure/success leave private chat ready");
     if (mode == "unrelated") expect(chatview::save_connection({origin, other, true}), "unrelated saved account fixture");
     external(chat, core.Get());
     expect(Access::client(chat).can_resume_current(), "ordinary external switch retains current approval");
@@ -209,8 +276,21 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
         center->edit_external(kExternal); center->apply_external();
         expect_status(chat, Status::ExternalPageResumable);
         await(chat, [&] { return evaluate(core.Get(), L"typeof privateFrames === 'number'", chat) == L"true"; }, "external fixture returns");
-        SendMessageW(dialog, WM_CLOSE, 0, 0); center->open_panel();
-        await(chat, [&] { return IsWindowVisible(dialog); }, "same native panel reopens from Control Center");
+        SendMessageW(dialog, WM_CLOSE, 0, 0);
+        DWORD affinity = 0;
+        expect(GetWindowDisplayAffinity(dialog, &affinity) && affinity == WDA_EXCLUDEFROMCAPTURE,
+            "hidden panel retains readable exclusion without resetting it");
+        center->open_panel();
+        try {
+            await(chat, [&] { return IsWindowVisible(dialog); }, "same native panel reopens from Control Center");
+        } catch (...) {
+            // Test-only bounded phase/flags, never URLs, tokens or chat text.
+            DWORD current_affinity = 0;
+            const BOOL queried = GetWindowDisplayAffinity(dialog, &current_affinity);
+            std::cerr << "Reopen state: query=" << queried << " affinity=" << current_affinity
+                << " visible=" << IsWindowVisible(dialog) << " enabled=" << IsWindowEnabled(GetDlgItem(center->window(), 1009)) << '\n';
+            throw;
+        }
         expect(Access::dialog(chat) == dialog, "Control Center reuses one panel and approval");
     }
     // Wait for the server to inspect the stopped connection/revoke when needed.
@@ -221,6 +301,9 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     SetDlgItemTextW(dialog, 101, L"https://not-the-current-service.invalid");
     SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_UNCHECKED, 0);
     SendDlgItemMessageW(dialog, 107, BM_SETCHECK, BST_CHECKED, 0);
+    management(chat, core.Get(), false);
+    management_scope(dialog);
+    expect(evaluate(core.Get(), L"privateFrames === 0", chat) == L"true", "management does not publish to the external page");
     command(dialog, 112); command(dialog, 112);
     if (mode == "revoked" || mode == "mismatch") {
         await(chat, [&] { return !Access::client(chat).running() && !Access::active(chat); }, "invalid resumed approval stops");
@@ -229,6 +312,8 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
         if (mode == "revoked") {
             expect(!Access::client(chat).can_resume_current(), "server denial removes return authority");
             expect_status(chat, Status::Idle);
+            command(dialog, 114);
+            expect(management_attempts == 3 && !IsWindowEnabled(GetDlgItem(dialog, 114)), "confirmed revocation disables current-connection entry");
         }
     } else {
         await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "same approval returns to native chat");
@@ -251,6 +336,8 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
         await(chat, [&] { return !Access::signing_out(chat) && !Access::client(chat).running(); }, "explicit logout completes");
         expect(!Access::client(chat).can_resume_current(), "logout intent cannot be undone by return");
         expect_status(chat, center ? Status::ExternalPage : Status::Idle);
+        command(dialog, 114);
+        expect(management_attempts == 3 && !IsWindowEnabled(GetDlgItem(dialog, 114)), "logout intent does not launch or recreate browser authority");
         command(dialog, 112);
         expect(!Access::client(chat).running(), "return after logout never renews or opens a browser");
         if (mode == "logout-failure") {
@@ -261,6 +348,7 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     }
     expect(text(dialog, 111).find(L"수신 영상의 HUD 제외: 미검증") != std::wstring::npos,
         "switching never changes the video verification boundary");
+    expect(management_opened == 2 && management_attempts == 3, "only explicit eligible management requests reached the launcher");
     if (center) {
         center->request_close(); await(chat, [&] { return center->exited(); }, "Control Center closes independently", 5000U);
         expect(center->succeeded(), "Control Center exits successfully"); center.reset();

@@ -12,6 +12,7 @@ namespace {
 constexpr int kConnectHotkey = 0x4348;
 constexpr int kOrigin = 101, kLocal = 103, kConnect = 104, kDisconnect = 105, kNotice = 106;
 constexpr int kRemember = 107, kForget = 108, kRole = 109, kSession = 110, kVideoScope = 111, kResume = 112, kDisplayStatus = 113;
+constexpr int kManage = 114, kManagementScope = 115;
 constexpr wchar_t kClass[] = L"ChatView.NativeConnection";
 std::wstring text(HWND parent, int id, int maximum)
 {
@@ -101,6 +102,7 @@ void NativeChatConnection::show_display_status() noexcept
 {
     if (!dialog_) return;
     const auto status = local_status();
+    EnableWindow(GetDlgItem(dialog_, kManage), can_open_management(status));
     if (displayed_status_ == status) return;
     displayed_status_ = status;
     SetDlgItemTextW(dialog_, kDisplayStatus, native_chat_status_text_ko(status));
@@ -125,15 +127,23 @@ bool NativeChatConnection::open_dialog() noexcept
         klass.lpszClassName = kClass; klass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         klass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
-        dialog_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT, kClass,
+        dialog_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT | WS_EX_LAYERED, kClass,
             L"ChatView · 자체 채팅 연결 (개발 검증)", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-            CW_USEDEFAULT, CW_USEDEFAULT, 600, 574, nullptr, nullptr, klass.hInstance, this);
+            CW_USEDEFAULT, CW_USEDEFAULT, 600, 624, nullptr, nullptr, klass.hInstance, this);
         if (!dialog_) return false;
         displayed_status_.reset();
-        if (!SetWindowDisplayAffinity(dialog_, WDA_EXCLUDEFROMCAPTURE)) { DestroyWindow(dialog_); dialog_ = nullptr; return false; }
+        // GetWindowDisplayAffinity documents a layered-window prerequisite.
+        // Keep this ordinary panel opaque and verify before its first showing,
+        // so reopening can enforce the same guard even while it is hidden.
+        DWORD affinity = 0;
+        if (!SetLayeredWindowAttributes(dialog_, 0, 255, LWA_ALPHA) ||
+            !SetWindowDisplayAffinity(dialog_, WDA_EXCLUDEFROMCAPTURE) ||
+            !GetWindowDisplayAffinity(dialog_, &affinity) || affinity != WDA_EXCLUDEFROMCAPTURE) {
+            DestroyWindow(dialog_); dialog_ = nullptr; return false;
+        }
         const UINT dpi = GetDpiForWindow(dialog_);
         const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
-        SetWindowPos(dialog_, nullptr, 0, 0, scale(600), scale(574), SWP_NOMOVE | SWP_NOZORDER);
+        SetWindowPos(dialog_, nullptr, 0, 0, scale(600), scale(624), SWP_NOMOVE | SWP_NOZORDER);
         const auto add = [&](const wchar_t *kind, const wchar_t *caption, DWORD style,
                              int id, int x, int y, int width, int height) {
             HWND item = CreateWindowExW(std::wstring_view(kind) == L"EDIT" ? WS_EX_CLIENTEDGE : 0,
@@ -154,13 +164,17 @@ bool NativeChatConnection::open_dialog() noexcept
         add(L"BUTTON", L"로그아웃", WS_TABSTOP | BS_PUSHBUTTON, kForget, 322, 272, 150, 32);
         HWND resume = add(L"BUTTON", L"현재 승인으로 자체 채팅 복귀", WS_TABSTOP | BS_PUSHBUTTON,
             kResume, 20, 314, 300, 32);
+        HWND manage = add(L"BUTTON", L"계정·시험 광고·활동 관리", WS_TABSTOP | BS_PUSHBUTTON,
+            kManage, 336, 314, 234, 32);
+        HWND management_scope = add(L"STATIC", L"브라우저의 로그인 계정으로 관리합니다. 열린 화면의 채널을 확인하세요.\n브라우저 화면은 HUD 캡처 보호 대상이 아닙니다.",
+            0, kManagementScope, 20, 402, 550, 40);
         HWND display = add(L"STATIC", L"", 0, kDisplayStatus, 20, 354, 550, 38);
-        add(L"STATIC", L"브라우저에서 채널과 요청 역할을 승인하세요. 기기등록이나 키 입력은 없습니다.\n공용 PC에서는 연결 유지를 선택하지 마세요.", 0, kNotice, 20, 402, 550, 80);
+        add(L"STATIC", L"브라우저에서 채널과 요청 역할을 승인하세요. 기기등록이나 키 입력은 없습니다.\n공용 PC에서는 연결 유지를 선택하지 마세요.", 0, kNotice, 20, 452, 550, 80);
         // Always visible when this panel is open, independent of login, output
         // reports and transient notices. Local status never certifies video.
         HWND scope = add(L"STATIC", L"수신 영상의 HUD 제외: 미검증\n채팅 연결·OBS 활성 보고는 영상 검증이 아닙니다.",
-            0, kVideoScope, 20, 488, 550, 40);
-        if (!origin || !scope || !resume || !display) { DestroyWindow(dialog_); dialog_ = nullptr; return false; }
+            0, kVideoScope, 20, 538, 550, 40);
+        if (!origin || !scope || !resume || !display || !manage || !management_scope) { DestroyWindow(dialog_); dialog_ = nullptr; return false; }
         SendMessageW(origin, EM_SETLIMITTEXT, 2048, 0);
         if (auto saved = load_connection()) {
             SetWindowTextW(origin, saved->origin.c_str());
@@ -190,6 +204,7 @@ LRESULT CALLBACK NativeChatConnection::procedure(HWND window, UINT message, WPAR
             self->end(L"연결을 종료했습니다. 서버 승인을 해제하려면 로그아웃을 선택하세요."); return 0;
         }
         if (LOWORD(wparam) == kResume) { self->resume_current(); return 0; }
+        if (LOWORD(wparam) == kManage) { self->open_management(); return 0; }
         if (LOWORD(wparam) == kForget) { self->forget(); return 0; }
         if (LOWORD(wparam) == IDCANCEL) { SendMessageW(window, WM_CLOSE, 0, 0); return 0; }
     }
@@ -212,7 +227,16 @@ void NativeChatConnection::begin(std::wstring origin, std::wstring credential, b
         notice(L"HUD 연결 제어를 준비하지 못했습니다."); return;
     }
     connection_state_.reset(); show_connection_state();
+    std::wstring bound_origin;
+    try { bound_origin = origin; }
+    catch (...) {
+        if (!credential.empty()) SecureZeroMemory(credential.data(), credential.size() * sizeof(wchar_t));
+        notice(L"연결 주소를 준비하지 못했습니다."); return;
+    }
     if (!client_.start(std::move(origin), std::move(credential), local, mode, role_)) { notice(L"주소 또는 연결 승인을 확인하세요."); return; }
+    // start() has validated the origin. This is a non-secret navigation target,
+    // never an extra approval or a value read back from editable controls.
+    service_origin_ = std::move(bound_origin);
     awaiting_login_ = mode == DisplayAuthentication::Browser || mode == DisplayAuthentication::BrowserRemember;
     if (awaiting_login_) surface_.close();
     else if (!open_surface()) { client_.stop(); notice(L"자체 채팅 화면을 열지 못했습니다."); return; }
@@ -265,6 +289,32 @@ void NativeChatConnection::resume_current() noexcept
     hud_.cancel_navigation_retry(); hud_.page_connection_recovery_.reset(); hud_.page_health_watchdog_.disarm();
     hud_.set_page_health(HudPageState::Loading, HudProvider::Chzzk);
     notice(L"현재 승인으로 복귀 중입니다. 새 채팅 연결을 확인하고 표시합니다.");
+}
+bool NativeChatConnection::can_open_management(NativeChatStatus status) const noexcept
+{
+    return !closed_ && !opening_management_ && !signing_out_ && !service_origin_.empty() &&
+        (status == NativeChatStatus::Receiving || can_request_native_chat_return(status));
+}
+void NativeChatConnection::open_management() noexcept
+{
+    if (!dialog_ || !IsWindowVisible(dialog_) || !can_open_management(local_status())) {
+        notice(L"관리 화면을 열 현재 연결을 확인하지 못했습니다. 기존 연결과 보호 상태를 확인하세요."); return;
+    }
+    DWORD affinity = 0;
+    if (!GetWindowDisplayAffinity(dialog_, &affinity) || affinity != WDA_EXCLUDEFROMCAPTURE) return;
+    opening_management_ = true;
+    struct Reset { bool &flag; ~Reset() { flag = false; } } reset{opening_management_};
+    try {
+        // Only the original validated service and one fixed public route.
+        // Browser cookies decide the management account; no native credentials,
+        // account identifiers, query strings or redirect targets are transferred.
+        auto url = service_origin_;
+        if (url.ends_with(L"/")) url.pop_back();
+        url += L"/account";
+        notice(browser_(dialog_, url.c_str())
+            ? L"관리 화면 열기를 요청했습니다. 브라우저의 계정·채널을 확인하세요. 현재 표시·승인은 변경하지 않았습니다."
+            : L"브라우저를 열지 못했습니다. 채팅 연결은 변경하지 않았습니다. 다시 시도하세요.");
+    } catch (...) { notice(L"관리 화면을 열지 못했습니다. 채팅 연결은 변경하지 않았습니다."); }
 }
 void NativeChatConnection::forget() noexcept
 {
@@ -382,7 +432,7 @@ void NativeChatConnection::tick() noexcept
 }
 void NativeChatConnection::close() noexcept
 {
-    closed_ = true;
+    closed_ = true; service_origin_.clear();
     if (host_) { RemoveWindowSubclass(host_, host_procedure, kConnectHotkey); host_ = nullptr; }
     auto_connect_pending_ = false; client_.stop();
     connection_state_.reset();

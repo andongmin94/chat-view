@@ -43,3 +43,42 @@ jobs:
         run: npm run typecheck
       - name: Confirm installation did not rewrite manifests
         run: git diff --exit-code -- package.json package-lock.json
+
+  browser:
+    name: Chromium management flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    defaults:
+      run:
+        shell: bash
+        working-directory: platform
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Install locked service and isolated browser test tools
+        run: |
+          npm ci --ignore-scripts --no-audit
+          python3 -m venv "$RUNNER_TEMP/chatview-browser"
+          "$RUNNER_TEMP/chatview-browser/bin/pip" install --only-binary=:all: -r tools/browser-requirements.txt
+          "$RUNNER_TEMP/chatview-browser/bin/python" -m playwright install --with-deps chromium
+          sudo apt-get install --no-install-recommends -y fonts-noto-cjk
+      - name: Exercise real browser cookies, redirects, consent, switch and back
+        run: |
+          "$RUNNER_TEMP/chatview-browser/bin/python" tools/management-browser-test.py
+      - name: Confirm Node manifests remain unchanged
+        run: git diff --exit-code -- package.json package-lock.json
+      - name: Preserve synthetic screenshots and redacted request metadata only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: management-browser-flow
+          path: |
+            platform/browser-evidence/*.png
+            platform/browser-evidence/*.json
+          if-no-files-found: ignore
+          retention-days: 7

@@ -31,6 +31,27 @@ std::wstring control_text(HWND dialog, int id)
     GetDlgItemTextW(dialog, id, value, 1024);
     return value;
 }
+void expect_video_scope(HWND dialog)
+{
+    const HWND scope = GetDlgItem(dialog, 111);
+    const auto text = control_text(dialog, 111);
+    expect(scope && IsWindowVisible(scope) &&
+        text == L"수신 영상의 HUD 제외: 미검증\n채팅 연결·OBS 활성 보고는 영상 검증이 아닙니다.",
+        "video warning is independent of successful chat/role delivery");
+    RECT client{};
+    expect(GetClientRect(scope, &client) != FALSE, "video scope control bounds");
+    const HDC dc = GetDC(scope);
+    expect(dc != nullptr, "video scope text measurement DC");
+    const auto font = reinterpret_cast<HFONT>(SendMessageW(scope, WM_GETFONT, 0, 0));
+    const auto old = font ? SelectObject(dc, font) : nullptr;
+    RECT required{0, 0, client.right, 0};
+    const int height = DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &required,
+        DT_LEFT | DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+    if (old && old != HGDI_ERROR) SelectObject(dc, old);
+    ReleaseDC(scope, dc);
+    expect(height > 0 && required.bottom <= client.bottom && required.right <= client.right,
+        "persistent two-line video warning fits its actual native font and control");
+}
 void pump(chatview::NativeChatConnection *connection = nullptr)
 {
     MSG message{};
@@ -92,6 +113,7 @@ void gateway_ui(const std::wstring &origin)
     await([&] { return WaitForSingleObject(ready.get(), 0) == WAIT_OBJECT_0; }, "HUD startup", &connection);
     HWND dialog = chatview::NativeChatConnectionTestAccess::dialog(connection);
     expect(dialog != nullptr, "open native connection panel");
+    expect_video_scope(dialog);
     expect(control_text(dialog, 109).find(L"송출 PC") != std::wstring::npos, "panel identifies OBS runtime role before consent");
     expect(control_text(dialog, 110).find(L"확인되지 않음") != std::wstring::npos, "no session claim before authorization");
     SetDlgItemTextW(dialog, 101, origin.c_str());
@@ -106,6 +128,7 @@ void gateway_ui(const std::wstring &origin)
         "native controls receive authorized role and same-session display counts");
     expect(control_text(dialog, 110) == chatview::connection_summary(*state), "panel displays actual accepted session metadata");
     expect(control_text(dialog, 110).find(L"영상 제외 미검증") != std::wstring::npos, "role connection is not capture qualification");
+    expect_video_scope(dialog);
     Microsoft::WRL::ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(surface);
     expect(evaluate(core.Get(), LR"JS(
         document.querySelector('#messages li b').textContent === '검증 사용자' &&
@@ -116,6 +139,7 @@ void gateway_ui(const std::wstring &origin)
     await([&] { return !chatview::NativeChatConnectionTestAccess::active(connection); }, "grant revoke ends native delivery", &connection);
     expect(!chatview::NativeChatConnectionTestAccess::connection(connection), "revocation clears native session state");
     expect(control_text(dialog, 110).find(L"확인되지 않음") != std::wstring::npos, "revocation clears session status text");
+    expect_video_scope(dialog);
     await([&] { return evaluate(core.Get(), L"document.querySelectorAll('#messages li').length === 0", connection) == L"true"; },
           "revocation clears actual DOM", &connection);
     connection.close(); hud.destroy();

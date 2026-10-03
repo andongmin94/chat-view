@@ -80,6 +80,20 @@ void choose(HWND dialog, int button)
     expect(SendMessageTimeoutW(dialog, WM_COMMAND, static_cast<WPARAM>(button), 0,
         SMTO_ABORTIFHUNG, 2000U, &result) != 0, "answer explicit development warning");
 }
+void expect_video_scope(HWND panel)
+{
+    const HWND scope = GetDlgItem(panel, 111);
+    wchar_t value[256]{};
+    RECT bounds{}, client{};
+    expect(scope && IsWindowVisible(scope) && GetWindowRect(scope, &bounds) && GetClientRect(panel, &client),
+        "persistent video notice is a visible native control");
+    MapWindowPoints(nullptr, panel, reinterpret_cast<POINT *>(&bounds), 2);
+    GetWindowTextW(scope, value, 256);
+    expect(std::wstring(value) == L"수신 영상의 HUD 제외: 미검증\n채팅 연결·OBS 활성 보고는 영상 검증이 아닙니다.",
+        "companion separates chat/OBS reports from video verification");
+    expect(bounds.left >= 0 && bounds.top >= 0 && bounds.right <= client.right && bounds.bottom <= client.bottom,
+        "video notice remains inside the connection panel client area");
+}
 void expect_no_obs_module(DWORD pid)
 {
     chatview::UniqueHandle snapshot;
@@ -121,6 +135,11 @@ int wmain(int argc, wchar_t **argv)
         expect(GetDlgItem(panel, 101) && GetDlgItem(panel, 107) && GetDlgItem(panel, 104),
                "existing authenticated connection controls available");
         expect(GetDlgItem(panel, 102) == nullptr, "no manual credential field in connection panel");
+        expect_video_scope(panel);
+        choose(panel, 104); // Empty service address fails locally, not a live login.
+        expect_video_scope(panel);
+        choose(panel, 105);
+        expect_video_scope(panel);
         const HWND hud = await_window(child, L"ChatView HUD");
         expect(PostThreadMessageW(child.thread_id, WM_HOTKEY, 0x4356U,
             MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'V')) != FALSE, "open companion video controls");
@@ -135,6 +154,7 @@ int wmain(int argc, wchar_t **argv)
         expect(!unexpected.found, "missing selection does not open an output or capture desktop");
         choose(video, 205);
         expect(IsWindowVisible(hud) != FALSE, "video stop preserves visible local HUD");
+        expect_video_scope(panel);
         expect_no_obs_module(child.pid);
         {
             Child duplicate(argv[1]);
@@ -144,7 +164,7 @@ int wmain(int argc, wchar_t **argv)
             MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'Q')) != FALSE,
             "request normal companion shutdown");
         child.expect_exit(0U);
-        std::cout << "Companion entry, consent, chat/video selection UI, no OBS modules, duplicate and exit passed\n";
+        std::cout << "Companion entry, consent, chat/video selection UI, scoped status, no OBS modules, duplicate and exit passed\n";
     } catch (const std::exception &error) {
         std::cerr << "Companion test failed: " << error.what() << '\n';
         return 1;

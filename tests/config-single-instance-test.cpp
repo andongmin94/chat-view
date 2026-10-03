@@ -24,10 +24,12 @@ constexpr int kSaveButtonId = 1002;
 constexpr int kEditButtonId = 1003;
 constexpr int kRestartButtonId = 1004;
 constexpr int kRecoveryButtonId = 1007;
+constexpr int kVideoScopeId = 1008;
 constexpr DWORD kWindowTimeoutMs = 8000U;
 constexpr DWORD kProcessExitTimeoutMs = 5000U;
 
 std::atomic_bool edit_message_received{false};
+std::atomic<chatview::HudPageState> reported_health{chatview::HudPageState::Ready};
 UINT edit_message = 0U;
 UINT health_message = 0U;
 
@@ -108,7 +110,7 @@ LRESULT CALLBACK fake_hud_window_proc(
     if (message == health_message && health_message != 0U) {
         return static_cast<LRESULT>(chatview::encode_hud_health(
             chatview::HudHealthSnapshot{
-                chatview::HudPageState::Ready,
+                reported_health.load(std::memory_order_acquire),
                 chatview::HudProvider::YouTube,
                 0U}));
     }
@@ -223,6 +225,25 @@ bool child_text_contains(HWND parent, const wchar_t *needle)
         },
         reinterpret_cast<LPARAM>(&context));
     return context.found;
+}
+
+bool video_scope_present(HWND parent)
+{
+    const HWND scope = GetDlgItem(parent, kVideoScopeId);
+    wchar_t text[256]{};
+    RECT bounds{}, client{}, action{}, intersection{};
+    if (!scope || !IsWindowVisible(scope) || !GetWindowRect(scope, &bounds) ||
+        !GetClientRect(parent, &client) ||
+        !GetWindowRect(GetDlgItem(parent, kRecoveryButtonId), &action)) return false;
+    MapWindowPoints(nullptr, parent, reinterpret_cast<POINT *>(&bounds), 2);
+    MapWindowPoints(nullptr, parent, reinterpret_cast<POINT *>(&action), 2);
+    GetWindowTextW(scope, text, 256);
+    return std::wstring(text) == L"Audience video: NOT VERIFIED.\nLocal HUD status and OBS activity do not prove HUD exclusion." &&
+        bounds.left >= 0 && bounds.top >= 0 && bounds.right <= client.right && bounds.bottom <= client.bottom &&
+        bounds.bottom - bounds.top >= MulDiv(40, static_cast<int>(GetDpiForWindow(parent)), 96) &&
+        !IntersectRect(&intersection, &bounds, &action) &&
+        !child_text_contains(parent, L"READY TO STREAM") &&
+        !child_text_contains(parent, L"Private HUD safety active");
 }
 
 bool post_command(HWND window, int identifier, HWND control) noexcept
@@ -401,19 +422,20 @@ int wmain(int argument_count, wchar_t **arguments)
                 return child_text_contains(
                            control_center, L"Connected to OBS Studio") &&
                        child_text_contains(
-                           control_center, L"Private HUD safety active") &&
+                           control_center, L"No flagged risk in scene scan — video not verified") &&
                        child_text_contains(
                            control_center, L"YouTube chat ready") &&
                        child_text_contains(
                            control_center,
-                           L"BLOCKED — Save a supported chat URL") &&
+                           L"HUD NOT READY — Save a supported chat URL") &&
                        child_text_contains(
-                           control_center, L"Enter chat URL");
+                           control_center, L"Enter chat URL") &&
+                       video_scope_present(control_center);
             },
             kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);
         return fail(
-            L"The Control Center did not render live OBS and HUD health",
+            L"The Control Center did not render scoped OBS and HUD status",
             first.process.get());
     }
 
@@ -461,8 +483,9 @@ int wmain(int argument_count, wchar_t **arguments)
                            config_file,
                            L"https://www.youtube.com/live_chat?is_popout=1&v=dQw4w9WgXcQ") &&
                        child_text_contains(
-                           control_center, L"READY TO STREAM") &&
-                       !IsWindowVisible(recovery_button);
+                           control_center, L"LOCAL HUD READY") &&
+                       !IsWindowVisible(recovery_button) &&
+                       video_scope_present(control_center);
             },
             kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);
@@ -484,15 +507,18 @@ int wmain(int argument_count, wchar_t **arguments)
             [&]() {
                 return child_text_contains(
                            control_center,
-                           L"BLOCKED — Active Display Capture") &&
+                           L"HUD NOT READY — Capture risk is reported by OBS") &&
+                       child_text_contains(
+                           control_center, L"Risk reported; check HUD visibility — video not verified") &&
                        child_text_contains(
                            control_center, L"Open OBS") &&
-                       IsWindowVisible(recovery_button);
+                       IsWindowVisible(recovery_button) &&
+                       video_scope_present(control_center);
             },
             kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);
         return fail(
-            L"The readiness gate did not block active Display Capture",
+            L"The local HUD gate did not report active Display Capture",
             first.process.get());
     }
 
@@ -507,14 +533,60 @@ int wmain(int argument_count, wchar_t **arguments)
     if (!wait_until(
             [&]() {
                 return child_text_contains(
-                           control_center, L"READY TO STREAM") &&
-                       !IsWindowVisible(recovery_button);
+                           control_center, L"LOCAL HUD READY") &&
+                       !IsWindowVisible(recovery_button) &&
+                       video_scope_present(control_center);
             },
             kWindowTimeoutMs)) {
         DestroyWindow(fake_hud);
         return fail(
-            L"The readiness gate did not recover after Display Capture cleared",
+            L"The local HUD gate did not recover after Display Capture cleared",
             first.process.get());
+    }
+
+    // Real config controls driven by synthetic IPC, not actual captured video.
+    // Every local state must keep the same independent video-unverified notice.
+    constexpr std::uint32_t ready_flags = chatview::ControlStatusHudRunning |
+        chatview::ControlStatusHudVisible | chatview::ControlStatusSceneGraphReady;
+    struct StatusCase {
+        std::uint32_t flags;
+        chatview::HudPageState health;
+        const wchar_t *headline;
+        const wchar_t *detail;
+        bool recovery;
+    };
+    const StatusCase cases[] = {
+        {ready_flags & ~static_cast<std::uint32_t>(chatview::ControlStatusSceneGraphReady),
+            chatview::HudPageState::Ready, L"HUD NOT READY — OBS scene information is unavailable",
+            L"Scene scan unavailable — video not verified", true},
+        {(ready_flags & ~static_cast<std::uint32_t>(chatview::ControlStatusHudVisible)) |
+            chatview::ControlStatusCaptureRisk, chatview::HudPageState::Ready,
+            L"HUD NOT READY — Capture risk is reported by OBS", L"Risk reported; HUD hidden — video not verified", true},
+        {ready_flags, chatview::HudPageState::Loading, L"HUD NOT READY — Chat is still loading",
+            L"No flagged risk in scene scan — video not verified", false},
+        {ready_flags, chatview::HudPageState::ConnectionLost, L"HUD NOT READY — Chat connection is being restored",
+            L"No flagged risk in scene scan — video not verified", true},
+        {ready_flags | chatview::ControlStatusStreaming | chatview::ControlStatusRecording,
+            chatview::HudPageState::Ready, L"LOCAL HUD READY", L"Streaming  •  Recording", false},
+        {ready_flags | 0x80000000U, chatview::HudPageState::Ready,
+            L"HUD NOT READY — OBS status is unavailable", L"Status unavailable", true},
+        {ready_flags, chatview::HudPageState::Ready, L"LOCAL HUD READY",
+            L"No flagged risk in scene scan — video not verified", false},
+    };
+    std::uint64_t generation = 4U;
+    for (const auto &state : cases) {
+        reported_health.store(state.health, std::memory_order_release);
+        publish(mapped.get(), state.flags, process_id, generation++);
+        SetEvent(status_event.get());
+        if (!wait_until([&]() {
+                return child_text_contains(control_center, state.headline) &&
+                    child_text_contains(control_center, state.detail) &&
+                    (IsWindowVisible(recovery_button) != FALSE) == state.recovery &&
+                    video_scope_present(control_center);
+            }, kWindowTimeoutMs)) {
+            DestroyWindow(fake_hud);
+            return fail(L"Local status/recovery changed the independent video verification boundary", first.process.get());
+        }
     }
 
     if (!post_command(control_center, kEditButtonId, edit_button) ||

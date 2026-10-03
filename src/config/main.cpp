@@ -37,6 +37,7 @@ constexpr int kRestartButtonId = 1004;
 constexpr int kCloseButtonId = 1005;
 constexpr int kDiagnosticsButtonId = 1006;
 constexpr int kRecoveryButtonId = 1007;
+constexpr int kVideoScopeId = 1008;
 constexpr int kWindowWidthDip = 960;
 constexpr int kWindowHeightDip = 620;
 constexpr int kMinimumUrlLength = 0;
@@ -383,7 +384,7 @@ ReadinessPresentation readiness_presentation(
 {
     if (result.ready) {
         return {
-            L"●  READY TO STREAM — Chat, private HUD, and capture safety are ready.",
+            L"●  LOCAL HUD READY — ChatView reports a visible, ready chat surface.",
             kColorGood};
     }
 
@@ -391,59 +392,59 @@ ReadinessPresentation readiness_presentation(
     switch (result.blocker) {
     case Blocker::ObsDisconnected:
         return {
-            L"●  BLOCKED — Open this Control Center from the OBS Tools menu.",
+            L"●  HUD NOT READY — Open this Control Center from the OBS Tools menu.",
             kColorError};
     case Blocker::StatusUnavailable:
-        return {L"●  BLOCKED — OBS status is unavailable.", kColorError};
+        return {L"●  HUD NOT READY — OBS status is unavailable.", kColorError};
     case Blocker::ChatNotConfigured:
         return {
-            L"●  BLOCKED — Save a supported chat URL.",
+            L"●  HUD NOT READY — Save a supported chat URL.",
             kColorError};
     case Blocker::RestartCircuitOpen:
         return {
-            L"●  BLOCKED — Automatic HUD restart is disabled after repeated failures.",
+            L"●  HUD NOT READY — Automatic HUD restart is disabled after repeated failures.",
             kColorError};
     case Blocker::SceneGraphUnavailable:
         return {
-            L"●  BLOCKED — OBS scene safety cannot be verified yet.",
+            L"●  HUD NOT READY — OBS scene information is unavailable.",
             kColorError};
     case Blocker::DisplayCaptureActive:
         return {
-            L"●  BLOCKED — Active Display Capture would hide the private HUD.",
+            L"●  HUD NOT READY — Capture risk is reported by OBS; check HUD visibility.",
             kColorError};
     case Blocker::HudNotRunning:
-        return {L"●  BLOCKED — The private HUD is not running.", kColorError};
+        return {L"●  HUD NOT READY — The private HUD is not running.", kColorError};
     case Blocker::HudHealthUnavailable:
-        return {L"●  BLOCKED — HUD health cannot be verified.", kColorError};
+        return {L"●  HUD NOT READY — Local chat status is unavailable.", kColorError};
     case Blocker::ChatStarting:
-        return {L"●  BLOCKED — Chat engine is starting.", kColorWarning};
+        return {L"●  HUD NOT READY — Chat engine is starting.", kColorWarning};
     case Blocker::ChatLoading:
-        return {L"●  BLOCKED — Chat is still loading.", kColorWarning};
+        return {L"●  HUD NOT READY — Chat is still loading.", kColorWarning};
     case Blocker::ChatRetrying:
-        return {L"●  BLOCKED — Chat navigation is retrying.", kColorWarning};
+        return {L"●  HUD NOT READY — Chat navigation is retrying.", kColorWarning};
     case Blocker::ChatRecovering:
-        return {L"●  BLOCKED — WebView is recovering.", kColorWarning};
+        return {L"●  HUD NOT READY — WebView is recovering.", kColorWarning};
     case Blocker::LoginRequired:
-        return {L"●  BLOCKED — Sign in to the chat platform.", kColorError};
+        return {L"●  HUD NOT READY — Sign in to the chat platform.", kColorError};
     case Blocker::BroadcastOffline:
-        return {L"●  BLOCKED — The broadcast is offline or ended.", kColorError};
+        return {L"●  HUD NOT READY — The broadcast is offline or ended.", kColorError};
     case Blocker::LayoutChanged:
-        return {L"●  BLOCKED — The platform page layout changed.", kColorError};
+        return {L"●  HUD NOT READY — The platform page layout changed.", kColorError};
     case Blocker::NetworkOffline:
-        return {L"●  BLOCKED — This PC is offline.", kColorError};
+        return {L"●  HUD NOT READY — This PC is offline.", kColorError};
     case Blocker::ConnectionLost:
-        return {L"●  BLOCKED — Chat connection is being restored.", kColorWarning};
+        return {L"●  HUD NOT READY — Chat connection is being restored.", kColorWarning};
     case Blocker::SystemPaused:
-        return {L"●  BLOCKED — Windows session is paused.", kColorError};
+        return {L"●  HUD NOT READY — Windows session is paused.", kColorError};
     case Blocker::SystemResuming:
-        return {L"●  BLOCKED — Windows session is being revalidated.", kColorWarning};
+        return {L"●  HUD NOT READY — Windows session is being revalidated.", kColorWarning};
     case Blocker::ChatFatal:
-        return {L"●  BLOCKED — Chat engine failed.", kColorError};
+        return {L"●  HUD NOT READY — Chat engine failed.", kColorError};
     case Blocker::HudHidden:
-        return {L"●  BLOCKED — The private HUD window is hidden.", kColorError};
+        return {L"●  HUD NOT READY — The private HUD window is hidden.", kColorError};
     case Blocker::None:
     default:
-        return {L"●  BLOCKED — Stream readiness is unknown.", kColorError};
+        return {L"●  HUD NOT READY — Local HUD status is unknown.", kColorError};
     }
 }
 
@@ -840,7 +841,13 @@ private:
     {
         title_ = create_static(L"ChatView Control Center");
         subtitle_ = create_static(
-            L"●  CHECKING STREAM READINESS");
+            L"●  CHECKING LOCAL HUD STATUS");
+        video_scope_ = create_static(
+            L"Audience video: NOT VERIFIED.\n"
+            L"Local HUD status and OBS activity do not prove HUD exclusion.");
+        if (video_scope_ != nullptr) {
+            SetWindowLongPtrW(video_scope_, GWLP_ID, kVideoScopeId);
+        }
         url_label_ = create_static(L"Broadcast or chat URL");
         url_edit_ = CreateWindowExW(
             WS_EX_CLIENTEDGE,
@@ -875,9 +882,9 @@ private:
         obs_value_ = create_static(L"Checking...");
         hud_label_ = create_static(L"HUD runtime");
         hud_value_ = create_static(L"Checking...");
-        safety_label_ = create_static(L"Capture safety");
+        safety_label_ = create_static(L"OBS capture check");
         safety_value_ = create_static(L"Checking...");
-        output_label_ = create_static(L"OBS output");
+        output_label_ = create_static(L"OBS activity (local)");
         output_value_ = create_static(L"Checking...");
         recovery_label_ = create_static(L"Restart history");
         recovery_value_ = create_static(L"Checking...");
@@ -898,9 +905,10 @@ private:
         close_button_ = create_button(
             L"Close", kCloseButtonId, BS_PUSHBUTTON);
 
-        const std::array<HWND, 22U> required{
+        const std::array<HWND, 23U> required{
             title_,
             subtitle_,
+            video_scope_,
             url_label_,
             url_edit_,
             provider_value_,
@@ -1033,7 +1041,7 @@ private:
             snapshot_available_ = false;
             latest_health_available_ = false;
             set_disconnected_status();
-            refresh_stream_readiness(false, false, {}, false, {});
+            refresh_local_hud_status(false, false, {}, false, {});
             return;
         }
 
@@ -1068,7 +1076,7 @@ private:
                 recovery_color_);
             EnableWindow(edit_button_, FALSE);
             EnableWindow(restart_button_, FALSE);
-            refresh_stream_readiness(true, false, {}, false, {});
+            refresh_local_hud_status(true, false, {}, false, {});
             return;
         }
 
@@ -1155,17 +1163,29 @@ private:
                 hud_color_);
         }
 
-        if (capture_risk) {
+        // This row describes the local OBS scan, never captured audience pixels.
+        // No risk flag is not proof of exclusion, especially without scene data.
+        if (capture_risk || chatview::has_control_status_flag(
+                snapshot, chatview::ControlStatusDisplayCaptureActive)) {
             set_colored_text(
                 safety_value_,
-                L"●  HUD hidden: Display Capture risk detected",
+                hud_running && !hud_visible
+                    ? L"●  Risk reported; HUD hidden — video not verified"
+                    : L"●  Risk reported; check HUD visibility — video not verified",
+                kColorWarning,
+                safety_color_);
+        } else if (!chatview::has_control_status_flag(
+                       snapshot, chatview::ControlStatusSceneGraphReady)) {
+            set_colored_text(
+                safety_value_,
+                L"●  Scene scan unavailable — video not verified",
                 kColorWarning,
                 safety_color_);
         } else {
             set_colored_text(
                 safety_value_,
-                L"●  Private HUD safety active",
-                kColorGood,
+                L"●  No flagged risk in scene scan — video not verified",
+                kColorMuted,
                 safety_color_);
         }
 
@@ -1184,11 +1204,11 @@ private:
             edit_button_,
             hud_running && !capture_risk ? TRUE : FALSE);
         EnableWindow(restart_button_, TRUE);
-        refresh_stream_readiness(
+        refresh_local_hud_status(
             true, true, snapshot, health_available, health);
     }
 
-    void refresh_stream_readiness(
+    void refresh_local_hud_status(
         bool obs_connected,
         bool status_available,
         const chatview::ControlStatusSnapshot &status,
@@ -1309,7 +1329,7 @@ private:
                 snapshot,
                 chatview::ControlStatusDisplayCaptureActive)) {
             set_feedback(
-                L"The private HUD cannot be opened while capture safety is active.",
+                L"The private HUD cannot be opened while its capture-risk guard is active.",
                 kColorWarning);
             return;
         }
@@ -1346,7 +1366,7 @@ private:
         }
         if (accepted != 1U) {
             set_feedback(
-                L"The HUD refused interaction because its current state is not safe.",
+                L"The HUD refused interaction under its current local protection state.",
                 kColorWarning);
             return;
         }
@@ -1567,6 +1587,8 @@ private:
         COLORREF color = kColorText;
         if (control == subtitle_) {
             color = readiness_color_;
+        } else if (control == video_scope_) {
+            color = kColorWarning;
         } else if (control == version_) {
             color = kColorMuted;
         } else if (control == provider_value_) {
@@ -1640,8 +1662,9 @@ private:
             DEFAULT_PITCH | FF_DONTCARE,
             L"Segoe UI");
 
-        const std::array<HWND, 23U> body_controls{
+        const std::array<HWND, 24U> body_controls{
             subtitle_,
+            video_scope_,
             url_edit_,
             provider_value_,
             status_group_,
@@ -1736,6 +1759,7 @@ private:
         move(title_, 32, 24, 896, 38);
         move(subtitle_, 34, 61, 892, 24);
         move(recovery_button_, 34, 92, 240, 38);
+        move(video_scope_, 290, 90, 636, 44);
         move(url_label_, 34, 145, 300, 22);
         move(url_edit_, 34, 172, 892, 32);
         move(provider_value_, 36, 210, 888, 24);
@@ -1806,6 +1830,7 @@ private:
     HWND window_ = nullptr;
     HWND title_ = nullptr;
     HWND subtitle_ = nullptr;
+    HWND video_scope_ = nullptr;
     HWND url_label_ = nullptr;
     HWND url_edit_ = nullptr;
     HWND provider_value_ = nullptr;

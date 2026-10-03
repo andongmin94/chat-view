@@ -10,7 +10,7 @@ namespace chatview {
 namespace {
 constexpr int kConnectHotkey = 0x4348;
 constexpr int kOrigin = 101, kLocal = 103, kConnect = 104, kDisconnect = 105, kNotice = 106;
-constexpr int kRemember = 107, kForget = 108, kRole = 109, kSession = 110;
+constexpr int kRemember = 107, kForget = 108, kRole = 109, kSession = 110, kVideoScope = 111;
 constexpr wchar_t kClass[] = L"ChatView.NativeConnection";
 std::wstring text(HWND parent, int id, int maximum)
 {
@@ -57,12 +57,12 @@ void NativeChatConnection::open_dialog() noexcept
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
         dialog_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT, kClass,
             L"ChatView · 자체 채팅 연결 (개발 검증)", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-            CW_USEDEFAULT, CW_USEDEFAULT, 600, 460, nullptr, nullptr, klass.hInstance, this);
+            CW_USEDEFAULT, CW_USEDEFAULT, 600, 490, nullptr, nullptr, klass.hInstance, this);
         if (!dialog_) return;
         if (!SetWindowDisplayAffinity(dialog_, WDA_EXCLUDEFROMCAPTURE)) { DestroyWindow(dialog_); dialog_ = nullptr; return; }
         const UINT dpi = GetDpiForWindow(dialog_);
         const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
-        SetWindowPos(dialog_, nullptr, 0, 0, scale(600), scale(460), SWP_NOMOVE | SWP_NOZORDER);
+        SetWindowPos(dialog_, nullptr, 0, 0, scale(600), scale(490), SWP_NOMOVE | SWP_NOZORDER);
         const auto add = [&](const wchar_t *kind, const wchar_t *caption, DWORD style,
                              int id, int x, int y, int width, int height) {
             HWND item = CreateWindowExW(std::wstring_view(kind) == L"EDIT" ? WS_EX_CLIENTEDGE : 0,
@@ -82,7 +82,11 @@ void NativeChatConnection::open_dialog() noexcept
         add(L"BUTTON", L"연결 중지", WS_TABSTOP | BS_PUSHBUTTON, kDisconnect, 186, 272, 120, 32);
         add(L"BUTTON", L"로그아웃", WS_TABSTOP | BS_PUSHBUTTON, kForget, 322, 272, 150, 32);
         add(L"STATIC", L"브라우저에서 채널과 요청 역할을 승인하세요. 기기등록이나 키 입력은 없습니다.\n공용 PC에서는 연결 유지를 선택하지 마세요.", 0, kNotice, 20, 318, 550, 80);
-        if (!origin) { DestroyWindow(dialog_); dialog_ = nullptr; return; }
+        // Always visible when this panel is open, independent of login, output
+        // reports and transient notices. Local status never certifies video.
+        HWND scope = add(L"STATIC", L"수신 영상의 HUD 제외: 미검증\n채팅 연결·OBS 활성 보고는 영상 검증이 아닙니다.",
+            0, kVideoScope, 20, 404, 550, 40);
+        if (!origin || !scope) { DestroyWindow(dialog_); dialog_ = nullptr; return; }
         SendMessageW(origin, EM_SETLIMITTEXT, 2048, 0);
         if (auto saved = load_connection()) {
             SetWindowTextW(origin, saved->origin.c_str());

@@ -7,7 +7,8 @@ target_include_directories(chat-view-window-capture PUBLIC "${CHATVIEW_SOURCE_DI
 target_link_libraries(chat-view-window-capture PUBLIC windowsapp d3d11 d2d1 dxgi dwmapi ole32 user32)
 chatview_enable_win32(chat-view-window-capture)
 chatview_enable_warnings(chat-view-window-capture)
-target_sources(chat-view-hud PRIVATE src/hud/video-output-panel.cpp src/hud/video-output-panel.hpp)
+target_sources(chat-view-hud PRIVATE src/hud/video-output-panel.cpp src/hud/video-output-panel.hpp
+    src/hud/video-output-check.hpp src/hud/video-output-pattern.hpp)
 target_link_libraries(chat-view-hud PRIVATE chat-view-window-capture)
 
 if(BUILD_TESTING)
@@ -15,6 +16,11 @@ if(BUILD_TESTING)
     target_include_directories(chat-view-video-layout-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
     chatview_enable_warnings(chat-view-video-layout-test)
     add_test(NAME chat-view-video-layout COMMAND chat-view-video-layout-test)
+
+    add_executable(chat-view-video-output-check-test tests/video-output-check-test.cpp)
+    target_include_directories(chat-view-video-output-check-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_warnings(chat-view-video-output-check-test)
+    add_test(NAME chat-view-video-output-check COMMAND chat-view-video-output-check-test)
 
     add_executable(chat-view-window-capture-test tests/window-capture-test.cpp)
     target_link_libraries(chat-view-window-capture-test PRIVATE chat-view-window-capture gdi32)

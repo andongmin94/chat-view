@@ -3,6 +3,7 @@
 // through test friendship: there is no production topology override. Injected
 // Windows notifications are not an actual lock, hotplug or two-PC recording.
 #include "hud/video-output-panel.hpp"
+#include "hud/video-output-pattern.hpp"
 #include "hud/hud-window.hpp"
 #include "common/win32-handle.hpp"
 #include <wtsapi32.h>
@@ -24,15 +25,36 @@ struct VideoOutputPanelTestAccess {
     static bool releasing(VideoOutputPanel &p) { return p.releasing_; }
     static bool choices_empty(VideoOutputPanel &p) { return p.sources_.empty() && p.monitors_.empty(); }
     static auto &capture(VideoOutputPanel &p) { return p.capture_; }
-    static void mount(VideoOutputPanel &p, HWND source) {
+    static void place(VideoOutputPanel &p, HWND source) {
         p.output_bounds_ = {500, 30, 820, 270};
         p.source_ = source;
         p.source_thread_ = GetWindowThreadProcessId(source, &p.source_process_);
         p.source_monitor_ = MonitorFromWindow(source, MONITOR_DEFAULTTONULL);
         p.ensure_output(); // production window + owned black cover, not copies
         p.monitor_ = MonitorFromWindow(p.output_, MONITOR_DEFAULTTONULL);
+    }
+    static void mount(VideoOutputPanel &p, HWND source) {
+        place(p, source);
         p.requested_ = p.capture_.start(source, p.output_);
         if (!p.requested_) throw std::runtime_error("mount synthetic output");
+    }
+    static auto &check(VideoOutputPanel &p) { return p.check_; }
+    static void pattern(VideoOutputPanel &p, HWND source) {
+        place(p, source);
+        p.show_pattern();
+        // This rectangle is not a physical extended monitor. Stop the automatic
+        // topology timer, not a production guard; explicit notifications and
+        // timer-after-stop tests below still run through the production WndProc.
+        KillTimer(p.cover_, 0x435650);
+    }
+    static bool accept_for_fixture(VideoOutputPanel &p) {
+        if (!p.check_.confirm(GetTickCount64(), p.selection_epoch_)) return false;
+        p.begin_capture(); return p.requested_;
+    }
+    static void expire(VideoOutputPanel &p) {
+        const auto now = GetTickCount64();
+        const auto start = now >= VideoOutputCheck::lifetime_ms ? now - VideoOutputCheck::lifetime_ms : now + 1;
+        p.check_.begin(start, p.selection_epoch_, p.check_.identifier()); p.check_.painted(true);
     }
     static void reveal(VideoOutputPanel &p) { ShowWindow(p.cover_, SW_HIDE); }
     static void reuse(VideoOutputPanel &p) { p.ensure_output(); }
@@ -94,6 +116,13 @@ public:
         TerminateProcess(process.get(), 99); WaitForSingleObject(process.get(), 2000);
     } }
 };
+bool cyan_bar()
+{
+    const HDC dc = GetDC(nullptr); if (!dc) return false;
+    const auto value = GetPixel(dc, 604, 75); ReleaseDC(nullptr, dc);
+    return value != CLR_INVALID && GetRValue(value) <= 8 && GetGValue(value) >= 184 &&
+        GetGValue(value) <= 200 && GetBValue(value) >= 184 && GetBValue(value) <= 200;
+}
 bool black()
 {
     const HDC dc = GetDC(nullptr); if (!dc) return false;
@@ -104,8 +133,8 @@ bool video()
 {
     const HDC dc = GetDC(nullptr); if (!dc) return false;
     const auto value = GetPixel(dc, 660, 150); ReleaseDC(nullptr, dc);
-    const auto near = [](int a, int b) { return a >= b - 8 && a <= b + 8; };
-    return value != CLR_INVALID && near(GetRValue(value), 20) && near(GetGValue(value), 100) && near(GetBValue(value), 180);
+    const auto within_tolerance = [](int a, int b) { return a >= b - 8 && a <= b + 8; };
+    return value != CLR_INVALID && within_tolerance(GetRValue(value), 20) && within_tolerance(GetGValue(value), 100) && within_tolerance(GetBValue(value), 180);
 }
 void start_pixels(chatview::VideoOutputPanel &panel, HWND source)
 {
@@ -147,8 +176,35 @@ void release_answer(chatview::VideoOutputPanel &panel, int answer, bool change_d
     responder.join();
     if (failure) std::rethrow_exception(failure);
 }
+void pattern_pixels()
+{
+    const HDC dc = CreateCompatibleDC(nullptr);
+    expect(dc != nullptr, "pattern memory DC");
+    BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = 320; info.bmiHeader.biHeight = -240;
+    info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32; info.bmiHeader.biCompression = BI_RGB;
+    void *pixels = nullptr;
+    const HBITMAP bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    if (!bitmap) { DeleteDC(dc); throw std::runtime_error("pattern bitmap"); }
+    const HGDIOBJ old = SelectObject(dc, bitmap);
+    try {
+        expect(old && old != HGDI_ERROR, "select pattern bitmap");
+        expect(chatview::paint_video_output_pattern(dc, {0, 0, 320, 240}, 0xabcdefU, 0), "first pattern paint");
+        expect(GetPixel(dc, 104, 45) == RGB(0,192,192), "synthetic cyan bar");
+        expect(GetPixel(dc, 20, 5) == RGB(255,255,255), "full output border");
+        expect(GetPixel(dc, 20, 210) == RGB(255,255,255) && GetPixel(dc, 60, 210) == RGB(0,0,0), "first motion cell");
+        expect(chatview::paint_video_output_pattern(dc, {0, 0, 320, 240}, 0xabcdefU, 1), "next pattern paint");
+        expect(GetPixel(dc, 20, 210) == RGB(0,0,0) && GetPixel(dc, 60, 210) == RGB(255,255,255), "motion advances and clears previous cell");
+        expect(!chatview::paint_video_output_pattern(dc, {0, 0, 0, 240}, 1, 0), "invalid geometry fails closed");
+    } catch (...) {
+        if (old && old != HGDI_ERROR) SelectObject(dc, old);
+        DeleteObject(bitmap); DeleteDC(dc); throw;
+    }
+    SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc);
+}
 void exercise(const wchar_t *source_executable)
 {
+    pattern_pixels();
     expect(GetSystemMetrics(SM_CXSCREEN) >= 900 && GetSystemMetrics(SM_CYSCREEN) >= 600,
         "interactive desktop required, not skipped");
     Source source(source_executable); HWND game = nullptr;
@@ -164,6 +220,38 @@ void exercise(const wchar_t *source_executable)
     const HWND controls = Access::open(panel);
     expect(controls && Access::registered(panel), "real controls register session notifications");
     SetWindowPos(controls, nullptr, 20, 350, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    expect(!IsWindowEnabled(GetDlgItem(controls, 204)), "game conversion is disabled before a pattern is painted");
+    SendMessageW(controls, WM_COMMAND, 204, 0);
+    SendMessageW(controls, WM_COMMAND, 208, 0);
+    expect(!Access::capture(panel).running() && !Access::output(panel), "neither command can bypass explicit selections");
+    Access::pattern(panel, game);
+    expect(!Access::capture(panel).running() && Access::capture(panel).snapshot().frames == 0,
+        "pattern preparation does not start WGC or read a game frame");
+    await(cyan_bar, "synthetic pattern pixels on the actual independent cover");
+    const auto label = chatview::video_check_label(Access::check(panel).identifier());
+    wchar_t notice[512]{}; GetDlgItemTextW(controls, 207, notice, 512);
+    expect(std::wstring_view(notice).find(label.data()) != std::wstring_view::npos,
+        "same read-only visual identifier appears in the panel");
+    expect(IsWindowEnabled(GetDlgItem(controls, 204)), "conversion enabled only after local painting");
+    const HWND checked_output = Access::output(panel), checked_cover = Access::cover(panel);
+    expect(Access::accept_for_fixture(panel), "fresh local check consumed before capture transition");
+    expect(!Access::check(panel).active() && !IsWindowEnabled(GetDlgItem(controls, 204)) &&
+        Access::output(panel) == checked_output && Access::cover(panel) == checked_cover,
+        "transition consumes check and preserves both HWNDs");
+    expect(IsWindowVisible(checked_cover), "transition keeps a black cover until fresh WGC frames");
+    await([&] { return Access::capture(panel).snapshot().frames >= 2; }, "WGC begins only after confirmation", 10000);
+    Access::reveal(panel); await(video, "pattern converts to selected game pixels");
+    expect(IsWindowVisible(hud_window), "visual check and game conversion preserve private HUD");
+    SendMessageW(controls, WM_COMMAND, 205, 0); stopped(panel, hud_window);
+    expect(!Access::accept_for_fixture(panel), "confirmation is not reusable after stop");
+    Access::pattern(panel, game);
+    SendMessageW(controls, WM_COMMAND, MAKEWPARAM(201, CBN_SELCHANGE), 0);
+    stopped(panel, hud_window);
+    expect(!Access::check(panel).active(), "selection change invalidates the visual check");
+    SendMessageW(checked_cover, WM_TIMER, 0x435650, 0);
+    expect(black() && !Access::check(panel).active(), "queued timer cannot resurrect a stopped pattern");
+    Access::pattern(panel, game); Access::expire(panel); panel.tick();
+    expect(!Access::check(panel).active() && !Access::requested(panel) && black(), "expired check masks output without starting capture");
     const struct { UINT message; WPARAM parameter; UINT recovery; WPARAM recovered; } events[] = {
         {WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK, WM_WTSSESSION_CHANGE, WTS_SESSION_UNLOCK},
         {WM_POWERBROADCAST, PBT_APMSUSPEND, WM_POWERBROADCAST, PBT_APMRESUMEAUTOMATIC},
@@ -171,6 +259,13 @@ void exercise(const wchar_t *source_executable)
         {WM_DEVICECHANGE, DBT_DEVNODES_CHANGED, 0, 0},
     };
     for (const auto &event : events) {
+        Access::pattern(panel, game);
+        SendMessageW(controls, event.message, event.parameter, 0);
+        stopped(panel, hud_window);
+        expect(!Access::check(panel).active(), "notification invalidates pre-capture visual check");
+        if (event.recovery) SendMessageW(controls, event.recovery, event.recovered, 0);
+        SendMessageW(controls, WM_COMMAND, 204, 0);
+        expect(!Access::capture(panel).running() && black(), "recovery cannot start a previously checked source");
         start_pixels(panel, game); Access::seed_choices(panel);
         SendMessageW(controls, event.message, event.parameter, 0);
         stopped(panel, hud_window);
@@ -184,7 +279,7 @@ void exercise(const wchar_t *source_executable)
     Access::reuse(panel);
     expect(Access::output(panel) == output && Access::cover(panel) == cover && black(), "restart reuses both black HWNDs without desktop gap");
     Access::seed_choices(panel);
-    SendMessageW(controls, WM_COMMAND, 204, 0);
+    SendMessageW(controls, WM_COMMAND, 208, 0);
     expect(Access::output(panel) == output && !Access::requested(panel) && black(), "retarget cannot implicitly release existing output");
     start_pixels(panel, game);
     release_answer(panel, IDNO);
@@ -205,7 +300,7 @@ void exercise(const wchar_t *source_executable)
     panel.close();
     expect(!Access::capture(panel).running() && !IsWindow(final_output) && !Access::registered(panel), "active final close joins before HWND teardown and unregisters notifications");
     hud.destroy();
-    std::cout << "Production video lifecycle: lock/resume, power, display/device invalidation, HWND reuse, retarget rejection, release consent and active close passed\n";
+    std::cout << "Production video lifecycle: pattern/confirmation, lock/resume, power, display/device invalidation, HWND reuse, retarget rejection, release consent and active close passed\n";
 }
 }
 int wmain(int argc, wchar_t **argv)

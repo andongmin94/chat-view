@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include "hud/window-capture.hpp"
+#include "hud/video-output-check.hpp"
 #include <string>
 #include <vector>
 
@@ -23,7 +24,11 @@ private:
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
     void open() noexcept;
     void refresh();
+    void identify();
+    void show_pattern();
+    void paint_cover(HWND window) noexcept;
     void start();
+    void begin_capture();
     void stop(const wchar_t *message) noexcept;
     void release() noexcept;
     void interrupt(const wchar_t *message) noexcept;
@@ -45,6 +50,7 @@ private:
     DWORD source_process_ = 0, source_thread_ = 0;
     std::wstring output_device_;
     RECT output_bounds_{};
+    VideoOutputCheck check_;
     WindowCapture capture_;
     WindowCaptureStatus shown_ = WindowCaptureStatus::Stopped;
     std::vector<Source> sources_;

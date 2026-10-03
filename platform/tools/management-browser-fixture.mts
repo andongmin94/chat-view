@@ -17,15 +17,17 @@ const f = await fixture({ now: realNow,
 let peer: WebSocket | undefined;
 let pending: Awaited<ReturnType<typeof f.start>> | undefined;
 const metadata: { path: string; method: string; site: string; mode: string; dest: string;
-  cookie: boolean; authorization: boolean; status: number }[] = [];
+  cookie: boolean; authorization: boolean; origin: string; status: number }[] = [];
 const handle = f.app.handle.bind(f.app);
 f.app.handle = async (request, response) => {
   // Paths and presence bits only; never retain cookie/state/code/CSRF or bodies.
   const path = new URL(request.url!, f.origin).pathname;
-  const sample = { path: path.startsWith('/login/') ? '/login/:id' : path,
+  const sample = { path: /^\/(?:display\/)?login\/[a-f0-9]{32}/u.test(path) ? '/login/:id' : path,
     method: request.method ?? '', site: String(request.headers['sec-fetch-site'] ?? ''),
     mode: String(request.headers['sec-fetch-mode'] ?? ''), dest: String(request.headers['sec-fetch-dest'] ?? ''),
-    cookie: !!request.headers.cookie, authorization: !!request.headers.authorization, status: 0 };
+    cookie: !!request.headers.cookie, authorization: !!request.headers.authorization,
+    origin: request.headers.origin === undefined ? 'absent' : request.headers.origin === f.origin ? 'same-origin'
+      : request.headers.origin === 'null' ? 'null' : 'other', status: 0 };
   response.once('finish', () => {
     sample.status = response.statusCode;
     metadata.push(sample); if (metadata.length > 500) metadata.shift();

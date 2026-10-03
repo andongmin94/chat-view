@@ -25,6 +25,7 @@ type ManagementPage = typeof MANAGEMENT_PAGES[number];
 type Destination = { loginId: string } | { page: ManagementPage };
 type Attempt = { digest: string; destination: Destination; expires: number; used: boolean; controller: AbortController };
 type Browser = { key: string; csrf: string; expires: number; controller: AbortController; owner?: string; channel?: Channel;
+  landing?: { path: string; expires: number };
   attempt?: Attempt; pending?: { identity: BrowserIdentity; page: ManagementPage; expires: number } };
 const managementPage = (path: string): path is ManagementPage =>
   MANAGEMENT_PAGES.some(page => page === path);
@@ -97,6 +98,9 @@ export class PlatformApplication {
     response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(value));
   }
   #page(response: ServerResponse, title: string, content: string, status = 200) {
+    // no-referrer serializes Origin as null on HTML form POSTs. Keep same-
+    // origin CSRF checks intact and disclose no Referer to external sites.
+    response.setHeader('Referrer-Policy', 'same-origin');
     response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
     response.end(`<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>ChatView · ${title}</title>
 <style>body{font:16px/1.7 system-ui;max-width:720px;margin:48px auto;padding:0 24px}h1{font-size:28px}form{margin:12px 0}button{font:inherit;padding:10px 16px;cursor:pointer}small{display:block}</style>
@@ -104,6 +108,24 @@ export class PlatformApplication {
   }
   #redirect(response: ServerResponse, location: string) {
     response.writeHead(303, { Location: location }); response.end();
+  }
+  #callbackRedirect(response: ServerResponse, b: Browser, path: string, expires: number) {
+    // Fetch Metadata preserves cross-site taint through the provider's redirect
+    // chain. Admit only this callback's next top-level GET on the rotated cookie,
+    // not arbitrary cross-site management reads or mutations.
+    b.landing = { path, expires: Math.min(expires, Date.now() + 30_000) };
+    this.#redirect(response, path);
+  }
+  #checkNavigation(request: IncomingMessage, url: URL) {
+    if (url.search) throw new DisplayAccessError(403);
+    const b = this.#browser(request), landing = b?.landing;
+    const returning = request.method === 'GET' && landing?.path === url.pathname && landing.expires > Date.now();
+    if (request.headers['sec-fetch-site'] === 'cross-site' &&
+        !(returning && request.headers['sec-fetch-mode'] === 'navigate' &&
+          request.headers['sec-fetch-dest'] === 'document')) throw new DisplayAccessError(403);
+    // Consume on the first matching navigation even if a browser labels it
+    // same-origin. Refresh/back then use ordinary same-origin authorization.
+    if (returning) b!.landing = undefined;
   }
   #prune() {
     for (const b of this.#browsers.values()) if (b.expires <= Date.now()) this.#drop(b);
@@ -133,7 +155,7 @@ export class PlatformApplication {
   }
   #beginAuthorization(b: Browser, destination: Destination): string {
     b.attempt?.controller.abort();
-    b.pending = undefined;
+    b.pending = undefined; b.landing = undefined;
     const state = nonce();
     b.attempt = { digest: hashSecret(state), destination, expires: Date.now() + AUTHORIZATION_MS,
       used: false, controller: new AbortController() };
@@ -178,8 +200,9 @@ ${this.#form(b, '/account/switch', '브라우저 관리 계정 바꾸기')}
         this.login.view(destination.loginId);
         const channel = await this.#creators.authorize(code!, state, signal);
         this.#currentAttempt(b, attempt); this.login.view(destination.loginId);
-        this.#drop(b); this.#createBrowser(response, channel);
-        this.#redirect(response, `/login/${destination.loginId}`); return;
+        this.#drop(b);
+        const browser = this.#createBrowser(response, channel);
+        this.#callbackRedirect(response, browser, `/login/${destination.loginId}`, attempt.expires); return;
       }
       // Fresh provider identity, NOT a native-token exchange or new subscription.
       const identity = await this.#creators.identifyBrowser(code!, state, signal);
@@ -187,7 +210,7 @@ ${this.#form(b, '/account/switch', '브라우저 관리 계정 바꾸기')}
       this.#drop(b);
       const confirmation = this.#createBrowser(response);
       confirmation.pending = { identity, page: destination.page, expires: attempt.expires };
-      this.#redirect(response, '/account/confirm');
+      this.#callbackRedirect(response, confirmation, '/account/confirm', attempt.expires);
     } catch (error) {
       // A late/superseded callback cannot overwrite the newer browser cookie.
       if ('page' in destination) {
@@ -214,7 +237,7 @@ ${this.#form(b, '/account/switch', '브라우저 관리 계정 바꾸기')}
       if (url.pathname === '/callback' && request.method === 'GET') {
         await this.#callback(request, response, url); return;
       }
-      if (request.headers['sec-fetch-site'] === 'cross-site' || url.search) throw new DisplayAccessError(403);
+      this.#checkNavigation(request, url);
       if (url.pathname.startsWith('/display/')) {
         if (request.method !== 'POST') throw new DisplayAccessError(405);
         empty(request);

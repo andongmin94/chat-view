@@ -1,6 +1,6 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-04 (Asia/Seoul). 시작 기준 **`3a4a9655d8114da01dd6a53637e7f464fcbc8d37`**. 이번 변경은 **D4 캡처 qualification 모듈의 종료·취소·임시 장면 항목 정리**다. OBS에서만 이어가며 옛 ZIP/패치·다른 브랜치를 사용하지 않는다.
+갱신: 2026-10-04 (Asia/Seoul). 시작 기준 **`3a4a9655d8114da01dd6a53637e7f464fcbc8d37`**. 구현 **`510f8e195a8cb321844dda6ff7f6a1be55bd1e4d`**는 **D4 캡처 qualification 모듈의 종료·취소·임시 장면 항목 정리**다. OBS에서만 이어가며 옛 ZIP/패치·다른 브랜치를 사용하지 않는다.
 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md)를 따른다. 이 문서가 유일한 현재 작업 목록이다.
 
 ## 현재 위치와 완료 기준
@@ -79,11 +79,11 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 - **시작:** 지정 문서를 순서대로 읽고 OBS `3a4a965`를 확인했다. 이전 native/브라우저 결과는 Git history의 `3a4a965`와 `24444b6` 기록이며 이번 변경의 실행 결과로 대신하지 않는다.
 - **API:** 실제 빌드 기준 OBS 32.2.2의 `libobs/obs.h` 및 공식 Scene API에서 borrowed `obs_scene_add`, 명시적 item ref, scene atomic update를 확인했다. 새로운 OBS/Windows 의존성이나 제품 설정을 추가하지 않는다.
 - **작성한 검사:** 실제 libobs scene/source를 사용해 정상/idempotent 종료, 부분 생성 실패, 예외 unwinding, 외부 item 제거, 시험 중 사용자 편집, 생성 전/후·배치 후 worker 취소와 주 스레드 join을 검사한다. 가짜 libobs 구현이나 UI 큐 pumping으로 통과시키지 않는다. 실제 모듈과 같은 소유권 helper를 사용한다.
-- **실행 상태:** 로컬에는 Windows/libobs 실행 환경이 없어 해당 native 검사를 실행하지 못했다. 빌드에 새 10초 제한 routine CTest를 추가했으며 원격 결과는 확인 후 기록한다. 전체 OBS frontend/Display Capture/실제 종료와 물리 영상·실계정·qualification은 이번 core 검사만으로 검증되지 않는다.
+- **실행 상태:** **`510f8e1` / Windows #353 / `37142325494` / Windows x64 job `111259184927`**는 마지막 확인 시 OBS 개발 라이브러리 빌드 중이다. ChatView 빌드·새 CTest·기존 routine은 아직 성공으로 기록하지 않는다. native 범위 검사와 잠금 platform 의존성 설치는 성공했다. 로컬 Windows/libobs 환경이 없어 native 실행은 하지 못했고, 원격 diff와 코드 4개/계획 1개 blob의 로컬 바이트 일치 및 worker의 frontend task 제거를 확인했다. 새 routine CTest는 10초 제한이다. 전체 OBS frontend/Display Capture/실제 종료·물리 영상·실계정·qualification은 이 core 검사로 대신하지 않는다.
 - **보존:** 기존 캡처 픽셀/색상 조건·각 단계 시간·재시도 예산·기존 CTests는 유지한다. CI 전용 새 test executable만 libobs에 연결하며 gaming-PC companion 및 window-capture library에는 OBS 의존성을 추가하지 않는다. 배포 패키지에 시험 모듈을 설치하지 않는다.
 
 ### 다음 세션 재개
 
-OBS 최신 ref에서 `AGENTS.md` → `PRODUCT.md` → `docs/development-workflow.md` → `docs/architecture.md` → 이 문서를 읽는다. 우선 이번 Windows 결과를 확인하고 실패한 경우 해당 코드부터 수정한다. 다음 사용자 흐름은 **companion 캡처 대상 종료 후 검정 유지와 새 대상·시험 패턴 재선택**이다. 이미 완료한 브라우저 복구/로그인·기기등록/표시키/옛 ZIP을 만들지 않는다. 게임 PC OBS·HP/단가/지급 규칙을 임의로 추가하지 않는다. D1/D2/D4/D6·물리 영상은 남기며 qualification은 배포 후보에서 한다.
+OBS 최신 ref에서 `AGENTS.md` → `PRODUCT.md` → `docs/development-workflow.md` → `docs/architecture.md` → 이 문서를 읽는다. 우선 **Windows #353 / `37142325494`** 결과를 확인하고 실패한 경우 해당 코드부터 수정한다. 다음 사용자 흐름은 **companion 캡처 대상 종료 후 검정 유지와 새 대상·시험 패턴 재선택**이다. 이미 완료한 브라우저 복구/로그인·기기등록/표시키/옛 ZIP을 만들지 않는다. 게임 PC OBS·HP/단가/지급 규칙을 임의로 추가하지 않는다. D1/D2/D4/D6·물리 영상은 남기며 qualification은 배포 후보에서 한다.
 
 미확정 입력: 실제 앱/채널·수집 조건/할당량, 투컴 배선/기기, HP/보상 규격, 인프라. 비밀키는 대화/공개 저장소에 넣지 않으며 입력 부재로 목표를 변경하지 않는다.

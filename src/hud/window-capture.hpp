@@ -31,5 +31,6 @@ private:
     static void run(std::shared_ptr<State>, HWND source, HWND output, DWORD source_process, DWORD source_thread) noexcept;
     std::shared_ptr<State> state_;
     std::thread worker_;
+    bool closing_ = false; // UI-thread reentrancy fence, not worker state
 };
 }

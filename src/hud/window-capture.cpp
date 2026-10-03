@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "hud/window-capture.hpp"
+#include "hud/capture-worker-wait.hpp"
 #include "hud/video-layout.hpp"
 #include <d3d11.h>
 #include <d2d1_1.h>
@@ -158,11 +159,18 @@ struct WindowCapture::State {
     std::atomic<std::uint64_t> frames{0};
 };
 WindowCapture::~WindowCapture() { close(); }
-void WindowCapture::close() noexcept { stop(); if (worker_.joinable()) worker_.join(); }
+void WindowCapture::close() noexcept
+{
+    if (closing_) return;
+    closing_ = true;
+    stop();
+    join_capture_worker(worker_);
+    closing_ = false;
+}
 bool WindowCapture::start(HWND source, HWND output) noexcept
 {
     try {
-        if (running()) return false;
+        if (closing_ || running()) return false;
         if (worker_.joinable()) worker_.join();
         DWORD process = 0, output_process = 0;
         const DWORD thread = GetWindowThreadProcessId(source, &process);

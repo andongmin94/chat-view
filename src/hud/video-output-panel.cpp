@@ -3,6 +3,8 @@
 #include "hud/hud-window.hpp"
 #include "hud/video-layout.hpp"
 #include <dwmapi.h>
+#include <wtsapi32.h>
+#include <dbt.h>
 #include <cwchar>
 #include <stdexcept>
 
@@ -52,7 +54,7 @@ VideoOutputPanel::~VideoOutputPanel() { close(); }
 DWORD VideoOutputPanel::wait_timeout() const noexcept { return enabled_ && (output_ || capture_.running()) ? 50U : INFINITE; }
 bool VideoOutputPanel::permitted() const noexcept
 {
-    return enabled_ && hud_.webview_ready_ && !hud_.shutting_down_ && !hud_.system_suppressed() &&
+    return enabled_ && !closing_ && !session_blocked_ && !suspended_ && hud_.webview_ready_ && !hud_.shutting_down_ && !hud_.system_suppressed() &&
         !hud_.capture_exclusion_failed_ && hud_.window_ && IsWindowVisible(hud_.window_);
 }
 bool VideoOutputPanel::dispatch(MSG &message) noexcept
@@ -77,6 +79,8 @@ void VideoOutputPanel::open() noexcept
             CW_USEDEFAULT, CW_USEDEFAULT, 660, 420, nullptr, nullptr, klass.hInstance, this);
         if (!panel_) return;
         if (!SetWindowDisplayAffinity(panel_, WDA_EXCLUDEFROMCAPTURE)) { DestroyWindow(panel_); panel_ = nullptr; return; }
+        notifications_ = WTSRegisterSessionNotification(panel_, NOTIFY_FOR_THIS_SESSION) != FALSE;
+        if (!notifications_) { DestroyWindow(panel_); panel_ = nullptr; return; }
         const auto dpi = GetDpiForWindow(panel_);
         const auto scale = [dpi](int v) { return MulDiv(v, static_cast<int>(dpi), 96); };
         SetWindowPos(panel_, nullptr, 0, 0, scale(660), scale(420), SWP_NOMOVE | SWP_NOZORDER);
@@ -102,10 +106,9 @@ void VideoOutputPanel::open() noexcept
 }
 void VideoOutputPanel::refresh()
 {
+    if (!permitted() || !notifications_) return;
     if (capture_.running() || requested_) { notice(L"출력을 중지한 뒤 목록을 갱신하세요."); return; }
-    sources_.clear(); monitors_.clear();
-    SendDlgItemMessageW(panel_, kSource, CB_RESETCONTENT, 0, 0);
-    SendDlgItemMessageW(panel_, kMonitor, CB_RESETCONTENT, 0, 0);
+    invalidate_choices();
     // Never let allocation exceptions cross Win32 callbacks.
     bool failed = false;
     struct Context { VideoOutputPanel *self; bool *failed; } context{this, &failed};
@@ -113,12 +116,12 @@ void VideoOutputPanel::refresh()
         auto &c = *reinterpret_cast<Context *>(parameter);
         try {
             if (c.self->sources_.size() >= 256) return FALSE;
-            DWORD pid = 0, cloaked = 0; (void)GetWindowThreadProcessId(window, &pid);
-            if (!pid || pid == GetCurrentProcessId() || !IsWindowVisible(window) || IsIconic(window) ||
+            DWORD pid = 0, cloaked = 0; const DWORD thread = GetWindowThreadProcessId(window, &pid);
+            if (!pid || !thread || pid == GetCurrentProcessId() || !IsWindowVisible(window) || IsIconic(window) ||
                 GetAncestor(window, GA_ROOT) != window || window == GetDesktopWindow() || window == GetShellWindow() ||
                 FAILED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) || cloaked) return TRUE;
             wchar_t title[257]{}; if (!GetWindowTextW(window, title, 257)) return TRUE;
-            c.self->sources_.push_back({window, pid, title}); return TRUE;
+            c.self->sources_.push_back({window, pid, thread, title}); return TRUE;
         } catch (...) { *c.failed = true; return FALSE; }
     }, reinterpret_cast<LPARAM>(&context));
     EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR monitor, HDC, LPRECT, LPARAM parameter) -> BOOL {
@@ -159,12 +162,12 @@ bool VideoOutputPanel::topology(bool inspect_paths) const noexcept
 {
     try {
         if (!permitted() || !source_ || !monitor_ || MonitorFromWindow(source_, MONITOR_DEFAULTTONULL) != source_monitor_) return false;
-        DWORD pid = 0; if (!GetWindowThreadProcessId(source_, &pid) || pid != source_process_) return false;
+        DWORD pid = 0; if (GetWindowThreadProcessId(source_, &pid) != source_thread_ || !pid || pid != source_process_) return false;
         RECT source{}, hud{}, panel{};
         MONITORINFOEXW output{}, input{}; output.cbSize = sizeof(output); input.cbSize = sizeof(input);
         if (!GetWindowRect(source_, &source) || !GetWindowRect(hud_.window_, &hud) || !GetWindowRect(panel_, &panel) ||
             !GetMonitorInfoW(monitor_, &output) || !GetMonitorInfoW(MonitorFromWindow(source_, MONITOR_DEFAULTTONULL), &input) ||
-            !equal(output.rcMonitor, output_bounds_) || video_overlap(rectangle(panel), rectangle(output.rcMonitor))) return false;
+            !equal(output.rcMonitor, output_bounds_) || output_device_ != output.szDevice || video_overlap(rectangle(panel), rectangle(output.rcMonitor))) return false;
         return video_size(output.rcMonitor.right - output.rcMonitor.left, output.rcMonitor.bottom - output.rcMonitor.top) &&
             separate_video_output(rectangle(output.rcMonitor), rectangle(source), rectangle(hud),
                 (!inspect_paths || extended_sdr(output.szDevice, input.szDevice)), (output.dwFlags & MONITORINFOF_PRIMARY) != 0);
@@ -172,19 +175,45 @@ bool VideoOutputPanel::topology(bool inspect_paths) const noexcept
 }
 void VideoOutputPanel::start()
 {
-    if (capture_.running() || requested_ || releasing_ || !permitted()) { notice(L"현재 출력을 시작할 수 없습니다. 중지 상태와 HUD를 확인하세요."); return; }
+    if (capture_.running() || requested_ || releasing_ || confirming_ || !notifications_ || !permitted()) { notice(L"현재 출력을 시작할 수 없습니다. 중지 상태와 HUD를 확인하세요."); return; }
     const LRESULT source = SendDlgItemMessageW(panel_, kSource, CB_GETCURSEL, 0, 0);
     const LRESULT monitor = SendDlgItemMessageW(panel_, kMonitor, CB_GETCURSEL, 0, 0);
     if (source < 0 || monitor < 0 || static_cast<size_t>(source) >= sources_.size() || static_cast<size_t>(monitor) >= monitors_.size()) {
         notice(L"게임 창과 별도 확장 출력 화면을 직접 선택하세요."); return;
     }
-    source_ = sources_[static_cast<size_t>(source)].window; source_monitor_ = MonitorFromWindow(source_, MONITOR_DEFAULTTONULL); source_process_ = sources_[static_cast<size_t>(source)].process;
-    const auto &destination = monitors_[static_cast<size_t>(monitor)]; monitor_ = destination.handle; output_bounds_ = destination.info.rcMonitor;
+    const auto chosen = sources_[static_cast<size_t>(source)];
+    const auto destination = monitors_[static_cast<size_t>(monitor)];
+    // Never destroy an existing black output merely to start or retarget. A
+    // different output needs its own explicit release, including the warning.
+    if (output_ && (monitor_ != destination.handle || !equal(output_bounds_, destination.info.rcMonitor) ||
+        output_device_ != destination.info.szDevice || !output_intact())) {
+        notice(L"기존 검은 출력창을 유지합니다. 다른 출력으로 바꾸려면 수신 장면을 중지하고 '출력 창 닫기'부터 선택하세요."); return;
+    }
+    source_ = chosen.window; source_process_ = chosen.process; source_thread_ = chosen.thread;
+    source_monitor_ = MonitorFromWindow(source_, MONITOR_DEFAULTTONULL);
+    monitor_ = destination.handle; output_bounds_ = destination.info.rcMonitor; output_device_ = destination.info.szDevice;
     if (!topology(true)) { notice(L"분리된 SDR 확장 출력을 확인하지 못했습니다. 게임 창/HUD/설정창은 출력 화면에 둘 수 없습니다."); return; }
-    if (MessageBoxW(panel_, L"선택한 게임 창의 영상만 별도 확장 화면에 출력합니다.\n\n캡처카드는 그 확장 화면 출력을 받아야 합니다.\n화면 복제·HDR·오디오 전달은 지원하지 않습니다.\n개인 HUD는 게임 화면에 유지하세요. 실제 투컴 영상은 아직 미검증입니다.\n\n선택한 창과 출력 화면으로 시작할까요?",
-        L"ChatView · 별도 영상 출력 확인", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
-    if (!topology(true)) return;
-    if (output_) { DestroyWindow(output_); output_ = nullptr; cover_ = nullptr; }
+    const auto epoch = selection_epoch_;
+    confirming_ = true;
+    const int answer = MessageBoxW(panel_, L"선택한 게임 창의 영상만 별도 확장 화면에 출력합니다.\n\n캡처카드는 그 확장 화면 출력을 받아야 합니다.\n화면 복제·HDR·오디오 전달은 지원하지 않습니다.\n개인 HUD는 게임 화면에 유지하세요. 실제 투컴 영상은 아직 미검증입니다.\n\n선택한 창과 출력 화면으로 시작할까요?",
+        L"ChatView · 별도 영상 출력 확인", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
+    confirming_ = false;
+    // The modal dialog pumps messages: a lock/unlock or topology change during
+    // consent invalidates that consent even if conditions now look normal.
+    if (answer != IDYES || epoch != selection_epoch_ || !topology(true)) return;
+    ensure_output();
+    if (!mask()) throw std::runtime_error("Video cover unavailable");
+    requested_ = capture_.start(source_, output_);
+    next_path_check_ = GetTickCount64() + 1000U;
+    notice(requested_ ? L"첫 게임 창 프레임을 기다립니다. 투컴 영상 미검증." : L"선택한 창을 캡처하지 못했습니다. 출력은 검은 화면입니다.");
+    shown_ = WindowCaptureStatus::Starting;
+}
+void VideoOutputPanel::ensure_output()
+{
+    if (output_) {
+        if (!output_intact()) throw std::runtime_error("Existing output changed");
+        return;
+    }
     const auto &r = output_bounds_;
     output_ = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kOutputClass, L"ChatView · 창 영상 출력",
         WS_POPUP | WS_CLIPCHILDREN, r.left, r.top, r.right - r.left, r.bottom - r.top, nullptr, nullptr, GetModuleHandleW(nullptr), this);
@@ -197,31 +226,77 @@ void VideoOutputPanel::start()
         output_, nullptr, GetModuleHandleW(nullptr), this);
     if (!cover_) { DestroyWindow(output_); output_ = nullptr; throw std::runtime_error("Video cover unavailable"); }
     ShowWindow(output_, SW_SHOWNOACTIVATE);
-    requested_ = capture_.start(source_, output_);
-    notice(requested_ ? L"첫 게임 창 프레임을 기다립니다. 투컴 영상 미검증." : L"선택한 창을 캡처하지 못했습니다. 출력은 검은 화면입니다.");
-    shown_ = WindowCaptureStatus::Starting;
+}
+bool VideoOutputPanel::output_intact() const noexcept
+{
+    RECT output{}, cover{};
+    return output_ && cover_ && IsWindowVisible(output_) && !IsIconic(output_) &&
+        GetWindow(cover_, GW_OWNER) == output_ && GetWindowRect(output_, &output) &&
+        GetWindowRect(cover_, &cover) && equal(output, output_bounds_) && equal(cover, output_bounds_);
+}
+bool VideoOutputPanel::mask() noexcept
+{
+    if (!output_) return true;
+    if (!cover_ || !IsWindow(cover_)) return false;
+    if (!SetWindowPos(cover_, HWND_TOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)) return false;
+    return RedrawWindow(cover_, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW) != FALSE;
+}
+void VideoOutputPanel::invalidate_choices() noexcept
+{
+    ++selection_epoch_;
+    sources_.clear(); monitors_.clear();
+    if (panel_) {
+        SendDlgItemMessageW(panel_, kSource, CB_RESETCONTENT, 0, 0);
+        SendDlgItemMessageW(panel_, kMonitor, CB_RESETCONTENT, 0, 0);
+    }
+}
+void VideoOutputPanel::interrupt(const wchar_t *message) noexcept
+{
+    releasing_ = false;
+    stop(message);
+    invalidate_choices();
 }
 void VideoOutputPanel::stop(const wchar_t *message) noexcept
 {
     requested_ = false;
-    if (cover_) ShowWindow(cover_, SW_SHOWNOACTIVATE);
-    capture_.stop(); notice(message);
+    const bool covered = mask();
+    capture_.stop();
+    notice(covered ? message : L"검은 덮개를 확인하지 못했습니다. 수신 PC의 장면을 즉시 중지하세요. 캡처 중지를 요청했습니다.");
 }
 void VideoOutputPanel::release() noexcept
 {
-    stop(L"출력 창을 닫습니다. 해당 화면의 바탕화면이 다시 보일 수 있습니다."); releasing_ = true;
+    if (!output_ || releasing_ || confirming_ || closing_) return;
+    stop(L"출력은 검은 화면으로 중지했습니다. 출력 창 해제를 확인하세요.");
+    const HWND target = output_;
+    const auto epoch = selection_epoch_;
+    confirming_ = true;
+    const int answer = MessageBoxW(panel_,
+        L"검은 출력창을 닫으면 해당 화면의 바탕화면과 다른 창이 수신 영상에 보일 수 있습니다.\n\n"
+        L"먼저 수신 PC에서 이 입력을 사용하는 방송/녹화 장면을 중지하세요.\n"
+        L"챗뷰는 수신 PC의 중지 여부를 확인할 수 없습니다.\n\n출력 창을 닫을까요?",
+        L"ChatView · 출력 창 해제 확인", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
+    confirming_ = false;
+    releasing_ = answer == IDYES && !closing_ && target == output_ && epoch == selection_epoch_;
+    if (!releasing_) notice(L"출력 창 해제를 취소했습니다. 검은 화면을 유지하며 영상은 자동 재시작하지 않습니다.");
 }
 void VideoOutputPanel::tick() noexcept
 {
-    if (!enabled_) return;
-    if (requested_ && !topology()) stop(L"잠금·화면 구성·창/HUD 위치가 바뀌어 중지했습니다. 다시 확인하고 직접 시작하세요.");
+    if (!enabled_ || closing_) return;
+    const auto now = GetTickCount64();
+    const bool inspect_paths = now >= next_path_check_;
+    if (requested_ && (!output_intact() || !topology(inspect_paths)))
+        interrupt(L"출력/화면 구성·창/HUD 위치가 바뀌어 중지했습니다. 목록을 새로고침하고 직접 다시 선택하세요.");
+    if (inspect_paths) next_path_check_ = now + 1000U;
     if (releasing_ && !capture_.running()) {
         if (output_) DestroyWindow(output_);
-        output_ = nullptr; cover_ = nullptr; releasing_ = false;
+        output_ = nullptr; cover_ = nullptr; output_device_.clear(); releasing_ = false;
+        notice(L"출력 창을 해제했습니다. 해당 화면의 바탕화면이 보일 수 있습니다.");
     }
     if (!requested_) return;
     const auto value = capture_.snapshot();
-    if (cover_) ShowWindow(cover_, value.status == WindowCaptureStatus::Capturing ? SW_HIDE : SW_SHOWNOACTIVATE);
+    if (value.status == WindowCaptureStatus::Capturing) ShowWindow(cover_, SW_HIDE);
+    else if (!mask()) { stop(L"출력 보호를 확인하지 못했습니다."); return; }
     if (!capture_.running() && value.status != WindowCaptureStatus::Starting) {
         stop(L"창 종료·최소화 또는 캡처 오류로 중지했습니다. 출력은 검은 화면입니다. 직접 다시 선택하세요."); return;
     }
@@ -241,8 +316,27 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
     if (!self) return DefWindowProcW(window, message, wparam, lparam);
     try {
         if (message == WM_MOUSEACTIVATE && (window == self->output_ || window == self->cover_)) return MA_NOACTIVATE;
-        if (message == WM_DISPLAYCHANGE || message == WM_SETTINGCHANGE || (message == WM_POWERBROADCAST && wparam == PBT_APMSUSPEND)) self->stop(L"화면/전원 상태가 바뀌어 출력을 중지했습니다.");
+        if (message == WM_WTSSESSION_CHANGE && window == self->panel_) {
+            if (wparam == WTS_SESSION_LOCK || wparam == WTS_CONSOLE_DISCONNECT ||
+                wparam == WTS_REMOTE_DISCONNECT || wparam == WTS_SESSION_LOGOFF) self->session_blocked_ = true;
+            else if (wparam == WTS_SESSION_UNLOCK || wparam == WTS_CONSOLE_CONNECT ||
+                wparam == WTS_REMOTE_CONNECT || wparam == WTS_SESSION_LOGON) self->session_blocked_ = false;
+            self->interrupt(L"로그인 세션이 바뀌어 검은 화면으로 중지했습니다. 복귀 뒤 목록을 새로고침하고 직접 시작하세요.");
+            return 0;
+        }
+        if (message == WM_POWERBROADCAST && (wparam == PBT_APMSUSPEND ||
+            wparam == PBT_APMRESUMEAUTOMATIC || wparam == PBT_APMRESUMESUSPEND)) {
+            self->suspended_ = wparam == PBT_APMSUSPEND;
+            self->interrupt(L"전원 상태가 바뀌어 검은 화면으로 중지했습니다. 복귀 뒤 목록을 새로고침하고 직접 시작하세요.");
+            return TRUE;
+        }
+        if (message == WM_DISPLAYCHANGE || message == WM_SETTINGCHANGE ||
+            (message == WM_DEVICECHANGE && (wparam == DBT_DEVNODES_CHANGED || wparam == DBT_DEVICEREMOVECOMPLETE))) {
+            self->interrupt(L"화면/장치 구성이 바뀌어 검은 화면으로 중지했습니다. 목록을 새로고침하고 직접 다시 선택하세요.");
+            return message == WM_DEVICECHANGE ? TRUE : 0;
+        }
         if (message == WM_COMMAND) {
+            if (window != self->panel_ || self->closing_ || self->confirming_) return 0;
             switch (LOWORD(wparam)) {
             case kRefresh: self->refresh(); return 0;
             case kStart: self->start(); return 0;
@@ -252,9 +346,12 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
             }
         }
         if (message == WM_CLOSE) {
-            self->stop(L"설정창을 닫아 출력을 중지했습니다. 검은 출력창은 유지합니다.");
+            self->interrupt(L"창 닫기 요청으로 출력을 중지했습니다. 검은 출력창은 유지합니다.");
             if (window == self->panel_) ShowWindow(window, SW_HIDE);
             return 0;
+        }
+        if (message == WM_DESTROY && window == self->panel_ && self->notifications_) {
+            WTSUnRegisterSessionNotification(window); self->notifications_ = false;
         }
         if (message == WM_NCDESTROY) {
             SetWindowLongPtrW(window, GWLP_USERDATA, 0);
@@ -267,9 +364,11 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
 }
 void VideoOutputPanel::close() noexcept
 {
+    if (closing_) return;
+    closing_ = true;
     stop(L"종료 중");
-    // The member's worker must release the HWND before it is destroyed. Normal
-    // UI stop is nonblocking; final shutdown waits for GPU resource teardown.
+    // Keep HWNDs alive and controls fenced while close services synchronous
+    // DXGI messages. Posted UI commands are not dispatched by this join.
     capture_.close();
     if (output_) DestroyWindow(output_);
     output_ = nullptr; cover_ = nullptr;

@@ -92,6 +92,30 @@ bool pixel_matches(COLORREF a, COLORREF b)
     const auto close = [](int x, int y) { return x > y ? x - y <= 8 : y - x <= 8; };
     return a != CLR_INVALID && close(GetRValue(a), GetRValue(b)) && close(GetGValue(a), GetGValue(b)) && close(GetBValue(a), GetBValue(b));
 }
+// Test-only evidence: fixed synthetic sample points, no screenshot, title,
+// arbitrary desktop enumeration or production capture-data logging.
+void first_frame_evidence(const chatview::WindowCapture &capture, HWND input, HWND output, HWND hud)
+{
+    const auto snapshot = capture.snapshot();
+    const auto sample = pixel(660, 150);
+    const auto source_sample = pixel(330, 230);
+    const auto overlay_sample = pixel(150, 140);
+    const HWND top = GetAncestor(WindowFromPoint({660, 150}), GA_ROOT);
+    RECT source_bounds{}, output_bounds{};
+    GetWindowRect(input, &source_bounds); GetWindowRect(output, &output_bounds);
+    POINT cursor{}; GetCursorPos(&cursor);
+    std::cerr << "Synthetic WGC first-frame evidence: status=" << static_cast<int>(snapshot.status)
+        << " running=" << capture.running() << " frames=" << snapshot.frames
+        << " size=" << snapshot.width << 'x' << snapshot.height
+        << " output_pixel=" << sample << " source_pixel=" << source_sample
+        << " hud_pixel=" << overlay_sample << " output_on_top=" << (top == output)
+        << " source_visible=" << (IsWindowVisible(input) != FALSE)
+        << " source_minimized=" << (IsIconic(input) != FALSE)
+        << " hud_visible=" << (IsWindowVisible(hud) != FALSE)
+        << " source_rect=" << source_bounds.left << ',' << source_bounds.top << ',' << source_bounds.right << ',' << source_bounds.bottom
+        << " output_rect=" << output_bounds.left << ',' << output_bounds.top << ',' << output_bounds.right << ',' << output_bounds.bottom
+        << " cursor_in_source=" << (PtInRect(&source_bounds, cursor) != FALSE) << '\n';
+}
 void exercise()
 {
     expect(GetSystemMetrics(SM_CXSCREEN) >= 900 && GetSystemMetrics(SM_CYSCREEN) >= 600, "interactive desktop required (not skipped)");
@@ -117,7 +141,11 @@ void exercise()
     expect(!capture.start(GetDesktopWindow(), output.value), "desktop is never a window fallback");
     expect(capture.start(input, output.value), "start actual window capture");
     expect(!capture.start(input, output.value), "duplicate start rejected");
-    await([&] { draw_hud(); return capture.snapshot().frames >= 2 && pixel_matches(pixel(660, 150), video_color); }, "real WGC output excludes overlaid HUD", 10000);
+    try {
+        await([&] { draw_hud(); return capture.snapshot().frames >= 2 && pixel_matches(pixel(660, 150), video_color); }, "real WGC output excludes overlaid HUD", 10000);
+    } catch (...) {
+        first_frame_evidence(capture, input, output.value, hud.value); throw;
+    }
     expect(IsWindowVisible(hud.value) && pixel_matches(pixel(150, 140), hud_color), "HUD remains locally visible while output is clean");
     // Reuse a literal BLACK_BRUSH class, as the production panel does. The
     // old SS_BLACKRECT control instead followed the current window-frame color.

@@ -155,6 +155,7 @@ void resize_evidence(const chatview::WindowCapture &capture, HWND input, HWND ou
         << " status=" << static_cast<int>(s.status) << " running=" << capture.running() << " frames=" << s.frames
         << " presented=" << s.width << 'x' << s.height << " received=" << s.received_width << 'x' << s.received_height
         << " surface=" << s.surface_width << 'x' << s.surface_height
+        << " pool=" << s.pool_width << 'x' << s.pool_height
         << " recreates=" << s.recreates << " clipped=" << s.clipped_frames << " hresult=" << s.failure_hresult
         << " fresh=" << chatview::video_frame_fresh(GetTickCount64(), s.content_at_ms)
         << " pixels(center,top,bottom,left,right)=" << pixel(660,150) << ',' << pixel(660,40) << ','
@@ -178,7 +179,7 @@ void resize_sequence(chatview::WindowCapture &capture, HWND input, HWND output, 
     };
     unsigned index = 0;
     for (const auto &step : steps) {
-        const auto before = capture.snapshot().frames;
+        const auto before = capture.snapshot();
         const auto color = RGB(35 + 17 * index, 185 - 11 * index, 55 + 13 * index);
         const auto phase = std::string("static resize sequence ") + std::to_string(index + 1);
         if (index >= 8) {
@@ -210,7 +211,7 @@ void resize_sequence(chatview::WindowCapture &capture, HWND input, HWND output, 
                 const auto s = capture.snapshot();
                 expect(capture.running() && s.status != chatview::WindowCaptureStatus::Failed &&
                     s.status != chatview::WindowCaptureStatus::SourceLost, "resize must not terminate this capture");
-                return s.status == chatview::WindowCaptureStatus::Capturing && s.frames > before &&
+                return s.status == chatview::WindowCaptureStatus::Capturing && s.frames > before.frames &&
                     s.width == step.width && s.height == step.height &&
                     chatview::video_frame_fresh(GetTickCount64(), s.content_at_ms) && pixels();
             }, phase.c_str()); // unchanged five-second wait, RGB tolerance 8
@@ -218,6 +219,13 @@ void resize_sequence(chatview::WindowCapture &capture, HWND input, HWND output, 
             std::cout << "Synthetic WGC generation: index=" << index + 1 << " expected_color=" << color << '\n';
             resize_evidence(capture, input, output, phase.c_str(), step.width, step.height); throw;
         }
+        const auto after = capture.snapshot();
+        const bool growth = step.width > before.pool_width || step.height > before.pool_height;
+        expect(after.pool_width == (step.width > before.pool_width ? step.width : before.pool_width) &&
+            after.pool_height == (step.height > before.pool_height ? step.height : before.pool_height),
+            "capture pool retains bounded per-axis capacity after shrink and mixed resize");
+        expect(after.recreates == before.recreates + (growth ? 1U : 0U),
+            "resize reuses existing capacity and never recreates again for a late surface");
         resize_evidence(capture, input, output, phase.c_str(), step.width, step.height);
         expect(IsWindowVisible(hud) && IsWindow(output), "same output and visible HUD survive every resize");
         ++index;

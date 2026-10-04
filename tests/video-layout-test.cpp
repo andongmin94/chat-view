@@ -37,9 +37,14 @@ int main()
         expect(video_frame_action(400, 300, 400, 300, 400, 300) == Action::Present);
         expect(video_frame_action(600, 300, 400, 300, 400, 300) == Action::ResizeOnly);
         // A matching pool request does NOT prove a late surface is large enough.
-        expect(video_frame_action(600, 300, 400, 300, 600, 300) == Action::ResizeOnly);
+        expect(video_frame_action(600, 300, 400, 300, 600, 300) == Action::WaitForSurface);
         expect(video_frame_action(600, 300, 600, 300, 400, 300) == Action::PresentAndResize);
-        expect(video_frame_action(200, 300, 600, 300, 600, 300) == Action::PresentAndResize);
+        // Shrink and a return to a seen size copy only ContentSize; they must
+        // not flush pending final-generation frames by recreating the pool.
+        expect(video_frame_action(200, 300, 600, 300, 600, 300) == Action::Present);
+        expect(video_frame_action(600, 200, 601, 500, 601, 500) == Action::Present);
+        expect(video_frame_action(600, 300, 200, 300, 601, 500) == Action::WaitForSurface);
+        expect(video_frame_action(600, 300, 601, 500, 601, 500) == Action::Present);
         expect(video_frame_action(200, 300, 200, 300, 200, 300) == Action::Present);
         expect(video_frame_action(600, 200, 400, 300, 400, 300) == Action::ResizeOnly);
         expect(video_frame_action(200, 400, 600, 300, 600, 300) == Action::ResizeOnly);
@@ -59,8 +64,11 @@ int main()
             for (unsigned sw : {1U, 200U, 600U, 4096U}) for (unsigned sh : {1U, 300U, 600U, 4096U}) {
                 const auto action = video_frame_action(w, h, sw, sh, 600, 300);
                 const bool complete = sw >= static_cast<unsigned>(w) && sh >= static_cast<unsigned>(h);
-                expect((action == Action::ResizeOnly) == !complete);
-                if (complete) expect((action == Action::PresentAndResize) == (w != 600 || h != 300));
+                const bool growth = w > 600 || h > 300;
+                expect((action == Action::ResizeOnly) == (!complete && growth));
+                expect((action == Action::WaitForSurface) == (!complete && !growth));
+                expect((action == Action::PresentAndResize) == (complete && growth));
+                expect((action == Action::Present) == (complete && !growth));
             }
         std::cout << "video layout: " << assertions << " assertions passed\n";
     } catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }

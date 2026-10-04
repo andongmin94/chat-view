@@ -20,6 +20,8 @@ struct WindowCaptureSnapshot {
     unsigned surface_width = 0, surface_height = 0;
     std::uint64_t recreates = 0, clipped_frames = 0;
     std::int32_t failure_hresult = 0;
+    // Requested pool capacity, independent of content and late surface size.
+    unsigned pool_width = 0, pool_height = 0;
 };
 // WGC window -> bounded GPU copy -> opaque, letterboxed output HWND. No screen
 // capture fallback, encoder, audio, network, provider token or OBS dependency.

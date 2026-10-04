@@ -14,19 +14,20 @@ constexpr bool video_size(int width, int height) noexcept
 {
     return width > 0 && height > 0 && width <= kVideoMaxDimension && height <= kVideoMaxDimension;
 }
-// WGC ContentSize and the actual surface allocation can differ during resize.
-// A complete transition frame must be consumed before Recreate discards pending
-// frames. A clipped growth frame is not a fatal capture error and is never drawn.
-enum class VideoFrameAction { Invalid, Present, PresentAndResize, ResizeOnly };
+// The pool retains its per-axis high-water capacity until capture stops. Shrink
+// and a return to an already seen size must not discard queued frames through
+// Recreate. A late smaller surface is still never safe to draw.
+enum class VideoFrameAction { Invalid, Present, PresentAndResize, ResizeOnly, WaitForSurface };
 constexpr VideoFrameAction video_frame_action(int width, int height, unsigned surface_width,
                                               unsigned surface_height, int pool_width, int pool_height) noexcept
 {
     if (!video_size(width, height) || !video_size(pool_width, pool_height) ||
         surface_width == 0 || surface_height == 0 || surface_width > kVideoMaxDimension || surface_height > kVideoMaxDimension)
         return VideoFrameAction::Invalid;
+    const bool grow = width > pool_width || height > pool_height;
     if (surface_width < static_cast<unsigned>(width) || surface_height < static_cast<unsigned>(height))
-        return VideoFrameAction::ResizeOnly;
-    return width != pool_width || height != pool_height ? VideoFrameAction::PresentAndResize : VideoFrameAction::Present;
+        return grow ? VideoFrameAction::ResizeOnly : VideoFrameAction::WaitForSurface;
+    return grow ? VideoFrameAction::PresentAndResize : VideoFrameAction::Present;
 }
 constexpr bool video_overlap(VideoRect a, VideoRect b) noexcept
 {

@@ -161,6 +161,7 @@ struct WindowCapture::State {
     std::atomic<unsigned> received_width{0}, received_height{0}, surface_width{0}, surface_height{0};
     std::atomic<std::uint64_t> recreates{0}, clipped_frames{0};
     std::atomic<std::int32_t> failure_hresult{0};
+    std::atomic<unsigned> pool_width{0}, pool_height{0};
 };
 WindowCapture::~WindowCapture() { close(); }
 void WindowCapture::close() noexcept
@@ -196,7 +197,8 @@ WindowCaptureSnapshot WindowCapture::snapshot() const noexcept
     if (!state_) return {};
     return {state_->status.load(), state_->width.load(), state_->height.load(), state_->frames.load(), state_->content_at_ms.load(),
         state_->received_width.load(), state_->received_height.load(), state_->surface_width.load(), state_->surface_height.load(),
-        state_->recreates.load(), state_->clipped_frames.load(), state_->failure_hresult.load()};
+        state_->recreates.load(), state_->clipped_frames.load(), state_->failure_hresult.load(),
+        state_->pool_width.load(), state_->pool_height.load()};
 }
 void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, DWORD process, DWORD thread) noexcept
 {
@@ -213,6 +215,8 @@ void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, 
         auto size = capture.item.Size(); require(video_size(size.Width, size.Height));
         capture.pool = Direct3D11CaptureFramePool::CreateFreeThreaded(presenter->capture_device,
             DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
+        state->pool_width.store(static_cast<unsigned>(size.Width));
+        state->pool_height.store(static_cast<unsigned>(size.Height));
         capture.session = capture.pool.CreateCaptureSession(capture.item);
         // Keep the system capture border. Never request borderless access.
         capture.frame = capture.pool.FrameArrived(winrt::auto_revoke, [state](auto const &, auto const &) {
@@ -255,8 +259,9 @@ void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, 
             require(surface.Format == DXGI_FORMAT_B8G8R8A8_UNORM && surface.SampleDesc.Count == 1);
             const auto action = video_frame_action(content.Width, content.Height, surface.Width, surface.Height, size.Width, size.Height);
             require(action != VideoFrameAction::Invalid);
-            const bool resize = action != VideoFrameAction::Present;
-            if (resize) {
+            const bool resize = action == VideoFrameAction::PresentAndResize || action == VideoFrameAction::ResizeOnly;
+            if (action != VideoFrameAction::Present || content.Width != static_cast<int>(state->width.load()) ||
+                content.Height != static_cast<int>(state->height.load())) {
                 // The owner must mask stale geometry even if a GPU call stalls.
                 state->content_at_ms.store(0); state->status.store(WindowCaptureStatus::Waiting);
             }
@@ -264,16 +269,23 @@ void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, 
             const auto recreate = [&] {
                 // No checked-out frame or surface may outlive Recreate. It also
                 // discards pending frames, so consume a complete one FIRST.
-                capture.pool.Recreate(presenter->capture_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, content);
-                size = content; state->recreates.fetch_add(1);
+                // Keep capacity across shrink/return transitions. Recreate only
+                // for growth beyond that capacity, never for a late old surface.
+                const SizeInt32 capacity{std::max(size.Width, content.Width), std::max(size.Height, content.Height)};
+                capture.pool.Recreate(presenter->capture_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, capacity);
+                size = capacity;
+                state->pool_width.store(static_cast<unsigned>(size.Width));
+                state->pool_height.store(static_cast<unsigned>(size.Height));
+                state->recreates.fetch_add(1);
             };
-            if (action == VideoFrameAction::ResizeOnly) {
+            if (action == VideoFrameAction::ResizeOnly || action == VideoFrameAction::WaitForSurface) {
                 // A growing ContentSize can exceed the actual old allocation,
                 // even after the requested pool size has caught up. Never copy
                 // clipped pixels or turn this normal transition into Failed.
                 state->clipped_frames.fetch_add(1);
                 release_frame(); presenter->clear(); painted = false;
-                recreate(); continue;
+                if (resize) recreate();
+                continue;
             }
             // Snapshot the local clock before QPC to conservatively map content
             // age, never the completion time of a potentially blocking Present.

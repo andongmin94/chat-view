@@ -1,18 +1,20 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-05 (Asia/Seoul). 이번 시작 기준 **`1338b7f194a40a44be3e8fa0784f60df86d0e79b`**. 최신 OBS ref에서 지정 문서를 순서대로 읽고 **`614688f2d7821f14e6cd2ced898cc8559ed363dc`의 Windows #357이 빌드 성공·routine 40/40**임을 로그에서 확인했다. 이번 연속 resize 검사 코드 **`7686e7f3599a7e482154403ac85d32aa55f687a7`**의 **Windows #359 / run `37216401948` / job `111477714374`는 실행 중**이다. 이 문서가 유일한 현재 작업 목록이며, 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md)를 따른다.
+갱신: 2026-10-05 (Asia/Seoul). 이번 시작 기준 **`1338b7f194a40a44be3e8fa0784f60df86d0e79b`**. 지정 문서를 순서대로 읽고 #357의 빌드 성공·routine 40/40을 확인했다. 연속 resize 검사 **`7686e7f3599a7e482154403ac85d32aa55f687a7`**의 **#359 / `37216401948` / job `111477714374`는 빌드 성공·39/40, 새 9번째 resize 단계 실패**다. 아래 관측에 근거해 pool 용량 재사용을 수정한다. 이 문서가 유일한 현재 작업 목록이며, 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md)를 따른다.
 
 ## 현재 위치
 
 `[x]`는 명시한 좁은 개발 범위다. 실제 제공자·물리 투컴·배포 완료와 구분한다.
 
-기존 대상 상실/재선택과 `be151481f778d816fe51b9bf1f82a3908641e527`의 resize 구현은 그대로 유지한다. SourceLost/Failed/Stopped·끝난 worker·즉시 시작 거절은 선택과 패턴을 폐기하며 검은 출력/덮개 HWND와 출력 화면 결합을 보존한다. 같은 제목의 새 창이나 늦은 Capturing으로 재개하지 않는다. 새로고침 → 대상·출력 선택 → 새 패턴 확인 이후 같은 출력창을 재사용한다. 단순 새 프레임 대기는 같은 실행에서 복구 가능하다.
+기존 대상 상실/재선택은 유지한다. SourceLost/Failed/Stopped·끝난 worker·즉시 시작 거절은 선택과 패턴을 폐기하며 검은 출력/덮개 HWND와 출력 화면 결합을 보존한다. 같은 제목의 새 창이나 늦은 Capturing으로 재개하지 않는다. 새로고침 → 대상·출력 선택 → 새 패턴 확인 이후 같은 출력창을 재사용한다. 단순 새 프레임 대기는 같은 실행에서 복구 가능하다.
 
-resize worker는 ContentSize와 실제 D3D 텍스처 용량을 함께 검사한다. 온전한 전환 프레임은 정확한 콘텐츠 영역만 표시하고 참조를 해제한 뒤 pool을 재생성한다. 잘린 확대 프레임은 검게 대기·재생성하며 undefined padding을 복사하지 않는다. 원래 콘텐츠 시각의 2초 수명·최대 4096·pool 2개와 기존 선택/중지 정책을 유지한다. [출력 계약](window-video-output.md).
+**실제 재현:** #359의 기존 #353 확대 조건과 정지 축소/혼합 resize 및 새 sequence 1–8은 통과했다. sequence 9에서 201×401 → 601×201 → 최종 600×300을 기다림 없이 재그리자 frame 수가 25에서 멈췄다. 최종 상태는 **Waiting(2), running=1, presented=200×300, received=600×300, surface=200×300, recreates=14, clipped=12, HRESULT=0, fresh=0, 출력 5개 픽셀 모두 검정**이었다. 출력은 최상위이고 source/output 사각형도 맞았다. worker 종료나 출력 가림이 아니라 잘린 표면 처리 후 새 완전 프레임 표시가 멈춘 경로다. 직전 sequence 8은 frame=25, recreates=12, clipped=10이었다. 당시 개별 Recreate 요청 크기 로그는 없으므로 마지막 두 재생성이 같은 크기였는지와 OS 내부 상태까지 단정하지 않는다.
 
-**이번 재현 단계:** 실제 `window-capture-test.cpp`에 같은 캡처에서 12단계 정지 화면 크기 변경을 연결했다. 확대/축소·가로세로 교대·홀수 크기·A→B→A·같은 크기의 새 콘텐츠를 포함한다. 마지막 네 단계는 중간 두 크기의 즉시 재그리기 뒤 최종 크기로 바꾸고, 중간 프레임을 기다리지 않는다. 각 단계의 고유 색과 9개 내부 픽셀·검은 여백, 정확한 크기·신선도·frame 진행을 함께 검사하므로 같은 크기의 이전 프레임으로 통과할 수 없다. 마지막에는 소스 애니메이션을 다시 시작하고 기존 output resize/minimize/stop/restart/close를 계속 검사한다. 새 명령은 합성 자식 프로세스에만 있고 제품에는 프레임 주입/토폴로지 우회/재시도 설정이 없다.
+**이번 수정:** `window-capture.cpp`와 기존 순수 frame-action 판정은 캡처 세션 중 확보한 가로/세로 최대 용량을 유지한다. 축소·이미 확보한 범위의 재확대는 pool을 재생성하지 않고 새 ContentSize 영역만 복사·새 종횡비로 표시한다. 용량을 넘는 확대만 각 축의 최대값으로 늘린다. 이미 충분한 용량을 요청했는데 늦은 작은 표면이 오면 검정 Waiting으로 버리고 새 표면을 기다리며 같은 용량으로 다시 Recreate하지 않는다. 불필요한 Recreate가 pending frame을 버리는 경로를 제거한 것이며 timeout·소스 강제 재그리기·자동 재시작으로 덮지 않는다. [공식 frame/padding/Recreate 계약](https://learn.microsoft.com/en-us/windows/apps/develop/media-authoring-processing/screen-capture), [출력 계약](window-video-output.md).
 
-기존 #353 assertion과 첫 프레임 10초·각 resize 5초·색상 오차 8·전체 CTest 40초 제한을 유지한다. 실패 시 기존 received/surface/presented 크기·상태·재생성/잘림 횟수·HRESULT·합성 픽셀에 단계/기대 색을 연결한다. 이 단계에서는 worker를 추측으로 바꾸지 않았으며, 원인 미확정인 #353을 통과 재실행만으로 종료하지 않는다.
+온전한 프레임 표시 후 참조 해제·필요한 재생성 순서, 원래 콘텐츠 시각의 2초 수명, 최대 4096·pool 2개는 유지한다. 용량 재사용 시에도 콘텐츠 크기 변경은 GPU 작업 전에 시각을 무효화하므로 owner의 오래된 geometry 보호를 잃지 않는다. 큰 pool은 축소 후에도 해당 세션 종료까지 남을 수 있으며 자원 qualification 완료를 뜻하지 않는다. 진단에는 현재 요청 pool 크기를 추가하되 제목/영상/계정을 기록하지 않는다. 패널·기기등록·인증·광고·게임 PC OBS 의존성은 바꾸지 않는다.
+
+**회귀 검사:** #359의 동일 12단계 입력·고유 색·9개 내부 픽셀·검은 여백·정확한 크기·신선도·frame 진행 조건을 그대로 재사용한다. A→B→A·같은 크기 새 색·홀수 크기·마지막 네 단계의 즉시 중간 재그리기를 유지한다. 추가로 각 단계의 pool 최대 용량과 정확한 Recreate 횟수를 검사하여 용량 내에서 flush가 다시 발생하면 실패한다. 기존 output resize/minimize/stop/restart/close/HUD 가시성·#353 assertion도 유지한다. 첫 프레임 10초·각 resize 5초·색상 오차 8·전체 CTest 40초 제한은 바꾸지 않았다.
 
 ## G1. 한 화면의 작업과 개인 채팅
 
@@ -66,8 +68,8 @@ resize worker는 ContentSize와 실제 D3D 텍스처 용량을 함께 검사한�
 | --- | --- | --- |
 | D1 | `82f36a6`/#294 반복3 첫 gateway frame 표시 미확인. | G4/R-01. 원인 미확정, routine만으로 종료하지 않음. |
 | D2 | #292 후반 핸들 +104>64; #294 초기 +284>256, 후반 +8. | R-02. 기존 자원 한도 유지. |
-| D4 | CI 캡처 module의 동기 UI-task/join 및 borrowed item은 `510f8e1`에서 보완. #353 fixture 좌표는 #354, core queue 정리는 `66fd5a6`/#355에서 통과. #356/#357도 core 통과. | core fixture만 확인. 실제 OBS frontend 종료/장면 전환·qualification 남음. Control Center에 Q4/Q5 시험 UI는 없음. |
-| D6 | `9e9863a`/#339 WGC 첫 픽셀 10초 실패, 진단만 추가한 #340 미재현. #353 resize/레터박스 실패; #354–#357 WGC 통과. | 연속 크기 변경을 실제 프레임/픽셀로 검증 중. 과거 실패의 인과 재현은 미완료이며 첫 표시까지 종료하지 않음. |
+| D4 | CI 캡처 module의 동기 UI-task/join 및 borrowed item은 `510f8e1`에서 보완. #353 fixture 좌표는 #354, core queue 정리는 `66fd5a6`/#355에서 통과. #356/#357/#359도 core 통과. | core fixture만 확인. 실제 OBS frontend 종료/장면 전환·qualification 남음. Control Center에 Q4/Q5 시험 UI는 없음. |
+| D6 | `9e9863a`/#339 WGC 첫 픽셀 10초 실패, 진단만 추가한 #340 미재현. #353 단발 resize/레터박스 실패. #359는 별도로 연속 burst 단계9 재현. | 이번 pool 재사용 수정의 native 재검증 필요. #353의 인과와 첫 표시 문제까지 종료하지 않음. |
 
 D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-investigation.md](resource-growth-investigation.md).
 
@@ -79,20 +81,21 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 | #354 / `025bb12e26b79dfad335aaaf1798c07a79913cb6` | `37169828714` / `111340331975` | 빌드 성공, 39/40. core 좌표는 통과했지만 scene and all source references drained before OBS shutdown 실패. target-loss/output-lifecycle/window-capture 통과. |
 | #355 / `66fd5a632f9d8e2c194c809ae46ddd0e83e15feb` | `37212720911` / `111467003429` | 빌드 성공, 40/40. core-only에서 obs_wait_for_destroy_queue가 즉시 반환하던 경합을 실제 destroy-task fence로 수정. 잔여 source 0·input destructor 두 개 완료 통과. |
 | #356 / `be151481f778d816fe51b9bf1f82a3908641e527` | `37213887083` / `111470392044` | 빌드 성공, 39/40, 127.63초. core 0.57초·WGC 2.93초·output-lifecycle 3.13초·target-loss 1.43초 통과. 별도 public-ad-browser가 loaded 전에 browser assertion callback 실패(11.79초). |
-| #357 / `614688f2d7821f14e6cd2ced898cc8559ed363dc` | `37214818540` / `111473101019` | **빌드 성공, routine 40/40, 129.21초.** core 0.11초·WGC 2.54초·output-lifecycle 3.50초·target-loss 1.28초·public-ad-browser 15.23초 통과. qualification/package/전체 OBS 단계는 development 모드로 미실행. |
+| #357 / `614688f2d7821f14e6cd2ced898cc8559ed363dc` | `37214818540` / `111473101019` | 빌드 성공, 40/40, 129.21초. core 0.11초·WGC 2.54초·output-lifecycle 3.50초·target-loss 1.28초·public-ad-browser 15.23초 통과. |
+| #359 / `7686e7f3599a7e482154403ac85d32aa55f687a7` | `37216401948` / `111477714374` | **빌드 성공, 39/40, 132.61초.** WGC 9.99초 실패: sequence9, 위 frame/픽셀 증거 참조. core 0.08초·output-lifecycle 8.23초·target-loss 1.33초·public-ad-browser 15.21초 통과. |
 
-#357은 광고 제품 수정이 아니라 원하는 탐색 ID/완료 뒤 DOM을 검사하는 fixture 동기화의 재검증이다. page-load 10초와 기존 콜백/전체 예산을 유지했다. 단회 통과로 #356 브라우저 내부 원인을 확정하지 않는다. #353 resize 실패 역시 이후 통과나 별개 전환 프레임 수정으로 소급하여 해결했다고 하지 않는다.
+#357의 광고 검사 동기화 재통과로 #356 브라우저 내부 원인을 확정하지 않는다. #359의 단발 #353 조건은 통과했지만 더 강한 burst 조건이 실패한 것이며, 이를 #353의 동일 원인 재현으로 소급하지 않는다. 위 routine은 development 실행이고 qualification/package/전체 OBS 단계는 미실행이다.
 
 ## 이번 검증 상태
 
-- **새 코드:** `7686e7f3599a7e482154403ac85d32aa55f687a7`. 시작 ref의 test blob `eee350f9a9c74e77c2bda210568c0cfb5bf0e786`를 읽고 SHA 대조 후 연속 resize 회귀 검사만 추가했다. 원격 변경은 `tests/window-capture-test.cpp`와 이 계획뿐이다. 새 test blob `81f55321bd921199764e77d97858cb9d03999e87`과 로컬 검토 파일도 일치한다. 제품 worker/패널·인증·광고·CMake 한도는 변경하지 않았다.
-- **로컬 실행:** 현재 SHA에서 읽어 blob을 대조한 `video-layout.hpp`/`video-layout-test.cpp`를 GCC C++20 `-Wall -Wextra -Werror -pedantic`, Clang C++20 ASan+UBSan으로 각각 실행하여 **445 assertion 통과**. 새 fixture 12단계의 기대 fit을 실제 제품 header와 정적 검사했고, 108개 내부 표본의 범위/표식 회피·검은 여백 표본의 위치·이전/중간 색과 오차 구간 비중첩을 검사했다. 기존 실패 조건·중지/재시작/종료·시간/색상 기준 보존과 diff 공백 검사도 확인했다. 이는 정책/fixture 검사이며 Windows/WGC/libobs/WebView2 로컬 실행은 아니다.
-- **새 Windows:** **#359 / run `37216401948` / Windows x64 job `111477714374` / 코드 `7686e7f3599a7e482154403ac85d32aa55f687a7`: 실행 중, 결론 없음.** 마지막 확인은 Build and test ChatView 단계다. OBS 개발 라이브러리 빌드 성공을 ChatView 빌드/새 WGC 검사 성공으로 대신하지 않는다. 아직 최종 job 로그가 제공되지 않았다. 실패하면 시간/색상/재시도 예산을 늘리지 않고 프레임 상태·픽셀과 연결해 해당 경로를 수정한다.
-- **미실행 범위:** 전체 qualification·실제 OBS frontend 전체 흐름·물리 투컴 수신 영상·실계정·유료 정산. 합성 자식 창의 실제 WGC 픽셀 검사는 물리 게임/배선의 지원 인증이 아니다.
+- **수정 범위:** #359 결과를 확인한 `770038c23d66e7c457a7219b3741d732cb30929f` 위에서 worker·snapshot의 pool 용량·기존 frame 판정·관련 순수/실제 픽셀 검사·출력 계약·이 계획을 수정했다. 다른 제품/인증/광고 파일과 CMake 한도는 바꾸지 않았다.
+- **로컬 실행:** GCC C++20 `-Wall -Wextra -Werror -pedantic`, Clang C++20 ASan+UBSan으로 수정한 `video-layout-test.cpp` 각각 **1,116 assertion 통과**. 축소 때 재생성/충분한 용량의 늦은 작은 표면마다 재생성 두 변형은 같은 검사에서 각각 실패했다. 12개 fit·108개 내부 표본·검정 여백/표식 위치·고유 색 비중첩 및 기존 시간/색상/종료 조건 보존 검사도 통과했다. Windows/WGC/libobs/WebView2는 로컬 미실행이다.
+- **수정 후 Windows:** 아직 미실행. 원격 반영 후 정확한 코드 SHA·run/job ID·실제 결과를 이 절에 갱신한다. #359 실패를 무시하거나 단순 재실행하지 않고 위 구현 변경과 동일 실패 조건으로 확인한다.
+- **미실행 범위:** 전체 qualification·실제 OBS frontend 전체 흐름·물리 투컴 수신 영상·실계정·유료 정산. 합성 창의 실제 WGC 픽셀 검사는 물리 게임/배선의 지원 인증이 아니다.
 
 ### 다음 사용자 흐름
 
-최신 OBS ref에서 지정 문서를 순서대로 읽고 **#359 / `37216401948` / `111477714374`**의 실제 결과부터 확인한다. **빠른 확대/축소 → 최종 크기·종횡비·검은 여백의 새 콘텐츠 → 같은 실행에서 영상 계속**을 마무리한다. 실패가 있으면 실제 received/surface/presented 크기·상태·픽셀에 근거해 고친다. 대상 상실/재선택을 다시 만들지 않는다.
+수정 코드의 Windows 결과부터 확인하고 **빠른 확대/축소 → 최종 크기·종횡비·검은 여백의 새 콘텐츠 → 같은 실행에서 영상 계속**을 마무리한다. 남은 실패는 받은/표시/실제 표면/요청 pool 크기·상태·픽셀에 근거해 고친다. 시간/색상/재시도 예산을 늘리거나 대상 상실/재선택을 다시 만들지 않는다.
 
 OBS만 변경하고 main·새 작업 브랜치·검증 태그·강제 push를 사용하지 않는다. 브라우저 복구·인증·기기등록·표시키·옛 ZIP을 다시 만들지 않는다. 게임 PC OBS와 HP/단가/지급 규칙을 임의로 추가하지 않는다. D1/D2/D4/D6는 해당 근거 전까지 남긴다. 별도 보고서나 매번 전체 qualification 대신 코드·관련 검사·이 문서를 갱신한다.
 

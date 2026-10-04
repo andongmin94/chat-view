@@ -50,7 +50,7 @@ struct VideoOutputPanelTestAccess {
         KillTimer(p.cover_, 0x435650); // a synthetic rectangle is not a real extended monitor
     }
     static bool confirm(VideoOutputPanel &p) {
-        if (!p.check_.confirm(GetTickCount64(), p.selection_epoch_)) return false;
+        // Only topology/human consent is synthetic; production consumes the check.
         p.begin_capture(); return p.requested_;
     }
 };

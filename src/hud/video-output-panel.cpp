@@ -270,13 +270,18 @@ void VideoOutputPanel::start()
     const int answer = MessageBoxW(panel_, prompt.c_str(), L"ChatView · 수신 화면 직접 확인", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
     confirming_ = false;
     if (answer != IDYES || epoch != selection_epoch_ || !output_intact() || !IsWindowVisible(cover_) ||
-        !topology(true) || !check_.confirm(GetTickCount64(), selection_epoch_)) {
+        !topology(true)) {
         stop(L"게임 전환을 취소했거나 확인 상태가 바뀌었습니다. 새 시험 패턴부터 다시 확인하세요."); return;
     }
     begin_capture();
 }
 void VideoOutputPanel::begin_capture()
 {
+    // The worker-start boundary owns the single-use check, including restart.
+    // Callers must not consume it themselves or revive a stopped selection.
+    if (!check_.confirm(GetTickCount64(), selection_epoch_)) {
+        stop(L"유효한 새 시험 패턴을 확인한 뒤 게임 출력을 다시 시작하세요."); return;
+    }
     if (!mask()) throw std::runtime_error("Video cover unavailable");
     requested_ = capture_.start(source_, output_);
     if (!requested_) {
@@ -450,7 +455,7 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
             case kRefresh: self->refresh(); return 0;
             case kIdentify: self->identify(); return 0;
             case kStart: self->start(); return 0;
-            case kStop: self->stop(L"출력 중지 · 검은 화면 유지 · 로컬 채팅은 계속 사용할 수 있습니다."); return 0;
+            case kStop: self->stop(L"출력 중지 · 검은 화면 유지 · 새 시험 패턴을 확인한 뒤 같은 출력창으로 재개하세요.\n로컬 채팅은 계속 사용할 수 있습니다."); return 0;
             case kRelease: self->release(); return 0;
             case IDCANCEL: SendMessageW(window, WM_CLOSE, 0, 0); return 0;
             }

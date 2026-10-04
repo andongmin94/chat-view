@@ -39,10 +39,12 @@ struct Browser {
     Microsoft::WRL::ComPtr<ICoreWebView2> core;
     ~Browser() { if (controller) controller->Close(); if (window) DestroyWindow(window); }
 };
-bool evaluate(ICoreWebView2 *core, const wchar_t *script)
+bool evaluate(ICoreWebView2 *core, const wchar_t *script, ULONGLONG timeout = 10000)
 {
     struct Result { bool done = false; HRESULT code = E_FAIL; std::wstring value; };
     const auto result = std::make_shared<Result>();
+    static unsigned script_sequence = 0;
+    const unsigned request = ++script_sequence;
     expect(SUCCEEDED(core->ExecuteScript(script,
         Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
             [result](HRESULT code, LPCWSTR value) -> HRESULT {
@@ -51,7 +53,12 @@ bool evaluate(ICoreWebView2 *core, const wchar_t *script)
                 catch (...) { result->code = E_OUTOFMEMORY; }
                 result->done = true; return S_OK;
             }).Get())), "execute browser assertion");
-    await([&] { return result->done; }, "browser assertion callback");
+    try { await([&] { return result->done; }, "browser assertion callback", timeout); }
+    catch (...) {
+        std::cerr << "Public ad script evidence: request=" << request
+            << " completed=" << result->done << " hresult=" << result->code << '\n';
+        throw;
+    }
     expect(SUCCEEDED(result->code), "browser assertion returned");
     return result->value == L"true";
 }
@@ -99,8 +106,76 @@ int main()
         Microsoft::WRL::ComPtr<ICoreWebView2Controller2> transparent;
         expect(SUCCEEDED(browser->controller.As(&transparent)), "transparent browser controller");
         expect(SUCCEEDED(transparent->put_DefaultBackgroundColor(COREWEBVIEW2_COLOR{0, 0, 0, 0})), "transparent background");
-        expect(SUCCEEDED(browser->core->Navigate(url.c_str())), "load public renderer, not management UI");
-        await([&] { return evaluate(browser->core.Get(), L"document.readyState === 'complete' && !!document.getElementById('banner')"); }, "public page load");
+        // Navigate is asynchronous. Do not issue DOM scripts against the
+        // outgoing initial document while the public page is being installed.
+        // Match NavigationId: an overlapping about:blank completion is not ours.
+        struct Navigation {
+            std::wstring expected;
+            UINT64 id = 0;
+            bool started = false, done = false;
+            BOOL success = FALSE;
+            HRESULT code = S_OK;
+            COREWEBVIEW2_WEB_ERROR_STATUS error = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
+        };
+        const auto navigation = std::make_shared<Navigation>(); navigation->expected = url;
+        struct NavigationHandlers {
+            ICoreWebView2 *core;
+            EventRegistrationToken starting{}, completed{};
+            bool has_starting = false, has_completed = false;
+            ~NavigationHandlers()
+            {
+                if (has_completed) core->remove_NavigationCompleted(completed);
+                if (has_starting) core->remove_NavigationStarting(starting);
+            }
+        } handlers{browser->core.Get()};
+        expect(SUCCEEDED(browser->core->add_NavigationStarting(
+            Microsoft::WRL::Callback<ICoreWebView2NavigationStartingEventHandler>(
+                [navigation](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
+                    LPWSTR uri = nullptr;
+                    navigation->code = args->get_Uri(&uri);
+                    const bool match = SUCCEEDED(navigation->code) && uri && navigation->expected == uri;
+                    CoTaskMemFree(uri);
+                    if (match) {
+                        navigation->code = args->get_NavigationId(&navigation->id);
+                        navigation->started = SUCCEEDED(navigation->code);
+                    }
+                    if (FAILED(navigation->code)) navigation->done = true;
+                    return S_OK;
+                }).Get(), &handlers.starting)), "observe public navigation start");
+        handlers.has_starting = true;
+        expect(SUCCEEDED(browser->core->add_NavigationCompleted(
+            Microsoft::WRL::Callback<ICoreWebView2NavigationCompletedEventHandler>(
+                [navigation](ICoreWebView2 *, ICoreWebView2NavigationCompletedEventArgs *args) -> HRESULT {
+                    UINT64 id = 0;
+                    const HRESULT code = args->get_NavigationId(&id);
+                    if (FAILED(code)) { navigation->code = code; navigation->done = true; return S_OK; }
+                    if (!navigation->started || id != navigation->id) return S_OK;
+                    navigation->code = args->get_IsSuccess(&navigation->success);
+                    const HRESULT error = args->get_WebErrorStatus(&navigation->error);
+                    if (FAILED(error)) navigation->code = error;
+                    navigation->done = true; return S_OK;
+                }).Get(), &handlers.completed)), "observe public navigation completion");
+        handlers.has_completed = true;
+        // The navigation gate and original DOM condition SHARE the previous
+        // ten-second page-load deadline; no extra retry or callback budget.
+        const auto load_deadline = GetTickCount64() + 10000;
+        const auto remaining = [&] {
+            const auto now = GetTickCount64(); expect(now < load_deadline, "public page load");
+            return load_deadline - now;
+        };
+        try {
+            expect(SUCCEEDED(browser->core->Navigate(url.c_str())), "load public renderer, not management UI");
+            await([&] { return navigation->done; }, "public navigation completion", remaining());
+            expect(SUCCEEDED(navigation->code) && navigation->success, "public navigation succeeded");
+            await([&] { return evaluate(browser->core.Get(), L"document.readyState === 'complete' && !!document.getElementById('banner')", remaining()); }, "public page load", remaining());
+        } catch (...) {
+            // Phase/IDs/errors only, never URL, account, script result or DOM.
+            std::cerr << "Public ad navigation evidence: started=" << navigation->started
+                << " completed=" << navigation->done << " id=" << navigation->id
+                << " success=" << navigation->success << " hresult=" << navigation->code
+                << " web_error=" << static_cast<int>(navigation->error) << '\n';
+            throw;
+        }
         expect(evaluate(browser->core.Get(), L"document.getElementById('banner').hidden && getComputedStyle(document.body).backgroundColor === 'rgba(0, 0, 0, 0)'"), "starts transparent without a sender report");
         signal("loaded"); command("reported");
         const wchar_t *visible = L"!document.getElementById('banner').hidden && document.getElementById('brand').textContent === 'ChatView'";

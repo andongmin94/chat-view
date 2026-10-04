@@ -15,7 +15,8 @@ namespace {
 constexpr wchar_t source_class[] = L"ChatView.SyntheticVideoSource";
 constexpr COLORREF video_color = RGB(20, 100, 180), hud_color = RGB(240, 20, 180);
 constexpr COLORREF portrait_color = RGB(180, 90, 20), wide_color = RGB(20, 180, 90);
-constexpr UINT static_resize = WM_APP + 41, animate_source = WM_APP + 42;
+constexpr UINT static_resize = WM_APP + 41, animate_source = WM_APP + 42, sequence_resize = WM_APP + 43;
+COLORREF sequence_color = CLR_INVALID; // only the synthetic child accepts this test message
 bool source_animated = true; // child fixture only; queued WM_TIMER cannot restart it
 void expect(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
 void pump()
@@ -32,6 +33,10 @@ void await(const std::function<bool()> &condition, const char *message, ULONGLON
 }
 LRESULT CALLBACK source_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
+    if (message == sequence_resize) {
+        sequence_color = static_cast<COLORREF>(lparam);
+        return source_proc(window, static_resize, LOWORD(wparam), HIWORD(wparam));
+    }
     if (message == static_resize) {
         source_animated = false; KillTimer(window, 1);
         if (wparam < 1 || wparam > 4096 || lparam < 1 || lparam > 4096) return 0;
@@ -40,14 +45,15 @@ LRESULT CALLBACK source_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         return RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW) != FALSE;
     }
     if (message == animate_source) {
-        source_animated = true;
+        source_animated = true; sequence_color = CLR_INVALID;
         return SetTimer(window, 1, 100, nullptr) != 0;
     }
     if (message == WM_TIMER) { if (source_animated) InvalidateRect(window, nullptr, FALSE); return 0; }
     if (message == WM_PAINT) {
         PAINTSTRUCT paint{}; const HDC dc = BeginPaint(window, &paint);
         RECT rect{}; GetClientRect(window, &rect);
-        const COLORREF color = rect.right == 200 && rect.bottom == 300 ? portrait_color :
+        const COLORREF color = sequence_color != CLR_INVALID ? sequence_color :
+            rect.right == 200 && rect.bottom == 300 ? portrait_color :
             rect.right == 600 && rect.bottom == 200 ? wide_color : video_color;
         const HBRUSH base = CreateSolidBrush(color); FillRect(dc, &rect, base); DeleteObject(base);
         rect = {0, 0, (GetTickCount64() / 100) % 2 ? 30 : 50, 10};
@@ -157,6 +163,74 @@ void resize_evidence(const chatview::WindowCapture &capture, HWND input, HWND ou
         << " source_rect=" << source_bounds.left << ',' << source_bounds.top << ',' << source_bounds.right << ',' << source_bounds.bottom
         << " output_rect=" << output_bounds.left << ',' << output_bounds.top << ',' << output_bounds.right << ',' << output_bounds.bottom << '\n';
 }
+void resize_sequence(chatview::WindowCapture &capture, HWND input, HWND output, HWND hud)
+{
+    // Independent expected rectangles in the 320x240 output. Odd dimensions,
+    // A -> B -> A and same-size new content must not be satisfied by an old
+    // snapshot or old pixels. These are inputs, not retries of a failed test.
+    const struct { unsigned width, height; RECT fit; } steps[] = {
+        {200, 300, {80, 0, 240, 240}}, {600, 300, {0, 40, 320, 200}},
+        {300, 500, {88, 0, 232, 240}}, {600, 200, {0, 67, 320, 173}},
+        {201, 401, {100, 0, 220, 240}}, {601, 201, {0, 66, 320, 173}},
+        {200, 300, {80, 0, 240, 240}}, {200, 300, {80, 0, 240, 240}},
+        {600, 300, {0, 40, 320, 200}}, {200, 300, {80, 0, 240, 240}},
+        {600, 200, {0, 67, 320, 173}}, {600, 300, {0, 40, 320, 200}},
+    };
+    unsigned index = 0;
+    for (const auto &step : steps) {
+        const auto before = capture.snapshot().frames;
+        const auto color = RGB(35 + 17 * index, 185 - 11 * index, 55 + 13 * index);
+        const auto phase = std::string("static resize sequence ") + std::to_string(index + 1);
+        if (index >= 8) {
+            // Resize again before waiting for WGC/Present; the compositor may
+            // coalesce these frames, but only the final generation may satisfy
+            // the check. No production frame injection or timing override.
+            expect(SendMessageW(input, sequence_resize, MAKELONG(201, 401), RGB(200, 40, 40)) != 0,
+                "burst portrait redraw");
+            expect(SendMessageW(input, sequence_resize, MAKELONG(601, 201), RGB(40, 40, 200)) != 0,
+                "burst landscape redraw");
+        }
+        expect(SendMessageW(input, sequence_resize, MAKELONG(step.width, step.height), color) != 0,
+            "single final-generation redraw, no animation timer");
+        const auto pixels = [&] {
+            const auto &r = step.fit;
+            // Nine interior samples include all four newly exposed corners;
+            // stay away from the source's small white animation marker.
+            for (const auto x : {r.left + 20, (r.left + r.right) / 2, r.right - 6})
+                for (const auto y : {r.top + 20, (r.top + r.bottom) / 2, r.bottom - 6})
+                    if (!pixel_matches(pixel(500 + x, 30 + y), color)) return false;
+            if (r.left && !pixel_matches(pixel(500 + r.left - 4, 150), RGB(0,0,0))) return false;
+            if (r.right < 320 && !pixel_matches(pixel(500 + r.right + 4, 150), RGB(0,0,0))) return false;
+            if (r.top && !pixel_matches(pixel(660, 30 + r.top - 4), RGB(0,0,0))) return false;
+            if (r.bottom < 240 && !pixel_matches(pixel(660, 30 + r.bottom + 4), RGB(0,0,0))) return false;
+            return true;
+        };
+        try {
+            await([&] {
+                const auto s = capture.snapshot();
+                expect(capture.running() && s.status != chatview::WindowCaptureStatus::Failed &&
+                    s.status != chatview::WindowCaptureStatus::SourceLost, "resize must not terminate this capture");
+                return s.status == chatview::WindowCaptureStatus::Capturing && s.frames > before &&
+                    s.width == step.width && s.height == step.height &&
+                    chatview::video_frame_fresh(GetTickCount64(), s.content_at_ms) && pixels();
+            }, phase.c_str()); // unchanged five-second wait, RGB tolerance 8
+        } catch (...) {
+            std::cout << "Synthetic WGC generation: index=" << index + 1 << " expected_color=" << color << '\n';
+            resize_evidence(capture, input, output, phase.c_str(), step.width, step.height); throw;
+        }
+        resize_evidence(capture, input, output, phase.c_str(), step.width, step.height);
+        expect(IsWindowVisible(hud) && IsWindow(output), "same output and visible HUD survive every resize");
+        ++index;
+    }
+    const auto before = capture.snapshot().frames;
+    expect(SendMessageW(input, animate_source, 0, 0) != 0, "resume animation after rapid resize");
+    await([&] {
+        const auto s = capture.snapshot();
+        return s.frames > before && s.width == 600 && s.height == 300 &&
+            chatview::video_frame_fresh(GetTickCount64(), s.content_at_ms) &&
+            pixel_matches(pixel(660, 150), video_color) && pixel_matches(pixel(660, 40), RGB(0,0,0));
+    }, "original animated content continues without capture restart");
+}
 void exercise()
 {
     expect(GetSystemMetrics(SM_CXSCREEN) >= 900 && GetSystemMetrics(SM_CYSCREEN) >= 600, "interactive desktop required (not skipped)");
@@ -243,6 +317,7 @@ void exercise()
         return pixel_matches(pixel(660, 150), video_color) && pixel_matches(pixel(660, 40), RGB(0,0,0)) &&
             pixel_matches(pixel(660, 85), video_color) && pixel_matches(pixel(660, 215), video_color);
     });
+    resize_sequence(capture, input, output.value, hud.value);
     SetWindowPos(output.value, nullptr, 0, 0, 300, 300, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     await([&] { return pixel_matches(pixel(650, 180), video_color) && pixel_matches(pixel(650, 40), RGB(0,0,0)); }, "output resizing preserves aspect and black bars");
     ShowWindow(input, SW_MINIMIZE);

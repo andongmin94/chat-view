@@ -279,8 +279,12 @@ void VideoOutputPanel::begin_capture()
 {
     if (!mask()) throw std::runtime_error("Video cover unavailable");
     requested_ = capture_.start(source_, output_);
+    if (!requested_) {
+        interrupt(L"선택한 창의 캡처를 시작하지 못했습니다. 검은 출력창을 유지합니다. 목록을 새로고침하고 새 대상·시험 패턴부터 다시 선택하세요.");
+        return;
+    }
     next_path_check_ = GetTickCount64() + 1000U;
-    notice(requested_ ? L"육안 확인 후 첫 게임 창 프레임을 기다립니다. 투컴 영상 미검증." : L"선택한 창을 캡처하지 못했습니다. 출력은 검은 화면입니다.");
+    notice(L"육안 확인 후 첫 게임 창 프레임을 기다립니다. 투컴 영상 미검증.");
     shown_ = WindowCaptureStatus::Starting;
 }
 void VideoOutputPanel::ensure_output()
@@ -320,6 +324,9 @@ bool VideoOutputPanel::mask() noexcept
 void VideoOutputPanel::invalidate_choices() noexcept
 {
     ++selection_epoch_;
+    // Retire the captured window identity, but preserve the black output and
+    // its monitor binding. A replacement target never releases that output.
+    source_ = nullptr; source_process_ = 0; source_thread_ = 0; source_monitor_ = nullptr;
     sources_.clear(); monitors_.clear();
     if (panel_) {
         SendDlgItemMessageW(panel_, kSource, CB_RESETCONTENT, 0, 0);
@@ -375,21 +382,24 @@ void VideoOutputPanel::tick() noexcept
 void VideoOutputPanel::update_capture(const WindowCaptureSnapshot &value) noexcept
 {
     if (!requested_ || closing_) return;
+    // Terminal status takes precedence over frame freshness and worker teardown.
+    // Never briefly uncover an old Capturing snapshot from a finished worker.
+    if (value.status == WindowCaptureStatus::SourceLost || value.status == WindowCaptureStatus::Failed ||
+        value.status == WindowCaptureStatus::Stopped || !capture_.running()) {
+        interrupt(L"창이 종료·최소화되었거나 캡처가 끝났습니다. 검은 출력창을 유지합니다. 목록을 새로고침하고 새 대상·시험 패턴부터 다시 선택하세요.");
+        return;
+    }
     // Do not trust a sticky Capturing flag while Present/driver work is slow.
     // The owner can cover stale content without waiting for the GPU worker.
     auto status = value.status;
     if (status == WindowCaptureStatus::Capturing && !video_frame_fresh(GetTickCount64(), value.content_at_ms))
         status = WindowCaptureStatus::Waiting;
     if (status == WindowCaptureStatus::Capturing) ShowWindow(cover_, SW_HIDE);
-    else if (!mask()) { stop(L"출력 보호를 확인하지 못했습니다."); return; }
-    if (!capture_.running() && status != WindowCaptureStatus::Starting) {
-        stop(L"창 종료·최소화 또는 캡처 오류로 중지했습니다. 출력은 검은 화면입니다. 직접 다시 선택하세요."); return;
-    }
+    else if (!mask()) { interrupt(L"출력 보호를 확인하지 못했습니다. 목록에서 다시 선택하세요."); return; }
     if (status == shown_) return;
     shown_ = status;
     if (status == WindowCaptureStatus::Capturing) notice(L"선택 창 영상을 별도 출력 중 · 영상만/SDR · 실제 투컴 송출은 미검증");
     else if (status == WindowCaptureStatus::Waiting) notice(L"새 프레임 대기 · 오래된 영상은 검게 지웠습니다.");
-    else if (!capture_.running()) stop(L"창 종료·최소화 또는 캡처 오류로 중지했습니다. 출력은 검은 화면입니다. 직접 다시 선택하세요.");
 }
 LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {

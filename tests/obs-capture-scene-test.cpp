@@ -3,6 +3,7 @@
 // Does not exercise physical capture, the OBS frontend or the Windows desktop.
 #include "obs-capture-scene.hpp"
 #include <atomic>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -24,7 +25,27 @@ struct Source {
 };
 struct Scene {
     obs_scene_t *value = obs_scene_create_private("original scene");
-    ~Scene() { obs_scene_release(value); }
+    Scene()
+    {
+        if (!value) return;
+        // This core-only test does not start a video mixer. Use libobs' loaded
+        // custom scene dimensions rather than normalizing coordinates against
+        // an unconfigured zero-sized canvas. No production scene is changed.
+        obs_source_t *source = obs_scene_get_source(value);
+        obs_data_t *data = obs_source_get_settings(source);
+        obs_data_set_bool(data, "custom_size", true);
+        obs_data_set_int(data, "cx", 960);
+        obs_data_set_int(data, "cy", 540);
+        obs_data_release(data);
+        obs_source_load2(source);
+    }
+    ~Scene()
+    {
+        // OBS 32.2's main canvas retains its scenes. Detach that ownership
+        // before releasing ours, rather than leaving teardown to obs_shutdown.
+        if (value) obs_canvas_scene_remove(value);
+        obs_scene_release(value);
+    }
 };
 std::size_t items(obs_scene_t *scene)
 {
@@ -50,6 +71,8 @@ void preserved(obs_scene_t *scene, obs_sceneitem_t *original, obs_source_t *sour
     expect(obs_sceneitem_get_source(original) == source, "original source identity preserved");
     vec2 pos{}, scale{};
     obs_sceneitem_get_pos(original, &pos); obs_sceneitem_get_scale(original, &scale);
+    expect(std::isfinite(pos.x) && std::isfinite(pos.y) && std::isfinite(scale.x) && std::isfinite(scale.y),
+        "fixture transform is finite before and after cleanup");
     expect(pos.x == x && pos.y == 83.0F, "user position preserved, including concurrent edits");
     expect(scale.x == 0.5F && scale.y == 0.75F, "user scale preserved");
     expect(!obs_sceneitem_visible(original) && obs_sceneitem_locked(original), "user visibility and lock preserved");
@@ -69,6 +92,8 @@ void run()
     obs_register_source(&info);
     Scene scene;
     expect(scene.value != nullptr, "real private scene created");
+    expect(obs_source_get_width(obs_scene_get_source(scene.value)) == 960 &&
+        obs_source_get_height(obs_scene_get_source(scene.value)) == 540, "fixture has real loaded scene dimensions");
     Source original(obs_source_create_private(info.id, "original source", nullptr));
     Source probe(obs_source_create_private(info.id, "temporary capture", nullptr));
     expect(original.value && probe.value, "real synthetic sources created");
@@ -81,6 +106,9 @@ void run()
     obs_data_set_string(original_settings, "user-setting", "keep this exact value");
     obs_data_release(original_settings);
     const std::string before = settings(original.value);
+    // Verify the fixture itself before any CaptureScene operation. A bad setup
+    // must not be misreported as a restoration failure in the ownership helper.
+    preserved(scene.value, item, original.value, before);
     auto owned_scene = [&] { return obs_source_get_ref(obs_scene_get_source(scene.value)); };
 
     { // Normal completion and idempotent cleanup.
@@ -161,8 +189,18 @@ int main()
 {
     if (!obs_startup("en-US", nullptr, nullptr)) return 1;
     int result = 0;
-    try { run(); std::cout << "Capture scene lifecycle: " << assertions << " assertions passed\n"; }
+    try {
+        run();
+        (void)obs_wait_for_destroy_queue();
+        std::size_t remaining = 0;
+        obs_enum_all_sources([](void *value, obs_source_t *) {
+            ++*static_cast<std::size_t *>(value); return true;
+        }, &remaining);
+        expect(remaining == 0, "scene and all source references drained before OBS shutdown");
+        std::cout << "Capture scene lifecycle: " << assertions << " assertions passed\n";
+    }
     catch (const std::exception &error) { std::cerr << error.what() << '\n'; result = 1; }
+    (void)obs_wait_for_destroy_queue();
     obs_shutdown();
     return result;
 }

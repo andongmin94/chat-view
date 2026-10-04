@@ -67,4 +67,20 @@ if(BUILD_TESTING)
     add_test(NAME chat-view-video-output-lifecycle COMMAND chat-view-video-output-lifecycle-test
         "$<TARGET_FILE:chat-view-window-capture-test>")
     set_tests_properties(chat-view-video-output-lifecycle PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+
+    add_executable(chat-view-video-target-loss-test
+        tests/video-target-loss-test.cpp src/hud/video-output-panel.cpp
+        src/hud/hud-window.cpp src/hud/hud-placement.cpp src/hud/webview-host.cpp
+        src/hud/host-state-message.cpp src/hud/page-health-message.cpp)
+    target_include_directories(chat-view-video-target-loss-test PRIVATE
+        "${CHATVIEW_SOURCE_DIR}" "${WEBVIEW2_INCLUDE_DIR}")
+    target_link_libraries(chat-view-video-target-loss-test PRIVATE
+        chat-view-common chat-view-window-capture "${WEBVIEW2_LOADER_LIBRARY}"
+        bcrypt dcomp gdi32 shell32 wtsapi32 version)
+    target_compile_definitions(chat-view-video-target-loss-test PRIVATE WEBVIEW2_STATIC)
+    chatview_enable_win32(chat-view-video-target-loss-test)
+    chatview_enable_warnings(chat-view-video-target-loss-test)
+    add_test(NAME chat-view-video-target-loss COMMAND chat-view-video-target-loss-test
+        "$<TARGET_FILE:chat-view-window-capture-test>")
+    set_tests_properties(chat-view-video-target-loss PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 endif()

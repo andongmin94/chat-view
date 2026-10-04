@@ -240,9 +240,9 @@ bool output_pixels(COLORREF color, chatview::VideoRect fit)
     const HDC dc = GetDC(nullptr); if (!dc) return false;
     const auto matches = [&](int x, int y, COLORREF expected) {
         const auto actual = GetPixel(dc, 500 + x, 30 + y);
-        const auto near = [](int a, int b) { return a >= b - 8 && a <= b + 8; };
-        return actual != CLR_INVALID && near(GetRValue(actual), GetRValue(expected)) &&
-            near(GetGValue(actual), GetGValue(expected)) && near(GetBValue(actual), GetBValue(expected));
+        const auto within_tolerance = [](int a, int b) { return a >= b - 8 && a <= b + 8; };
+        return actual != CLR_INVALID && within_tolerance(GetRValue(actual), GetRValue(expected)) &&
+            within_tolerance(GetGValue(actual), GetGValue(expected)) && within_tolerance(GetBValue(actual), GetBValue(expected));
     };
     bool valid = true;
     for (int x : {1, 2, 3}) for (int y : {1, 2, 3})

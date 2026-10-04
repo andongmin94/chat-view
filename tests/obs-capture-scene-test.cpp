@@ -11,10 +11,21 @@
 
 namespace {
 unsigned assertions = 0;
+std::atomic<unsigned> destroyed_inputs{0};
 void expect(bool value, const char *message)
 {
     ++assertions;
     if (!value) throw std::runtime_error(message);
+}
+void drain_fixture_destruction()
+{
+    // In pinned OBS 32.2.2, obs_wait_for_destroy_queue returns immediately
+    // without BOTH the video and audio threads. This core-only fixture has
+    // neither. Fence the actual destroy worker instead of sleeping/retrying.
+    // The scene destructor can enqueue destruction of its child input behind
+    // the first fence. Our fixture has exactly those two ownership levels.
+    obs_queue_task(OBS_TASK_DESTROY, [](void *) {}, nullptr, true);
+    obs_queue_task(OBS_TASK_DESTROY, [](void *) {}, nullptr, true);
 }
 struct Source {
     obs_source_t *value;
@@ -41,8 +52,8 @@ struct Scene {
     }
     ~Scene()
     {
-        // OBS 32.2's main canvas retains its scenes. Detach that ownership
-        // before releasing ours, rather than leaving teardown to obs_shutdown.
+        // Detach the fixture's canvas registration before releasing our ref.
+        // Do not assume that every canvas holds a strong SCENE_REF reference.
         if (value) obs_canvas_scene_remove(value);
         obs_scene_release(value);
     }
@@ -86,7 +97,7 @@ void run()
     info.output_flags = OBS_SOURCE_VIDEO;
     info.get_name = [](void *) { return "Synthetic lifecycle input"; };
     info.create = [](obs_data_t *, obs_source_t *) -> void * { return new int(1); };
-    info.destroy = [](void *data) { delete static_cast<int *>(data); };
+    info.destroy = [](void *data) { delete static_cast<int *>(data); ++destroyed_inputs; };
     info.get_width = [](void *) -> std::uint32_t { return 320; };
     info.get_height = [](void *) -> std::uint32_t { return 180; };
     obs_register_source(&info);
@@ -191,16 +202,19 @@ int main()
     int result = 0;
     try {
         run();
-        (void)obs_wait_for_destroy_queue();
+        drain_fixture_destruction();
         std::size_t remaining = 0;
-        obs_enum_all_sources([](void *value, obs_source_t *) {
-            ++*static_cast<std::size_t *>(value); return true;
+        obs_enum_all_sources([](void *value, obs_source_t *source) {
+            ++*static_cast<std::size_t *>(value);
+            std::cerr << "Remaining fixture source: " << obs_source_get_name(source) << '\n';
+            return true;
         }, &remaining);
         expect(remaining == 0, "scene and all source references drained before OBS shutdown");
+        expect(destroyed_inputs.load() == 2, "both real input destructors completed before OBS shutdown");
         std::cout << "Capture scene lifecycle: " << assertions << " assertions passed\n";
     }
     catch (const std::exception &error) { std::cerr << error.what() << '\n'; result = 1; }
-    (void)obs_wait_for_destroy_queue();
+    drain_fixture_destruction();
     obs_shutdown();
     return result;
 }

@@ -1,6 +1,6 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-05 (Asia/Seoul). 시작 기준 **`fe12146b1adfa173ceeab06b6f9f3fce32038818`**. 인수인계 구현 **`025bb12e26b79dfad335aaaf1798c07a79913cb6`**의 #354를 확인하고 실패 경로부터 수정했다. 선행 수정 **`66fd5a632f9d8e2c194c809ae46ddd0e83e15feb`**는 Windows #355 routine 40/40 통과. 크기 변경 구현 **`be151481f778d816fe51b9bf1f82a3908641e527`**는 #356에서 지정 네 검사 통과, 전체 39/40이다. 새로 발생한 광고 브라우저 검사 실패를 아래에 보존하고 검사 시작 동기화를 보완한다.
+갱신: 2026-10-05 (Asia/Seoul). 시작 기준 **`fe12146b1adfa173ceeab06b6f9f3fce32038818`**. 인수인계 구현 **`025bb12e26b79dfad335aaaf1798c07a79913cb6`**의 #354를 확인하고 실패 경로부터 수정했다. 선행 수정 **`66fd5a632f9d8e2c194c809ae46ddd0e83e15feb`**는 Windows #355 routine 40/40 통과. 크기 변경 구현 **`be151481f778d816fe51b9bf1f82a3908641e527`**는 #356에서 지정 네 검사 통과, 전체 39/40이다. 추가 광고 검사 동기화 코드 **`614688f2d7821f14e6cd2ced898cc8559ed363dc`**의 **Windows #357 / run `37214818540` / job `111473101019`는 실행 중**이다. 2026-10-05 00:58 KST 확인 시 Build and test ChatView 단계이며 최종 결과가 없다. 이 갱신은 문서만 변경하며 해당 native 실행을 취소하거나 성공으로 간주하지 않는다.
 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md)를 따른다. 이 문서가 유일한 현재 작업 목록이다.
 
 ## 현재 위치
@@ -17,7 +17,7 @@
 
 **#356 실제 결과와 추가 실패:** `be151481f778d816fe51b9bf1f82a3908641e527` / **Windows #356 / run `37213887083` / job `111470392044`**는 빌드 성공, routine **39/40 통과·1건 실패**다. `chat-view-obs-capture-scene` 0.57초, `chat-view-window-capture` 2.93초, `chat-view-video-output-lifecycle` 3.13초, `chat-view-video-target-loss` 1.43초로 각각 통과했다. 실패는 변경하지 않았던 `chat-view-public-ad-browser`의 **browser assertion callback**(11.79초)이며, Node 측 `loaded` 신호 대기 중 native child가 종료했다. 이 로그만으로 어느 초기 스크립트 콜백이나 브라우저 내부 상태가 원인이었는지 확정하지 않는다.
 
-**이번 추가 검사 수정:** 광고 제품/페이지/서버/인증 흐름은 바꾸지 않는다. `tests/public-ad-browser-test.cpp`는 Navigate 직후 완료되지 않은 문서에 DOM assertion을 보내던 준비 경로를 보완한다. 원하는 URL의 NavigationStarting/NavigationId와 성공한 NavigationCompleted를 확인한 뒤 기존 DOM 조건을 실행한다. 초기 about:blank 등 다른 탐색의 완료는 인정하지 않는다. 탐색과 DOM 확인은 기존 10초 page-load deadline을 공유하며 환경 시작·콜백·부모 프로세스·전체 CTest 제한이나 재시도 예산을 늘리지 않는다. 콜백 실패 시 스크립트 순번·완료 여부·HRESULT, 탐색 실패 시 ID·완료/성공 여부·WebErrorStatus만 남긴다. URL/DOM/계정은 로그에 쓰지 않는다. [공식 실행 시점](https://learn.microsoft.com/en-us/microsoft-edge/webview2/how-to/javascript)과 [탐색 ID 계약](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/navigation-events)에 따른 검사 동기화이며, #356의 내부 원인을 확정했다거나 새 브라우저 복구 기능을 만들었다는 뜻은 아니다. 새 native 결과는 아직 없다.
+**이번 추가 검사 수정:** 광고 제품/페이지/서버/인증 흐름은 바꾸지 않는다. `tests/public-ad-browser-test.cpp`는 Navigate 직후 완료되지 않은 문서에 DOM assertion을 보내던 준비 경로를 보완한다. 원하는 URL의 NavigationStarting/NavigationId와 성공한 NavigationCompleted를 확인한 뒤 기존 DOM 조건을 실행한다. 초기 about:blank 등 다른 탐색의 완료는 인정하지 않는다. 탐색과 DOM 확인은 기존 10초 page-load deadline을 공유하며 환경 시작·콜백·부모 프로세스·전체 CTest 제한이나 재시도 예산을 늘리지 않는다. 콜백 실패 시 스크립트 순번·완료 여부·HRESULT, 탐색 실패 시 ID·완료/성공 여부·WebErrorStatus만 남긴다. URL/DOM/계정은 로그에 쓰지 않는다. [공식 실행 시점](https://learn.microsoft.com/en-us/microsoft-edge/webview2/how-to/javascript)과 [탐색 ID 계약](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/navigation-events)에 따른 검사 동기화이며, #356의 내부 원인을 확정했다거나 새 브라우저 복구 기능을 만들었다는 뜻은 아니다. 코드 `614688f2d7821f14e6cd2ced898cc8559ed363dc`의 #357은 실행 중으로, 아직 재검증 성공 근거가 없다.
 
 **직전 실패 보존:** `510f8e195a8cb321844dda6ff7f6a1be55bd1e4d`의 **Windows #353 / `37142325494` / job `111259184927`**는 빌드 성공, routine **37/39 통과·2건 실패**였다. 하나는 0 크기 fixture의 위치 보존, 다른 하나는 WGC의 **resize recreates pool and letterboxes without old padding**이다. 당시 resize 로그에는 실제 프레임/표면 크기·픽셀 증거가 없다. #354/#355/#356의 WGC 통과나 이번 코드에서 확인한 전환 프레임 폐기 문제를 그 과거 실패의 확정 원인으로 소급하지 않는다. 원인 재현·연결은 미완료다.
 
@@ -83,12 +83,12 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 - **선행 수정 코드:** `66fd5a632f9d8e2c194c809ae46ddd0e83e15feb`, Windows #355 / run `37212720911` / job `111467003429`: 빌드 성공, routine 40/40. `chat-view-obs-capture-scene`, `chat-view-video-target-loss`, `chat-view-video-output-lifecycle`, `chat-view-window-capture` 각각 통과. #354의 39/40·core 실패 및 #353의 37/39·두 실패도 보존한다.
 - **resize 코드:** `be151481f778d816fe51b9bf1f82a3908641e527`, Windows #356 / run `37213887083` / job `111470392044`: 빌드 성공, routine 39/40, 전체 127.63초. 지정 네 검사는 각각 통과(core 0.57초, target-loss 1.43초, output-lifecycle 3.13초, window-capture 2.93초). 별도 `chat-view-public-ad-browser`는 loaded 신호 전 **browser assertion callback** 실패. 원래 WGC #353 실패의 원인 확정 근거로 이 통과를 사용하지 않는다.
 - **resize 코드의 로컬 검사:** 최신 OBS blob SHA를 확인해 읽은 파일만 변경. GCC C++20 `-Wall -Wextra -Werror -pedantic` 및 Clang C++20 ASan+UBSan으로 `video-layout-test.cpp` 각각 **445 assertion 통과**. 온전한 전환 프레임 폐기/잘린 surface 허용 두 변형은 같은 검사에서 각각 실패했다. 이는 정책·기하 검사이며 실제 WGC 재현 성공이 아니다. 원격 반영 코드와 로컬 검사 대상의 blob SHA도 대조했다.
-- **이번 추가 광고 검사 동기화:** 읽은 `tests/public-ad-browser-test.cpp` blob `4a385c78212e713faddb8033bd6b8bdcf3da2cde`에서만 수정. 위 NavigationId/완료 gating과 실패 진단을 추가했다. Windows/WebView2 검사는 로컬 미실행이며 원격 결과도 아직 없다. 반영 후 정확한 코드 SHA·run/job ID·실제 결과를 이 절에 갱신한다. 단회 재통과로 #356 내부 원인을 확정하지 않는다.
+- **추가 광고 검사 동기화 코드:** `614688f2d7821f14e6cd2ced898cc8559ed363dc`. 읽은 `tests/public-ad-browser-test.cpp` blob `4a385c78212e713faddb8033bd6b8bdcf3da2cde`에서 NavigationId/완료 gating과 실패 진단만 추가했다. **Windows #357 / run `37214818540` / Windows x64 job `111473101019`: 실행 중, 결론 없음.** 2026-10-05 00:58 KST 확인 시 OBS 개발 라이브러리 빌드는 성공했고 ChatView 빌드·검사 단계가 실행 중이다. 최종 job 로그는 아직 제공되지 않았다. 이 코드의 빌드·routine 성공을 가정하지 않는다. Windows/WebView2는 로컬 미실행이다. 이후 단회 재통과해도 #356 내부 원인을 확정하지 않는다.
 - **미실행 범위:** 전체 qualification·실제 OBS frontend 종료/장면 전환 전체 흐름·물리 투컴 수신 영상·실계정·유료 정산은 미실행이다. 로컬 Linux에서는 Windows/libobs/WebView2 실행 성공을 주장하지 않는다.
 
 ### 다음 사용자 흐름
 
-최신 OBS ref와 지정 문서를 순서대로 읽고 새 Windows 실행 결과부터 확인한다. 광고 검사 동기화 수정이나 다른 실패가 있으면 해당 경로부터 고친다. 이어 **게임 창을 연속 확대/축소해도 새 종횡비와 검은 여백으로 출력 지속**을 검증하며, #353 실패를 received/surface/presented 크기·상태·실제 출력 픽셀과 연결한다. 통과 재실행만으로 D6를 닫지 않고 시간·허용치·재시도 예산을 늘리지 않는다. 대상 상실/재선택은 다시 만들지 않는다.
+최신 OBS ref와 지정 문서를 순서대로 읽고 **#357 / `37214818540` / `111473101019`**의 실제 결과부터 확인한다. 광고 검사 동기화 수정이나 다른 실패가 있으면 해당 경로부터 고친다. 이어 **게임 창을 연속 확대/축소해도 새 종횡비와 검은 여백으로 출력 지속**을 검증하며, #353 실패를 received/surface/presented 크기·상태·실제 출력 픽셀과 연결한다. 통과 재실행만으로 D6를 닫지 않고 시간·허용치·재시도 예산을 늘리지 않는다. 대상 상실/재선택은 다시 만들지 않는다.
 
 OBS만 변경하고 main·새 작업 브랜치·검증 태그·강제 push를 사용하지 않는다. 브라우저 복구·인증·기기등록·표시키·옛 ZIP을 다시 만들지 않는다. 게임 PC OBS와 HP/단가/지급 규칙을 임의로 추가하지 않는다. D1/D2/D4/D6·물리 영상은 해당 증거 전까지 남긴다. 매번 qualification을 돌리거나 별도 보고서만 쓰지 말고 코드·관련 검사·이 문서로 인수인계한다.
 

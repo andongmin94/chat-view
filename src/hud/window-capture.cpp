@@ -158,6 +158,9 @@ struct WindowCapture::State {
     std::atomic<WindowCaptureStatus> status{WindowCaptureStatus::Starting};
     std::atomic<unsigned> width{0}, height{0};
     std::atomic<std::uint64_t> frames{0}, content_at_ms{0};
+    std::atomic<unsigned> received_width{0}, received_height{0}, surface_width{0}, surface_height{0};
+    std::atomic<std::uint64_t> recreates{0}, clipped_frames{0};
+    std::atomic<std::int32_t> failure_hresult{0};
 };
 WindowCapture::~WindowCapture() { close(); }
 void WindowCapture::close() noexcept
@@ -191,7 +194,9 @@ bool WindowCapture::running() const noexcept { return state_ && !state_->finishe
 WindowCaptureSnapshot WindowCapture::snapshot() const noexcept
 {
     if (!state_) return {};
-    return {state_->status.load(), state_->width.load(), state_->height.load(), state_->frames.load(), state_->content_at_ms.load()};
+    return {state_->status.load(), state_->width.load(), state_->height.load(), state_->frames.load(), state_->content_at_ms.load(),
+        state_->received_width.load(), state_->received_height.load(), state_->surface_width.load(), state_->surface_height.load(),
+        state_->recreates.load(), state_->clipped_frames.load(), state_->failure_hresult.load()};
 }
 void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, DWORD process, DWORD thread) noexcept
 {
@@ -239,13 +244,37 @@ void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, 
             if (auto newer = capture.pool.TryGetNextFrame()) { frame.Close(); frame = std::move(newer); }
             const auto content = frame.ContentSize();
             require(video_size(content.Width, content.Height));
-            if (content.Width != size.Width || content.Height != size.Height) {
-                state->content_at_ms.store(0);
-                frame.Close(); presenter->clear(); painted = false;
-                capture.pool.Recreate(presenter->capture_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, content);
-                size = content; state->status.store(WindowCaptureStatus::Waiting); continue;
-            }
             if (state->closed.load() || !source_alive(source, process, thread) || state->cancel.load()) { frame.Close(); continue; }
+            auto access = frame.Surface().as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
+            winrt::com_ptr<ID3D11Texture2D> texture;
+            check_hresult(access->GetInterface(__uuidof(ID3D11Texture2D), texture.put_void()));
+            D3D11_TEXTURE2D_DESC surface{}; texture->GetDesc(&surface);
+            state->received_width.store(static_cast<unsigned>(content.Width));
+            state->received_height.store(static_cast<unsigned>(content.Height));
+            state->surface_width.store(surface.Width); state->surface_height.store(surface.Height);
+            require(surface.Format == DXGI_FORMAT_B8G8R8A8_UNORM && surface.SampleDesc.Count == 1);
+            const auto action = video_frame_action(content.Width, content.Height, surface.Width, surface.Height, size.Width, size.Height);
+            require(action != VideoFrameAction::Invalid);
+            const bool resize = action != VideoFrameAction::Present;
+            if (resize) {
+                // The owner must mask stale geometry even if a GPU call stalls.
+                state->content_at_ms.store(0); state->status.store(WindowCaptureStatus::Waiting);
+            }
+            const auto release_frame = [&] { texture = nullptr; access = nullptr; frame.Close(); };
+            const auto recreate = [&] {
+                // No checked-out frame or surface may outlive Recreate. It also
+                // discards pending frames, so consume a complete one FIRST.
+                capture.pool.Recreate(presenter->capture_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, content);
+                size = content; state->recreates.fetch_add(1);
+            };
+            if (action == VideoFrameAction::ResizeOnly) {
+                // A growing ContentSize can exceed the actual old allocation,
+                // even after the requested pool size has caught up. Never copy
+                // clipped pixels or turn this normal transition into Failed.
+                state->clipped_frames.fetch_add(1);
+                release_frame(); presenter->clear(); painted = false;
+                recreate(); continue;
+            }
             // Snapshot the local clock before QPC to conservatively map content
             // age, never the completion time of a potentially blocking Present.
             const auto observed = GetTickCount64();
@@ -256,13 +285,16 @@ void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, 
             const auto content_at = video_frame_time(observed, age);
             if (!video_frame_fresh(GetTickCount64(), content_at)) {
                 state->content_at_ms.store(0);
-                frame.Close(); presenter->clear(); painted = false; state->status.store(WindowCaptureStatus::Waiting); continue;
+                release_frame(); presenter->clear(); painted = false; state->status.store(WindowCaptureStatus::Waiting);
+                if (resize) recreate();
+                continue;
             }
-            auto access = frame.Surface().as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
-            winrt::com_ptr<ID3D11Texture2D> texture;
-            check_hresult(access->GetInterface(__uuidof(ID3D11Texture2D), texture.put_void()));
+            // Exact ContentSize copy excludes undefined pool padding. Preserve
+            // this fresh complete transition frame (notably on static shrink)
+            // before Recreate discards any remaining pending frames.
             presenter->show(texture.get(), content);
-            texture = nullptr; access = nullptr; frame.Close();
+            release_frame();
+            if (resize) recreate();
             if (state->cancel.load() || state->closed.load() || !source_alive(source, process, thread) ||
                 !video_frame_fresh(GetTickCount64(), content_at)) {
                 state->content_at_ms.store(0);
@@ -273,12 +305,18 @@ void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, 
             state->content_at_ms.store(content_at);
             state->frames.fetch_add(1); state->status.store(WindowCaptureStatus::Capturing);
         }
-    } catch (...) { final_status = WindowCaptureStatus::Failed; }
+    } catch (...) {
+        state->failure_hresult.store(static_cast<std::int32_t>(winrt::to_hresult()));
+        final_status = WindowCaptureStatus::Failed;
+    }
     // Invalidate freshness BEFORE GPU teardown; the owner can independently
     // cover an old frame even when clear/Present or driver cleanup is delayed.
     state->content_at_ms.store(0);
     // Keep the output HWND black on stop/failure; only its owner may release it.
-    try { if (presenter) presenter->clear(); } catch (...) { final_status = WindowCaptureStatus::Failed; }
+    try { if (presenter) presenter->clear(); } catch (...) {
+        if (!state->failure_hresult.load()) state->failure_hresult.store(static_cast<std::int32_t>(winrt::to_hresult()));
+        final_status = WindowCaptureStatus::Failed;
+    }
     presenter.reset();
     if (apartment) winrt::uninit_apartment();
     state->status.store(final_status); state->finished.store(true);

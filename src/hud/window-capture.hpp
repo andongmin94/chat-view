@@ -14,6 +14,12 @@ struct WindowCaptureSnapshot {
     // Conservative content time in the GetTickCount64 domain; zero is invalid.
     // It must not be advanced to GPU-call completion time.
     std::uint64_t content_at_ms = 0;
+    // Last observed geometry/counters, not a transaction or persisted log.
+    // width/height above remain the last successfully presented content size.
+    unsigned received_width = 0, received_height = 0;
+    unsigned surface_width = 0, surface_height = 0;
+    std::uint64_t recreates = 0, clipped_frames = 0;
+    std::int32_t failure_hresult = 0;
 };
 // WGC window -> bounded GPU copy -> opaque, letterboxed output HWND. No screen
 // capture fallback, encoder, audio, network, provider token or OBS dependency.

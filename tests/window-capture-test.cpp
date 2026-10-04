@@ -2,6 +2,7 @@
 // Real WGC/GPU/window pixels, but synthetic source/HUD and one desktop. This
 // tests window isolation, NOT a physical capture card, audio or game support.
 #include "hud/window-capture.hpp"
+#include "hud/video-frame-time.hpp"
 #include <Windows.h>
 #include <shellapi.h>
 #include <iostream>
@@ -13,6 +14,9 @@
 namespace {
 constexpr wchar_t source_class[] = L"ChatView.SyntheticVideoSource";
 constexpr COLORREF video_color = RGB(20, 100, 180), hud_color = RGB(240, 20, 180);
+constexpr COLORREF portrait_color = RGB(180, 90, 20), wide_color = RGB(20, 180, 90);
+constexpr UINT static_resize = WM_APP + 41, animate_source = WM_APP + 42;
+bool source_animated = true; // child fixture only; queued WM_TIMER cannot restart it
 void expect(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
 void pump()
 {
@@ -28,11 +32,24 @@ void await(const std::function<bool()> &condition, const char *message, ULONGLON
 }
 LRESULT CALLBACK source_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
-    if (message == WM_TIMER) { InvalidateRect(window, nullptr, FALSE); return 0; }
+    if (message == static_resize) {
+        source_animated = false; KillTimer(window, 1);
+        if (wparam < 1 || wparam > 4096 || lparam < 1 || lparam > 4096) return 0;
+        if (!SetWindowPos(window, nullptr, 0, 0, static_cast<int>(wparam), static_cast<int>(lparam),
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)) return 0;
+        return RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW) != FALSE;
+    }
+    if (message == animate_source) {
+        source_animated = true;
+        return SetTimer(window, 1, 100, nullptr) != 0;
+    }
+    if (message == WM_TIMER) { if (source_animated) InvalidateRect(window, nullptr, FALSE); return 0; }
     if (message == WM_PAINT) {
         PAINTSTRUCT paint{}; const HDC dc = BeginPaint(window, &paint);
         RECT rect{}; GetClientRect(window, &rect);
-        const HBRUSH base = CreateSolidBrush(video_color); FillRect(dc, &rect, base); DeleteObject(base);
+        const COLORREF color = rect.right == 200 && rect.bottom == 300 ? portrait_color :
+            rect.right == 600 && rect.bottom == 200 ? wide_color : video_color;
+        const HBRUSH base = CreateSolidBrush(color); FillRect(dc, &rect, base); DeleteObject(base);
         rect = {0, 0, (GetTickCount64() / 100) % 2 ? 30 : 50, 10};
         FillRect(dc, &rect, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
         EndPaint(window, &paint); return 0;
@@ -107,6 +124,10 @@ void first_frame_evidence(const chatview::WindowCapture &capture, HWND input, HW
     std::cerr << "Synthetic WGC first-frame evidence: status=" << static_cast<int>(snapshot.status)
         << " running=" << capture.running() << " frames=" << snapshot.frames
         << " size=" << snapshot.width << 'x' << snapshot.height
+        << " received=" << snapshot.received_width << 'x' << snapshot.received_height
+        << " surface=" << snapshot.surface_width << 'x' << snapshot.surface_height
+        << " recreates=" << snapshot.recreates << " clipped=" << snapshot.clipped_frames
+        << " hresult=" << snapshot.failure_hresult
         << " output_pixel=" << sample << " source_pixel=" << source_sample
         << " hud_pixel=" << overlay_sample << " output_on_top=" << (top == output)
         << " source_visible=" << (IsWindowVisible(input) != FALSE)
@@ -115,6 +136,26 @@ void first_frame_evidence(const chatview::WindowCapture &capture, HWND input, HW
         << " source_rect=" << source_bounds.left << ',' << source_bounds.top << ',' << source_bounds.right << ',' << source_bounds.bottom
         << " output_rect=" << output_bounds.left << ',' << output_bounds.top << ',' << output_bounds.right << ',' << output_bounds.bottom
         << " cursor_in_source=" << (PtInRect(&source_bounds, cursor) != FALSE) << '\n';
+}
+void resize_evidence(const chatview::WindowCapture &capture, HWND input, HWND output, const char *phase,
+                     unsigned expected_width, unsigned expected_height)
+{
+    const auto s = capture.snapshot();
+    RECT source_bounds{}, output_bounds{};
+    GetWindowRect(input, &source_bounds); GetWindowRect(output, &output_bounds);
+    // Fixed synthetic points only. Observed geometry is separate from the last
+    // presented geometry, so clipped growth and a presentation failure differ.
+    std::cout << "Synthetic WGC resize: phase=" << phase << " expected=" << expected_width << 'x' << expected_height
+        << " status=" << static_cast<int>(s.status) << " running=" << capture.running() << " frames=" << s.frames
+        << " presented=" << s.width << 'x' << s.height << " received=" << s.received_width << 'x' << s.received_height
+        << " surface=" << s.surface_width << 'x' << s.surface_height
+        << " recreates=" << s.recreates << " clipped=" << s.clipped_frames << " hresult=" << s.failure_hresult
+        << " fresh=" << chatview::video_frame_fresh(GetTickCount64(), s.content_at_ms)
+        << " pixels(center,top,bottom,left,right)=" << pixel(660,150) << ',' << pixel(660,40) << ','
+        << pixel(660,260) << ',' << pixel(510,150) << ',' << pixel(810,150)
+        << " output_on_top=" << (GetAncestor(WindowFromPoint({660,150}), GA_ROOT) == output)
+        << " source_rect=" << source_bounds.left << ',' << source_bounds.top << ',' << source_bounds.right << ',' << source_bounds.bottom
+        << " output_rect=" << output_bounds.left << ',' << output_bounds.top << ',' << output_bounds.right << ',' << output_bounds.bottom << '\n';
 }
 void exercise()
 {
@@ -157,8 +198,51 @@ void exercise()
     ShowWindow(cover.value, SW_HIDE);
     await([&] { return pixel_matches(pixel(660, 150), video_color); }, "unmask reveals fresh game pixels");
     expect(capture.snapshot().width == 400 && capture.snapshot().height == 300, "captured content dimensions");
-    SetWindowPos(input, nullptr, 0, 0, 600, 300, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-    await([&] { return capture.snapshot().width == 600 && pixel_matches(pixel(660, 150), video_color) && pixel_matches(pixel(660, 40), RGB(0,0,0)); }, "resize recreates pool and letterboxes without old padding");
+    const auto verify_resize = [&](unsigned width, unsigned height, std::uint64_t previous_frames,
+                                   const char *phase, const std::function<bool()> &pixels) {
+        try {
+            await([&] {
+                const auto value = capture.snapshot();
+                return capture.running() && value.status == chatview::WindowCaptureStatus::Capturing &&
+                    value.width == width && value.height == height && value.frames > previous_frames &&
+                    chatview::video_frame_fresh(GetTickCount64(), value.content_at_ms) && pixels();
+            }, phase); // original five-second deadline and RGB tolerance 8
+        } catch (...) { resize_evidence(capture, input, output.value, phase, width, height); throw; }
+        resize_evidence(capture, input, output.value, phase, width, height);
+    };
+    auto previous_frames = capture.snapshot().frames;
+    expect(SetWindowPos(input, nullptr, 0, 0, 600, 300, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) != FALSE, "grow source window");
+    verify_resize(600, 300, previous_frames, "resize recreates pool and letterboxes without old padding", [&] {
+        // Preserve the exact #353 center/top assertion; also check the opposite
+        // bar and the newly exposed far-right part of the wider content.
+        return pixel_matches(pixel(660, 150), video_color) && pixel_matches(pixel(660, 40), RGB(0,0,0)) &&
+            pixel_matches(pixel(660, 260), RGB(0,0,0)) && pixel_matches(pixel(800, 150), video_color);
+    });
+    previous_frames = capture.snapshot().frames;
+    expect(SendMessageW(input, static_resize, 200, 300) != 0, "single static source shrink");
+    verify_resize(200, 300, previous_frames, "static shrink displays complete frame and replaces horizontal bars", [&] {
+        return pixel_matches(pixel(660, 150), portrait_color) && pixel_matches(pixel(660, 40), portrait_color) &&
+            pixel_matches(pixel(660, 260), portrait_color) && pixel_matches(pixel(510, 150), RGB(0,0,0)) &&
+            pixel_matches(pixel(810, 150), RGB(0,0,0));
+    });
+    previous_frames = capture.snapshot().frames;
+    expect(SendMessageW(input, animate_source, 0, 0) != 0, "resume source animation without restarting capture");
+    verify_resize(200, 300, previous_frames, "new frames continue after static shrink", [&] {
+        return pixel_matches(pixel(660, 150), portrait_color);
+    });
+    previous_frames = capture.snapshot().frames;
+    expect(SetWindowPos(input, nullptr, 0, 0, 600, 200, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) != FALSE, "mixed growth and shrink");
+    verify_resize(600, 200, previous_frames, "mixed resize replaces old pillarbox with new wide content", [&] {
+        return pixel_matches(pixel(660, 150), wide_color) && pixel_matches(pixel(660, 40), RGB(0,0,0)) &&
+            pixel_matches(pixel(660, 260), RGB(0,0,0)) && pixel_matches(pixel(510, 150), wide_color) &&
+            pixel_matches(pixel(810, 150), wide_color);
+    });
+    previous_frames = capture.snapshot().frames;
+    expect(SetWindowPos(input, nullptr, 0, 0, 600, 300, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) != FALSE, "restore landscape input");
+    verify_resize(600, 300, previous_frames, "height growth continues on the same capture", [&] {
+        return pixel_matches(pixel(660, 150), video_color) && pixel_matches(pixel(660, 40), RGB(0,0,0)) &&
+            pixel_matches(pixel(660, 85), video_color) && pixel_matches(pixel(660, 215), video_color);
+    });
     SetWindowPos(output.value, nullptr, 0, 0, 300, 300, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     await([&] { return pixel_matches(pixel(650, 180), video_color) && pixel_matches(pixel(650, 40), RGB(0,0,0)); }, "output resizing preserves aspect and black bars");
     ShowWindow(input, SW_MINIMIZE);

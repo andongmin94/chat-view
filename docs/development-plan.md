@@ -1,6 +1,6 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-04 (Asia/Seoul). 시작 기준 **`095497e3fa64a3ab4ddb82f9de4b382eb3e90668`**. 이번 변경은 **companion 캡처 대상 상실 → 검정 유지 → 새 대상·시험 패턴 재선택**과 직전 libobs 검사 준비/정리 보완이다. OBS 최신 ref에서만 이어가며 옛 ZIP/패치·다른 작업 브랜치를 사용하지 않는다.
+갱신: 2026-10-04 (Asia/Seoul). 시작 기준 **`095497e3fa64a3ab4ddb82f9de4b382eb3e90668`**. 이번 구현 **`025bb12e26b79dfad335aaaf1798c07a79913cb6`**는 **companion 캡처 대상 상실 → 검정 유지 → 새 대상·시험 패턴 재선택**과 직전 libobs 검사 준비/정리 보완이다. OBS 최신 ref에서만 이어가며 옛 ZIP/패치·다른 작업 브랜치를 사용하지 않는다.
 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md)를 따른다. 이 문서가 유일한 현재 작업 목록이다.
 
 ## 현재 위치
@@ -76,11 +76,14 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 
 ## 이번 검증 상태
 
-현재는 코드·검사를 작성한 상태이며 이번 Windows 실행 결과는 아직 없다. 다음 확인 시 정확한 코드 SHA·run/job과 결과를 이곳에 갱신한다. Windows #353 로그에서 컴파일 성공·37/39·두 실패를 직접 확인했고, OBS 고정 소스의 scene 좌표 정규화/custom size/load/canvas 참조 계약을 읽었다. 로컬 Windows/libobs 실행은 불가능하므로 작성만 한 검사를 통과로 세지 않는다. 기존 CTest·크기 변경 검사·색상/시간 한도는 유지하고 새 60초 제한 actual-panel flow만 추가한다. qualification·물리 영상·실계정·유료 정산을 실행하지 않는다.
+- **원격 코드:** `025bb12e26b79dfad335aaaf1798c07a79913cb6`. 제품 소스 변경은 `video-output-panel.cpp`의 시작 거절·선택 폐기·종료 상태 처리이며, 원격 diff의 16줄 추가/6줄 삭제를 확인했다. 신규 실제 target-loss test, core fixture 보완, CMake와 이 계획을 함께 반영했다. 다른 제품/인증/광고 파일은 바꾸지 않았다.
+- **새 Windows:** **#354 / run `37169828714` / Windows x64 job `111340331975`**. 마지막 확인 시 **실행 중**, ChatView 빌드/새·기존 CTest 성공은 아직 미확인이다. native 범위 판정 및 잠금 platform 의존성 설치는 성공했으나 native 성공으로 대신하지 않는다.
+- **직전 실패:** #353 로그의 컴파일 성공·37/39·두 실패를 직접 확인했다. OBS 고정 소스에서 좌표 정규화/custom size/load/canvas 참조 계약을 확인해 검사 준비와 정리를 보완했다. resize 실패는 원인 미확정으로 보존한다.
+- **한계:** 로컬 Windows/libobs 실행 환경이 없어 새 native 검사를 실행하지 못했다. 작성만 한 검사는 성공으로 세지 않는다. 기존 CTest·resize 조건·색상/시간 한도는 유지하고 새 60초 제한 actual-panel flow를 추가했다. qualification·물리 영상·실계정·유료 정산은 미실행이다.
 
 ### 새 세션 재개
 
-OBS 최신 ref에서 `AGENTS.md` → `PRODUCT.md` → `docs/development-workflow.md` → `docs/architecture.md` → 이 문서를 읽고 해당 코드의 Windows 결과를 확인한다. 실패하면 해당 코드부터 수정한다. **다음 사용자 흐름은 실행 중 게임 창 크기 변경 → 새 크기/비율/검은 여백 출력 유지**다. #353 resize 실패를 실제 frame 크기/상태·출력 픽셀과 연결해 재현·수정하며 기준을 낮추지 않는다. 이번 대상 상실/재선택을 처음부터 다시 만들지 않는다.
+OBS 최신 ref에서 `AGENTS.md` → `PRODUCT.md` → `docs/development-workflow.md` → `docs/architecture.md` → 이 문서를 읽는다. 먼저 **`025bb12`의 Windows #354 / `37169828714`** 결과를 확인한다. 실패하면 해당 코드부터 수정하고, 새 source-loss 및 core fixture가 실제 통과했는지 구분한다. **다음 사용자 흐름은 실행 중 게임 창 크기 변경 → 새 크기/비율/검은 여백 출력 유지**다. #353 resize 실패를 실제 frame 크기/상태·출력 픽셀과 연결해 재현·수정하며 기준을 낮추지 않는다. 이번 대상 상실/재선택을 처음부터 다시 만들지 않는다.
 
 브라우저 복구·인증·기기등록·표시키·옛 ZIP을 다시 만들지 않는다. OBS만 변경하고 main/다른 브랜치·배포 tag를 만들거나 건드리지 않는다. 게임 PC OBS와 HP/단가/지급 규칙을 임의로 추가하지 않는다. D1/D2/D4/D6·물리 영상은 해당 증거 전까지 남긴다. 매번 qualification을 돌리거나 별도 보고서만 쓰지 말고 코드·관련 검사·이 문서로 인수인계한다.
 

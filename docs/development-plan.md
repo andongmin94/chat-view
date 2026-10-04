@@ -1,6 +1,6 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-05 (Asia/Seoul). 이번 시작 기준 **`1338b7f194a40a44be3e8fa0784f60df86d0e79b`**. 최신 OBS ref에서 지정 문서를 순서대로 읽고 **`614688f2d7821f14e6cd2ced898cc8559ed363dc`의 Windows #357이 빌드 성공·routine 40/40**임을 로그에서 확인했다. 다음 작업은 실행 중 연속 크기 변경이다. 이 문서가 유일한 현재 작업 목록이며, 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md)를 따른다.
+갱신: 2026-10-05 (Asia/Seoul). 이번 시작 기준 **`1338b7f194a40a44be3e8fa0784f60df86d0e79b`**. 최신 OBS ref에서 지정 문서를 순서대로 읽고 **`614688f2d7821f14e6cd2ced898cc8559ed363dc`의 Windows #357이 빌드 성공·routine 40/40**임을 로그에서 확인했다. 이번 연속 resize 검사 코드 **`7686e7f3599a7e482154403ac85d32aa55f687a7`**의 **Windows #359 / run `37216401948` / job `111477714374`는 실행 중**이다. 이 문서가 유일한 현재 작업 목록이며, 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md)를 따른다.
 
 ## 현재 위치
 
@@ -85,14 +85,14 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 
 ## 이번 검증 상태
 
-- **새 코드 범위:** `1338b7f194a40a44be3e8fa0784f60df86d0e79b`의 test blob `eee350f9a9c74e77c2bda210568c0cfb5bf0e786`를 읽고 SHA 대조 후 연속 resize 회귀 검사만 추가했다. 제품 worker/패널·인증·광고·CMake 한도는 변경하지 않았다.
-- **로컬 실행:** diff 공백 검사, 독립 산술로 기대 fit 6종과 12개 색의 오차 구간 비중첩을 확인했다. Windows/WGC/libobs/WebView2는 로컬 미실행이다. 이전 resize 정책의 GCC/Clang 445 assertion 결과는 이전 코드의 근거이며 새 native 성공으로 대신하지 않는다.
-- **새 Windows:** 아직 미실행. 원격 반영 뒤 정확한 코드 SHA·run/job ID와 실제 결과를 이 절에 기록한다. 실패하면 시간/색상/재시도 예산을 늘리지 않고 프레임 상태·픽셀과 연결해 해당 경로를 수정한다.
+- **새 코드:** `7686e7f3599a7e482154403ac85d32aa55f687a7`. 시작 ref의 test blob `eee350f9a9c74e77c2bda210568c0cfb5bf0e786`를 읽고 SHA 대조 후 연속 resize 회귀 검사만 추가했다. 원격 변경은 `tests/window-capture-test.cpp`와 이 계획뿐이다. 새 test blob `81f55321bd921199764e77d97858cb9d03999e87`과 로컬 검토 파일도 일치한다. 제품 worker/패널·인증·광고·CMake 한도는 변경하지 않았다.
+- **로컬 실행:** 현재 SHA에서 읽어 blob을 대조한 `video-layout.hpp`/`video-layout-test.cpp`를 GCC C++20 `-Wall -Wextra -Werror -pedantic`, Clang C++20 ASan+UBSan으로 각각 실행하여 **445 assertion 통과**. 새 fixture 12단계의 기대 fit을 실제 제품 header와 정적 검사했고, 108개 내부 표본의 범위/표식 회피·검은 여백 표본의 위치·이전/중간 색과 오차 구간 비중첩을 검사했다. 기존 실패 조건·중지/재시작/종료·시간/색상 기준 보존과 diff 공백 검사도 확인했다. 이는 정책/fixture 검사이며 Windows/WGC/libobs/WebView2 로컬 실행은 아니다.
+- **새 Windows:** **#359 / run `37216401948` / Windows x64 job `111477714374` / 코드 `7686e7f3599a7e482154403ac85d32aa55f687a7`: 실행 중, 결론 없음.** 마지막 확인은 Build and test ChatView 단계다. OBS 개발 라이브러리 빌드 성공을 ChatView 빌드/새 WGC 검사 성공으로 대신하지 않는다. 아직 최종 job 로그가 제공되지 않았다. 실패하면 시간/색상/재시도 예산을 늘리지 않고 프레임 상태·픽셀과 연결해 해당 경로를 수정한다.
 - **미실행 범위:** 전체 qualification·실제 OBS frontend 전체 흐름·물리 투컴 수신 영상·실계정·유료 정산. 합성 자식 창의 실제 WGC 픽셀 검사는 물리 게임/배선의 지원 인증이 아니다.
 
 ### 다음 사용자 흐름
 
-새 연속 resize 실행 결과를 먼저 확인하고 **빠른 확대/축소 → 최종 크기·종횡비·검은 여백의 새 콘텐츠 → 같은 실행에서 영상 계속**을 마무리한다. 실패가 있으면 실제 received/surface/presented 크기·상태·픽셀에 근거해 고친다. 대상 상실/재선택을 다시 만들지 않는다.
+최신 OBS ref에서 지정 문서를 순서대로 읽고 **#359 / `37216401948` / `111477714374`**의 실제 결과부터 확인한다. **빠른 확대/축소 → 최종 크기·종횡비·검은 여백의 새 콘텐츠 → 같은 실행에서 영상 계속**을 마무리한다. 실패가 있으면 실제 received/surface/presented 크기·상태·픽셀에 근거해 고친다. 대상 상실/재선택을 다시 만들지 않는다.
 
 OBS만 변경하고 main·새 작업 브랜치·검증 태그·강제 push를 사용하지 않는다. 브라우저 복구·인증·기기등록·표시키·옛 ZIP을 다시 만들지 않는다. 게임 PC OBS와 HP/단가/지급 규칙을 임의로 추가하지 않는다. D1/D2/D4/D6는 해당 근거 전까지 남긴다. 별도 보고서나 매번 전체 qualification 대신 코드·관련 검사·이 문서를 갱신한다.
 

@@ -340,12 +340,14 @@ void VideoOutputPanel::invalidate_choices() noexcept
 }
 void VideoOutputPanel::interrupt(const wchar_t *message) noexcept
 {
-    releasing_ = false;
     stop(message);
     invalidate_choices();
 }
 void VideoOutputPanel::stop(const wchar_t *message) noexcept
 {
+    // A later request to keep black supersedes an accepted, pending release.
+    // Retire it before masking can synchronously dispatch owner messages.
+    releasing_ = false;
     requested_ = false;
     const bool covered = mask();
     capture_.stop();
@@ -365,7 +367,8 @@ void VideoOutputPanel::release() noexcept
         L"ChatView · 출력 창 해제 확인", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
     confirming_ = false;
     releasing_ = answer == IDYES && !closing_ && target == output_ && epoch == selection_epoch_;
-    if (!releasing_) notice(L"출력 창 해제를 취소했습니다. 검은 화면을 유지하며 영상은 자동 재시작하지 않습니다.");
+    if (releasing_) notice(L"출력 창 해제 예정 · 캡처 정리 후 닫습니다.\n닫히기 전에 '중지 · 검은 화면'을 누르면 해제를 취소합니다.");
+    else notice(L"출력 창 해제를 취소했습니다. 검은 화면을 유지하며 영상은 자동 재시작하지 않습니다.");
 }
 void VideoOutputPanel::tick() noexcept
 {
@@ -455,7 +458,11 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
             case kRefresh: self->refresh(); return 0;
             case kIdentify: self->identify(); return 0;
             case kStart: self->start(); return 0;
-            case kStop: self->stop(L"출력 중지 · 검은 화면 유지 · 새 시험 패턴을 확인한 뒤 같은 출력창으로 재개하세요.\n로컬 채팅은 계속 사용할 수 있습니다."); return 0;
+            case kStop:
+                self->stop(self->releasing_
+                    ? L"출력 창 해제를 취소했습니다. 검은 화면을 유지합니다.\n새 시험 패턴을 확인한 뒤 같은 출력창으로 재개하세요. 로컬 채팅은 유지합니다."
+                    : L"출력 중지 · 검은 화면 유지 · 새 시험 패턴을 확인한 뒤 같은 출력창으로 재개하세요.\n로컬 채팅은 계속 사용할 수 있습니다.");
+                return 0;
             case kRelease: self->release(); return 0;
             case IDCANCEL: SendMessageW(window, WM_CLOSE, 0, 0); return 0;
             }

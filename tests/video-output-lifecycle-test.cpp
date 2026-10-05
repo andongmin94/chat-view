@@ -338,6 +338,55 @@ void resize_stop_restart(chatview::VideoOutputPanel &panel, HWND controls, HWND 
     visible(400, 300, resumed, RGB(20,100,180), {0,0,320,240});
     std::cout << "Panel resize-stop-restart: real fresh pixels, nine black samples, single-use pattern and same HWNDs passed\n";
 }
+void cancel_release_restart(chatview::VideoOutputPanel &panel, HWND controls, HWND game, HWND hud)
+{
+    const HWND output = Access::output(panel), cover = Access::cover(panel);
+    auto late = Access::capture(panel).snapshot();
+    expect(Access::capture(panel).running() && Access::requested(panel), "capture active before release cancellation flow");
+    release_answer(panel, IDYES); // Actual default-No dialog; no injected release flag.
+    expect(Access::releasing(panel) && !Access::requested(panel) && IsWindowVisible(cover),
+        "accepted release is pending under black until the owner tick");
+    wchar_t notice[512]{}; GetDlgItemTextW(controls, 207, notice, 512);
+    expect(std::wstring_view(notice).find(L"중지 · 검은 화면") != std::wstring_view::npos,
+        "pending release explains how to keep black before destruction");
+    // Deliver a later user command before the destruction tick. This ordering
+    // is deterministic; it does not claim to stall a driver or outrun a release
+    // that has already destroyed its windows.
+    const auto stop_at = GetTickCount64();
+    SendMessageW(controls, WM_COMMAND, 205, 0);
+    expect(GetTickCount64() - stop_at < 200, "cancelling release does not join GPU teardown");
+    expect(!Access::releasing(panel) && !Access::requested(panel) && !Access::check(panel).active(),
+        "later Stop cancels release as well as capture and pattern");
+    stopped(panel, hud); // Includes the tick after worker completion.
+    expect(Access::output(panel) == output && Access::cover(panel) == cover && Access::intact(panel) &&
+        Access::source(panel) == game && IsWindowVisible(cover), "cancelled release retains both HWNDs and live source");
+    await([&] { return output_pixels(RGB(0,0,0), {0,0,320,240}); }, "cancelled release retains nine black output samples", 2000);
+    GetDlgItemTextW(controls, 207, notice, 512);
+    expect(std::wstring_view(notice).find(L"출력 창 해제를 취소했습니다") != std::wstring_view::npos,
+        "Stop reports cancellation rather than a completed release");
+    late.content_at_ms = GetTickCount64(); Access::apply_snapshot(panel, late);
+    SendMessageW(cover, WM_TIMER, 0x435650, 0); panel.tick();
+    expect(!Access::releasing(panel) && !Access::requested(panel) && !Access::capture(panel).running() &&
+        IsWindowVisible(cover) && output_pixels(RGB(0,0,0), {0,0,320,240}), "late status and queued timer cannot restore a cancelled release or capture");
+    expect(!Access::accept_for_fixture(panel) && !IsWindowEnabled(GetDlgItem(controls, 204)),
+        "cancelled release does not grant reusable capture confirmation");
+    Access::pattern(panel, game);
+    await(cyan_bar, "new pattern reuses the retained output after release cancellation");
+    expect(!Access::capture(panel).running() && Access::output(panel) == output && Access::cover(panel) == cover,
+        "new check neither captures nor replaces the retained HWNDs");
+    expect(Access::accept_for_fixture(panel) && IsWindowVisible(cover), "new explicit confirmation restarts under black");
+    await([&] {
+        const auto value = Access::capture(panel).snapshot();
+        Access::apply_snapshot(panel, value);
+        return Access::requested(panel) && value.frames >= 2 && value.width == 400 && value.height == 300 &&
+            value.status == chatview::WindowCaptureStatus::Capturing &&
+            chatview::video_frame_fresh(GetTickCount64(), value.content_at_ms) &&
+            !IsWindowVisible(cover) && output_pixels(RGB(20,100,180), {0,0,320,240});
+    }, "fresh real WGC pixels resume after cancelling release", 10000);
+    expect(!Access::releasing(panel) && Access::intact(panel) && Access::output(panel) == output &&
+        Access::cover(panel) == cover && IsWindowVisible(hud), "explicit restart preserves output binding and visible HUD");
+    std::cout << "Pending release cancelled by later Stop: real dialog, black pixels, same HWNDs and new-pattern restart passed\n";
+}
 void exercise(const wchar_t *source_executable)
 {
     pattern_pixels();
@@ -428,6 +477,7 @@ void exercise(const wchar_t *source_executable)
     SendMessageW(controls, WM_COMMAND, 208, 0);
     expect(Access::output(panel) == output && !Access::requested(panel) && black(), "retarget cannot implicitly release existing output");
     start_pixels(panel, game);
+    cancel_release_restart(panel, controls, game, hud_window);
     release_answer(panel, IDNO);
     stopped(panel, hud_window);
     expect(IsWindow(output) && !Access::releasing(panel), "declined release retains black output");

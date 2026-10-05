@@ -1,6 +1,6 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-05 (Asia/Seoul). 이번 시작 기준 **`31bdc72685c47225ad1d82ae7b56ead0c12e0601`**. 지정 문서를 순서대로 읽고 **Windows #363 / run `37242100880` / job `111552735174`: 빌드 성공·routine 40/40, 127.02초, 완료**를 최종 상태와 로그에서 확인했다. 검사 코드는 `04c1558bad2474e7ef444f5c1891b2dbbe7f6ec3`다. 이전 크기 변경 중 중지 → 새 패턴 → 같은 출력창 재개 흐름은 이 좁은 native fixture에서 통과했다. 이번에는 이어지는 **출력 해제 승인 → 파괴 전 사용자 중지 → 검정 유지 → 새 패턴으로 같은 출력창 재개**를 수정한다. 새 코드의 Windows 검증은 원격 반영 전 미실행이다.
+갱신: 2026-10-05 (Asia/Seoul). 이번 시작 기준 **`31bdc72685c47225ad1d82ae7b56ead0c12e0601`**. 지정 문서를 순서대로 읽고 **Windows #363 / run `37242100880` / job `111552735174`: 빌드 성공·routine 40/40, 127.02초, 완료**를 최종 상태와 로그에서 확인했다. 검사 코드는 `04c1558bad2474e7ef444f5c1891b2dbbe7f6ec3`다. 이전 크기 변경 중 중지 → 새 패턴 → 같은 출력창 재개 흐름은 이 좁은 native fixture에서 통과했다. 이번 **출력 해제 승인 → 파괴 전 사용자 중지 → 검정 유지 → 새 패턴으로 같은 출력창 재개** 수정 코드는 **`af41b5c28e3ba96b66e8455fa2a12b6b777e35bb`**다. **Windows #364 / run `37275017123` / job `111650053171`은 실행 중**이며 최종 결과는 없다. OBS 개발 라이브러리 성공, ChatView 빌드·검사 단계다.
 이 문서가 유일한 현재 작업 목록이다. 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다.
 
 ## 현재 위치
@@ -35,7 +35,7 @@
 
 - [x] **G3-01 — 동일 HUD의 OBS 비종속 실행.** companion·로그인·중복 방지·종료 유지.
 - [ ] **G3-02 — 동일 계정의 채팅·방송 세션.** 역할 동의·공유·암호화 복원·로그아웃·최근 출력 보고가 있다. 장면/소스·다른 출력·물리 두 PC는 남았다. 현재 승인 복귀는 기존 역할만 사용한다.
-- [ ] **G3-03 — HUD 분리 영상.** 실험·물리 검증 필요. WGC→D3D11/D2D, 별도 SDR 출력, 패턴·육안 확인·같은 HWND 전환·검정 중지·명시적 해제. 잠금/전원/화면/장치·대상 상실은 선택 무효화, 자동 재시작 없음. 콘텐츠2초는 `4f1f048`/#341, 연속 resize/pool 재사용은 `4cbcc5e`/#361. 패널 stop/restart는 `04c1558`/#363에서 통과. 후속 해제 취소/재개는 새 Windows 검증 전이다. 영상만·최대4096, 오디오/인코더/네트워크 영상 없음. D6/하드웨어 남음.
+- [ ] **G3-03 — HUD 분리 영상.** 실험·물리 검증 필요. WGC→D3D11/D2D, 별도 SDR 출력, 패턴·육안 확인·같은 HWND 전환·검정 중지·명시적 해제. 잠금/전원/화면/장치·대상 상실은 선택 무효화, 자동 재시작 없음. 콘텐츠2초는 `4f1f048`/#341, 연속 resize/pool 재사용은 `4cbcc5e`/#361. 패널 stop/restart는 `04c1558`/#363 통과. 후속 해제 취소/재개 `af41b5c`/#364는 실행 중이다. 영상만·최대4096, 오디오/인코더/네트워크 영상 없음. D6/하드웨어 남음.
 - [ ] **G3-04 — 설치·실사용·수신 영상.** 실제 배선/캡처카드/게임/다중 GPU/자원/지연·잠금/hotplug와 HUD 없는 녹화 필요.
 
 ## G4. 치지직부터 자체 플랫폼
@@ -87,19 +87,20 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 | #361 / `4cbcc5e5dde15d56f31e5e5b8785c9d245d29cd9` | `37217766639` / `111481699383` | 빌드 성공, routine40/40,136.28초, 완료. core0.08초·WGC6.73초·output-lifecycle3.18초·target-loss1.38초·public-ad-browser15.46초 통과. |
 | #362 / `f21e00bc113ef1e92be6b3b5e84624fe3f156c9f` | `37220157340` / `111488721555` | 빌드 실패, CTest 전체 미실행. lifecycle 243행 const auto near의 Windows 매크로 충돌/C2513. 네 지정 캡처 검사 모두 미실행. |
 | #363 / `04c1558bad2474e7ef444f5c1891b2dbbe7f6ec3` | `37242100880` / `111552735174` | **빌드 성공·routine 40/40, 127.02초, completed/success.** core0.06초·WGC6.73초·output-lifecycle4.76초·target-loss5.30초·public-ad-browser15.04초 통과. |
+| #364 / `af41b5c28e3ba96b66e8455fa2a12b6b777e35bb` | `37275017123` / `111650053171` | **실행 중, 결론 없음.** OBS 개발 라이브러리 성공, ChatView 빌드·검사 단계. 네 지정 캡처 검사 각각의 결과는 미확인이다. |
 
 #357 이후 광고 검사 재통과로 #356 내부 원인을 확정하지 않는다. #359의 더 강한 burst 실패/수정 후 통과는 #353의 동일 원인 해결로 소급하지 않는다. 위 routine은 development이고 qualification/package/전체 OBS 단계는 미실행이다. #363은 #362 매크로 수정과 이전 패널 흐름의 근거이지 이번 후속 수정의 실행 근거가 아니다.
 
 ## 이번 검증 상태
 
-- **수정 범위:** 최신 OBS에서 읽은 panel/lifecycle 원본을 로컬에서 Git blob SHA 일치 확인한 뒤 수정했다. 코드 blob은 panel `ab7adf3ea6dbbac8c2694ad8eb3e07e7fec39192`, lifecycle `b91684e1ee4ac609270958e770b01e7e6b1dc2d2`. 이 둘과 현재 계획·기존 영상 계약만 변경한다.
-- **로컬 실행:** 실제 `release`/`stop`/`tick` 함수 본문을 추출해 Win32·캡처·mask만 stub으로 바꾼 검사에서 기존 코드가 GCC와 Clang 모두 해제 취소 assertion에 실패했다. 수정본은 C++20 `-Wall -Wextra -Werror -pedantic`, Clang ASan+UBSan으로 각각 **85 assertion 통과**. worker 실행/완료·mask 성공/실패·동기 mask 중 tick 재진입·대상 유지·정상 해제/거절/context 변경을 구분했다. 새 native 검사 함수의 C++ 문법도 두 컴파일러에서 선언 stub 및 Windows near 매크로와 함께 확인했다. 기존 native 검사 줄/시간/픽셀 조건 보존과 diff 공백 검사 통과. 실제 Windows 실행이나 driver hang 재현이 아니다.
-- **새 Windows:** 아직 미실행. 원격 코드 SHA·run/job ID·실제 결과를 반영 후 갱신한다. 이전 #363 성공으로 새 검사를 대신하지 않는다.
+- **원격 코드:** `af41b5c28e3ba96b66e8455fa2a12b6b777e35bb`。최신 OBS에서 읽은 panel/lifecycle 원본을 로컬에서 Git blob SHA 일치 확인한 뒤 수정했다. 원격 blob은 panel `ab7adf3ea6dbbac8c2694ad8eb3e07e7fec39192`, lifecycle `b91684e1ee4ac609270958e770b01e7e6b1dc2d2`로 검사한 로컬 파일과 일치한다. 원격 비교는 이 둘과 현재 계획·기존 영상 계약만 변경됨을 확인했다. 후속 결과 기록은 이 계획만 변경한다.
+- **로컬 실행:** 실제 `release`/`stop`/`tick` 함수 본문을 추출해 Win32·캡처·mask만 stub으로 바꾼 검사에서 기존 코드가 GCC와 Clang 모두 해제 취소 assertion에 실패했다. 수정본은 C++20 `-Wall -Wextra -Werror -pedantic`, Clang ASan+UBSan으로 각각 **85 assertion 통과**. worker 실행/완료·mask 성공/실패·동기 mask 중 tick 재진입·대상 유지·정상 해제/거절/context 변경을 구분했다. 취소를 mask 뒤로 옮긴 변형도 두 컴파일러에서 기존 순서 assertion에 실패했다. 새 native 검사 함수의 C++ 문법은 선언 stub 및 Windows near 매크로와 함께 두 컴파일러에서 확인했다. 기존 native 검사 줄/시간/픽셀 조건 보존과 diff 공백 검사 통과. 실제 Windows 실행이나 driver hang 재현이 아니다.
+- **새 Windows:** **#364 / `37275017123` / `111650053171`: in_progress, conclusion=null**. OBS 개발 라이브러리 빌드는 성공, ChatView 빌드·검사는 실행 중이다. `chat-view-obs-capture-scene`, `chat-view-video-target-loss`, `chat-view-video-output-lifecycle`, `chat-view-window-capture` 각각의 결과는 아직 미확인이다. 이전 #363 성공으로 새 검사를 대신하지 않는다. 문서 갱신은 이 실행을 취소하지 않는다.
 - **미실행 범위:** 로컬 Windows/WGC/libobs/WebView2, 전체 qualification·실제 OBS frontend 전체 흐름·물리 투컴 수신 영상·실계정·유료 정산.
 
 ### 다음 사용자 흐름
 
-새 코드의 Windows 결과를 먼저 확인하고 **해제 승인 → 파괴 전 중지로 검정 유지 → 새 패턴 확인 → 같은 출력창 영상 재개**를 마무리한다. 실패가 있으면 해당 경로부터 고친다. 기존 대상 상실/재선택·엔진 resize를 다시 만들거나 시간/색상/재시도 한도를 늘리지 않는다.
+최신 OBS와 지정 문서를 순서대로 읽고 **#364 / `37275017123` / `111650053171`** 결과부터 확인한다. **해제 승인 → 파괴 전 중지로 검정 유지 → 새 패턴 확인 → 같은 출력창 영상 재개**를 마무리한다. 실패가 있으면 해당 경로부터 고친다. 기존 대상 상실/재선택·엔진 resize를 다시 만들거나 시간/색상/재시도 한도를 늘리지 않는다.
 
 OBS만 변경한다. main·새 작업 브랜치·검증 태그·강제 push, 새 브라우저 복구/인증/기기등록/표시키/옛 ZIP, 게임 PC OBS, 임의 HP/단가/지급 규칙을 추가하지 않는다. D1/D2/D4/D6는 해당 근거 전까지 남긴다. 별도 보고서나 매번 전체 qualification 대신 코드·관련 검사·이 문서를 갱신한다.
 

@@ -284,7 +284,19 @@ void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, 
                 // clipped pixels or turn this normal transition into Failed.
                 state->clipped_frames.fetch_add(1);
                 release_frame(); presenter->clear(); painted = false;
-                if (resize) recreate();
+                if (resize) {
+                    // A single static redraw can deliver ContentSize larger than
+                    // the old surface exactly once. Recreate discards that frame;
+                    // rearm the SAME selected item so it yields a new complete
+                    // initial frame without asking the source to repaint.
+                    capture.session.Close();
+                    capture.session = nullptr;
+                    recreate();
+                    if (!state->cancel.load() && !state->closed.load() && source_alive(source, process, thread)) {
+                        capture.session = capture.pool.CreateCaptureSession(capture.item);
+                        capture.session.StartCapture();
+                    }
+                }
                 continue;
             }
             // Snapshot the local clock before QPC to conservatively map content

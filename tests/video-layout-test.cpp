@@ -39,6 +39,12 @@ int main()
         // A matching pool request does NOT prove a late surface is large enough.
         expect(video_frame_action(600, 300, 400, 300, 600, 300) == Action::WaitForSurface);
         expect(video_frame_action(600, 300, 600, 300, 400, 300) == Action::PresentAndResize);
+        // #365: a one-paint 601x201 growth can arrive on a 600x500
+        // surface. The old clipped frame cannot be copied; a newly
+        // started session must supply a complete surface after growth.
+        expect(video_frame_action(601, 201, 600, 500, 600, 500) == Action::ResizeOnly);
+        expect(video_frame_action(601, 201, 600, 500, 601, 500) == Action::WaitForSurface);
+        expect(video_frame_action(601, 201, 601, 500, 601, 500) == Action::Present);
         // Shrink and a return to a seen size copy only ContentSize; they must
         // not flush pending final-generation frames by recreating the pool.
         expect(video_frame_action(200, 300, 600, 300, 600, 300) == Action::Present);

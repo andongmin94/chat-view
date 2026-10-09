@@ -1,7 +1,7 @@
 # ChatView 작업 목표 체크리스트
 
 갱신: 2026-10-09 (Asia/Seoul). 시작 기준 **`fb3c908386c4a123bba31cc73aa7986cff233283`**. 최신 OBS와 AGENTS → PRODUCT → development-workflow → architecture → 이 문서를 순서대로 읽었다. **#364 / run `37275017123` / job `111650053171`은 현재 jobs 조회 404이며, 코드 `af41b5c28e3ba96b66e8455fa2a12b6b777e35bb`의 실행 목록도 0건이다.** 삭제·권한·보관 등 원인은 단정하지 않는다. 이전 마지막 확인은 실행 중이었고 최종 성공/실패는 여전히 미확정이다.
-이번 코드 **`61f81158cbcd965822e80aa4771be8f25553af85`**는 OBS에 반영했다. **Windows #365 / run `37935365412` / job `113836005952`는 실행 중**이다. 마지막 확인은 OBS 개발 라이브러리 빌드 중이며 ChatView 빌드와 네 지정 CTest는 아직 미실행이다.
+이번 코드 **`61f81158cbcd965822e80aa4771be8f25553af85`**는 OBS에 반영했다. **Windows #365 / run `37935365412` / job `113836005952`: 빌드 성공, routine 39/40, 138.56초, failure.** 패널 lifecycle·대상 상실·OBS core는 통과했고 WGC 단일 정지 redraw의 sequence 6 (601×201)이 실패했다. 현재 작업은 해당 표면 재할당 후 정지 소스의 새 첫 프레임 확보를 보강한다.
 이 문서가 유일한 현재 작업 목록이다. 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다.
 
 ## 현재 위치
@@ -38,7 +38,7 @@
 
 - [x] **G3-01 — 동일 HUD의 OBS 비종속 실행.** companion·로그인·중복 방지·종료 유지.
 - [ ] **G3-02 — 동일 계정의 채팅·방송 세션.** 역할 동의·공유·암호화 복원·로그아웃·최근 출력 보고가 있다. 장면/소스·다른 출력·물리 두 PC는 남았다. 현재 승인 복귀는 기존 역할만 사용한다.
-- [ ] **G3-03 — HUD 분리 영상.** WGC→D3D11/D2D, 별도 SDR 출력, 패턴·육안 확인·같은 HWND 전환·검정 중지·명시적 해제. 잠금/전원/화면/장치·대상 상실은 선택 무효화, 자동 재시작 없음. 콘텐츠2초는 `4f1f048`/#341, 연속 resize는 `4cbcc5e`/#361, 패널 stop/restart는 `04c1558`/#363 통과 기록. `af41b5c`/#364 최종 결과는 조회 불가/미확정. 이번 동기 Stop 수정의 native 검사는 아래 상태를 따른다. 영상만·최대4096, 오디오/인코더/네트워크 영상 없음. D6/하드웨어 남음.
+- [ ] **G3-03 — HUD 분리 영상.** WGC→D3D11/D2D, 별도 SDR 출력, 패턴·육안 확인·같은 HWND 전환·검정 중지·명시적 해제. 잠금/전원/화면/장치·대상 상실은 선택 무효화, 자동 재시작 없음. 콘텐츠2초는 `4f1f048`/#341, 연속 resize는 `4cbcc5e`/#361, 패널 stop/restart는 `04c1558`/#363 통과 기록. `af41b5c`/#364 최종 결과는 조회 불가/미확정. 동기 Stop 수정 `61f81158`/#365는 lifecycle에서 통과했으나 WGC 정지 소스 resize가 실패. 크기 증가 시 같은 CaptureItem의 세션을 다시 시작해 단발 입력을 확보하는 후속 수정 검증은 대기 중. 영상만·최대4096, 오디오/인코더/네트워크 영상 없음. D6/하드웨어 남음.
 - [ ] **G3-04 — 설치·실사용·수신 영상.** 실제 배선/캡처카드/게임/다중 GPU/자원/지연·잠금/hotplug와 HUD 없는 녹화 필요.
 
 ## G4. 치지직부터 자체 플랫폼
@@ -73,7 +73,7 @@
 | D1 | `82f36a6`/#294 반복3 첫 gateway frame 표시 미확인. | G4/R-01. 원인 미확정, routine만으로 종료하지 않음. |
 | D2 | #292 후반 핸들 +104>64; #294 초기 +284>256, 후반 +8. | R-02. 기존 자원 한도 유지. |
 | D4 | CI 캡처 module의 동기 UI-task/join 및 borrowed item은 `510f8e1`에서 보완. #353 좌표는 #354, core queue 정리는 `66fd5a6`/#355에서 통과. #356/#357/#359/#361/#363도 core 통과 기록. | core fixture만 확인. 실제 OBS frontend 종료/장면 전환·qualification 남음. Control Center에 Q4/Q5 시험 UI는 없음. |
-| D6 | `9e9863a`/#339 WGC 첫 픽셀10초 실패, #340 미재현. #353 단발 resize/레터박스 실패. #359 별도 burst단계9 재현 후 `4cbcc5e`/#361 동일 입력·강화 assertion 통과. | 연속 burst만 좁게 확인. #353 인과와 첫 표시 문제는 미해결. #363 통과도 종료 근거가 아님. |
+| D6 | `9e9863a`/#339 WGC 첫 픽셀10초 실패, #340 미재현. #353 단발 resize/레터박스 실패. #359 별도 burst단계9 재현 후 `4cbcc5e`/#361 동일 입력·강화 assertion 통과. | 연속 burst만 좁게 확인. #353 인과와 첫 표시 문제는 미해결. #363의 통과와 #365 lifecycle 통과도 종료 근거가 아님. #365 sequence 6에서 received=601×201, surface=600×500, pool=601×500, Waiting·검정 정지 재현. |
 
 D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-investigation.md](resource-growth-investigation.md).
 
@@ -93,21 +93,21 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 | #362 / `f21e00bc113ef1e92be6b3b5e84624fe3f156c9f` | `37220157340` / `111488721555` | 빌드 실패, CTest 전체 미실행. lifecycle243행 const auto near의 Windows 매크로 충돌/C2513. 네 지정 캡처 검사 모두 미실행. |
 | #363 / `04c1558bad2474e7ef444f5c1891b2dbbe7f6ec3` | `37242100880` / `111552735174` | 빌드 성공·40/40,127.02초, completed/success. core0.06초·WGC6.73초·output-lifecycle4.76초·target-loss5.30초·public-ad-browser15.04초 통과. |
 | #364 / `af41b5c28e3ba96b66e8455fa2a12b6b777e35bb` | `37275017123` / `111650053171` | **최종 결과 미확정.** 이전 마지막 기록은 OBS 개발 라이브러리 성공·ChatView 빌드/검사 실행 중. 2026-10-09에는 jobs404, 해당 SHA 실행목록0건. 네 지정 검사의 결과도 확인 불가. |
-| #365 / `61f81158cbcd965822e80aa4771be8f25553af85` | `37935365412` / `113836005952` | **실행 중, 최종 결과 없음.** 마지막 확인은 OBS 개발 라이브러리 빌드 중, ChatView 빌드/CTest pending. 네 지정 검사는 아직 미실행. |
+| #365 / `61f81158cbcd965822e80aa4771be8f25553af85` | `37935365412` / `113836005952` | **빌드 성공·39/40, 138.56초, failure.** core0.09초·output-lifecycle9.58초·target-loss1.46초·public-ad-browser15.23초 통과. WGC8.94초 실패: static sequence6, content 601×201, surface600×500, requested pool601×500, frames27, recreate3, clipped4, Waiting, fresh0, 5개 고정 픽셀 검정. |
 
 #357 이후 광고 검사 재통과로 #356 내부 원인을 확정하지 않는다. #359의 별도 burst 수정/통과는 #353의 동일 원인 해결로 소급하지 않는다. 기존 routine은 development이며 qualification/package/전체 OBS 단계는 미실행이었다. #364 조회 불가를 성공·실패·현재 실행 중 어느 것으로도 새로 분류하지 않는다.
 
 ## 이번 검증 상태
 
-- **코드:** 위 기준의 panel/lifecycle 원본 Git blob을 로컬에서 대조한 뒤 수정했다. 검사한 새 원격 blob은 panel `3fa30edb73d08495505a28ec4fbb03cfb69d9965`, lifecycle `f16a5d38ec98ed8f14c59992ce527681d3447f0a`. 원격 코드 커밋은 `61f81158cbcd965822e80aa4771be8f25553af85`이며 비교 결과 이 세 파일만 변경됐다. 원격 panel/test blob이 검사한 로컬 파일과 일치함을 확인했다. 이후 실행 상태 기록은 이 계획만 바꾼다.
-- **로컬 실행:** 실제 `show_pattern`/`begin_capture`/`stop` 본문과 현재 `VideoOutputCheck`를 사용하고 Win32/캡처만 대체한 검사에서 원본은 GCC·Clang 모두 늦은 Stop 후 worker 시작 및 패턴 부활에 각각 실패. 수정본은 C++20 `-Wall -Wextra -Werror -pedantic`, Clang ASan+UBSan에서 각각 **40 assertion 통과**. stop 세대 증가·start 재검사·pattern 재검사를 하나씩 제거한 세 변형은 각각 실패했다. 취소 뒤 새 확인으로 재개, 미확인/미그림/만료, mask 실패, shutdown, 즉시 시작 거절과 선택 폐기도 검사했다.
-- **검사 코드 검토:** 추가 native helper/흐름을 Win32 선언 stub·near 매크로와 함께 GCC/Clang에서 문법 검사했다. 기존 lifecycle의 모든 줄/조건을 유지한 추가임을 대조했고, CMake60초 및 기존 시간/픽셀 기준은 수정하지 않았다. 이는 MSVC/SDK 전체 빌드나 실제 WGC 실행 근거가 아니다.
-- **새 Windows:** **#365 / `37935365412` / `113836005952`: in_progress, conclusion=null**. 마지막 확인은 `Build OBS development libraries` 실행 중이며 `Build and test ChatView`는 pending이다. `chat-view-obs-capture-scene`, `chat-view-video-target-loss`, `chat-view-video-output-lifecycle`, `chat-view-window-capture` 각각은 아직 미실행/결과 없음이다. #363 통과나 #364 과거 진행 상태로 대신하지 않는다. 기존 실행 재시도·검증 태그·qualification은 요청하지 않았고 이 문서 갱신은 native 실행을 취소하지 않는다.
-- **미실행 범위:** 로컬 Windows/WGC/libobs/WebView2, 실제 OBS frontend 전체 흐름·물리 투컴 수신 영상·실계정·유료 정산·전체 배포 qualification.
+- **#365 명확한 실패:** 기존 `601×201` 단발 정지 재그리기에서 WGC는 크기 601×201을 보고했으나 이전 pool의 600×500 표면으로 전달했다. 기존 로직은 잘린 프레임을 폐기하고 601×500으로 Recreate했으나, 정지 소스의 새 프레임이 5초 안에 나타나지 않았다. 출력 보호는 검정으로 유지됐고 HRESULT=0이며 worker는 살아 있었다. 이전 #359와 단계/표면은 다르며 원인이 동일하다고 확정하지 않는다.
+- **구현:** `WindowCapture::run`의 `ResizeOnly`에서 프레임·텍스처를 놓고 검정을 표시한 후, 캡처 세션을 닫고 동일 GraphicsCaptureItem의 프레임 pool을 증가시킨 뒤 동일 항목에 대해 새 session을 시작한다. 초기 프레임을 시스템에 요청해 정지 화면 한 번의 redraw 이후도 진행할 수 있도록 한다. 대상 상실·사용자 취소 중에는 재시작하지 않고, 이미 충분한 용량에서 늦게 도착한 작은 표면은 무한 재생성/재시작하지 않는다. 추가 권한, 전체 화면 전환, source redraw 유도, 시간/픽셀 기준 변경 없음.
+- **검사:** 기존 `window-capture-test.cpp`의 12회 정지 재그리기·색상/여백·pool 횟수 검사와 5초 제한을 그대로 유지한다. `video-layout-test.cpp`에는 실패 상태(601×201의 600×500 표면)와 요청 후 대기·완전 표면 전이를 명시했다. 실제 WinRT 동작은 수정 코드의 Windows native 검사로 확정해야 한다.
+- **원격 상태:** 이번 후속 코드 SHA와 run/job ID는 원격 반영 후 기록한다. 앞선 #365 실패와 #364 조회 불가는 별도로 보존한다.
+- **미실행:** 실제 물리 투컴·캡처카드, OBS frontend 전체 흐름, CHZZK 실계정, 배포 qualification·장시간 자원 검증. D1/D2/D4/D6는 미해결.
 
 ### 다음 사용자 흐름
 
-최신 OBS와 지정 문서를 순서대로 읽고 **#365 / `37935365412` / `113836005952`**의 Windows 결과를 먼저 확인한다. **해제 취소 → 패턴/재개 직전 중지 → 검정 유지 → 새 패턴 확인 후 같은 출력창 재개**를 마무리한다. 실패하면 해당 경로부터 수정한다. 네 지정 검사 결과를 각각 확인하고 #364의 조회 불가를 통과로 덮지 않는다. 대상 상실/재선택·엔진 resize를 다시 만들거나 시간/색상/재시도 한도를 늘리지 않는다.
+최신 OBS와 지정 문서를 순서대로 읽고 이번 수정의 Windows 빌드 및 WGC 601×201 단발 정지 화면 재현 결과를 먼저 확인한다. 실패하면 그 경로에서 수정하고, 성공하면 G4/G1의 치지직 채팅 실제 표시 신뢰성을 제품 흐름 중심으로 진전시킨다. #364 조회 불가는 통과로 덮지 않는다. 대상 상실/재선택·엔진 resize를 다시 만들거나 시간/색상/재시도 한도를 늘리지 않는다.
 
 OBS만 변경한다. main·새 작업 브랜치·검증 태그·강제 push, 새 브라우저 복구/인증/기기등록/표시키/옛 ZIP, 게임 PC OBS, 임의 HP/단가/지급 규칙을 추가하지 않는다. D1/D2/D4/D6는 해당 근거 전까지 남긴다. 별도 보고서 대신 이 문서를 갱신한다.
 

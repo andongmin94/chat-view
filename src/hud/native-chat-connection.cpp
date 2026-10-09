@@ -245,7 +245,10 @@ void NativeChatConnection::begin(std::wstring origin, std::wstring credential, b
     service_origin_ = std::move(bound_origin);
     awaiting_login_ = mode == DisplayAuthentication::Browser || mode == DisplayAuthentication::BrowserRemember;
     if (awaiting_login_) surface_.close();
-    else if (!open_surface()) { client_.stop(); notice(L"자체 채팅 화면을 열지 못했습니다."); return; }
+    else if (!open_surface()) {
+        end(L"자체 채팅 화면을 열지 못했습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");
+        return;
+    }
     active_ = true; reconnecting_ = false; remembered_ = mode == DisplayAuthentication::Saved || mode == DisplayAuthentication::Remember || mode == DisplayAuthentication::BrowserRemember;
     hud_.cancel_navigation_retry(); hud_.page_connection_recovery_.reset(); hud_.page_health_watchdog_.disarm();
     hud_.set_page_health(HudPageState::Loading, HudProvider::Chzzk);
@@ -290,7 +293,10 @@ void NativeChatConnection::resume_current() noexcept
     // Do not read the editable origin, remember checkbox or another DPAPI
     // approval here. The client renews its exact original context privately.
     connection_state_.reset(); awaiting_login_ = false; reconnecting_ = false;
-    if (!open_surface()) { client_.stop(); notice(L"자체 채팅 화면을 열지 못했습니다."); return; }
+    if (!open_surface()) {
+        end(L"자체 채팅 화면을 열지 못했습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");
+        return;
+    }
     active_ = true; show_connection_state();
     hud_.cancel_navigation_retry(); hud_.page_connection_recovery_.reset(); hud_.page_health_watchdog_.disarm();
     hud_.set_page_health(HudPageState::Loading, HudProvider::Chzzk);
@@ -399,17 +405,21 @@ void NativeChatConnection::tick() noexcept
                 end(L"연결 승인이 해제·만료됐습니다. 다시 연결해 주세요."); return;
             }
             if (update.status == DisplayStatus::Ended || update.status == DisplayStatus::Failed) {
-                end(L"로그인 또는 연결이 종료됐습니다. 로그인 / 연결을 다시 선택하세요."); return;
+                end(L"로그인 또는 연결이 종료됐습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요. 승인 없이 로그인에 실패했다면 다시 로그인하세요."); return;
             }
             if (update.status == DisplayStatus::Reconnecting) {
-                if (!reconnecting_ && !open_surface()) { end(L"연결 손실 뒤 화면을 지우지 못했습니다."); return; }
+                if (!reconnecting_ && !open_surface()) {
+                    end(L"재연결 중 새 채팅 화면을 준비하지 못했습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요."); return;
+                }
                 reconnecting_ = true;
                 notice(L"연결 복구 중입니다. 서버와 채널 승인이 준비되면 자동 재연결합니다.");
             }
             if (update.status == DisplayStatus::Receiving) {
                 if (awaiting_login_) {
                     awaiting_login_ = false;
-                    if (!open_surface()) { end(L"승인 후 채팅 화면을 열지 못했습니다."); return; }
+                    if (!open_surface()) {
+                        end(L"승인 후 채팅 화면을 열지 못했습니다. 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요."); return;
+                    }
                     if (dialog_ && IsWindowVisible(dialog_)) SetForegroundWindow(dialog_);
                 }
                 reconnecting_ = false; pending_ = std::move(update.envelope); pending_subscribed_ = update.subscribed;
@@ -420,9 +430,19 @@ void NativeChatConnection::tick() noexcept
             hud_.cancel_navigation_retry(); hud_.page_connection_recovery_.reset(); hud_.page_health_watchdog_.disarm();
             return;
         }
-        if (ready_ && !surface_.ready()) { end(L"표시 문서가 변경되어 기존 연결을 종료했습니다.", true); return; }
-        if (surface_.rejected_frames() != 0 || (!ready_ && GetTickCount64() >= loading_deadline_)) {
-            end(L"화면 또는 수신 데이터가 유효하지 않아 연결을 종료했습니다."); return;
+        if (ready_ && !surface_.ready()) {
+            end(L"채팅 표시 문서가 변경되어 출력을 중지했습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.", true);
+            return;
+        }
+        if (surface_.rejected_frames() != 0) {
+            // A rejected first renderer frame must not destroy the existing
+            // server approval or silently open a new login/browser flow.
+            end(L"채팅 화면이 수신 데이터를 거부해 표시를 중지했습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");
+            return;
+        }
+        if (!ready_ && GetTickCount64() >= loading_deadline_) {
+            end(L"채팅 화면 준비 시간이 초과됐습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");
+            return;
         }
         if (surface_.ready()) ready_ = true;
         hud_.cancel_navigation_retry(); hud_.page_connection_recovery_.reset(); hud_.page_health_watchdog_.disarm();
@@ -433,14 +453,22 @@ void NativeChatConnection::tick() noexcept
                 displayed_status_.reset(); show_display_status();
             }
         }
-        if (awaiting_frame_ && GetTickCount64() >= render_deadline_) { end(L"화면 응답이 중단되어 연결을 종료했습니다."); return; }
+        if (awaiting_frame_ && GetTickCount64() >= render_deadline_) {
+            end(L"채팅 화면 응답이 중단됐습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");
+            return;
+        }
         if (ready_ && !awaiting_frame_ && !pending_.empty()) {
-            if (!surface_.publish(pending_)) { end(L"화면 전달이 중단됐습니다. 다시 연결하세요."); return; }
+            if (!surface_.publish(pending_)) {
+                end(L"채팅 화면에 메시지를 전달하지 못했습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");
+                return;
+            }
             awaiting_frame_ = surface_.rendered_frames() + 1U;
             in_flight_subscribed_ = pending_subscribed_; render_deadline_ = GetTickCount64() + 15000U; pending_.clear();
         }
         hud_.set_page_health(ready_ && displayed_subscribed_ ? HudPageState::Ready : HudPageState::Loading, HudProvider::Chzzk);
-    } catch (...) { end(L"연결 처리 오류로 채팅을 지웠습니다."); }
+    } catch (...) {
+        end(L"채팅 연결 처리 오류로 화면을 지웠습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");
+    }
 }
 void NativeChatConnection::close() noexcept
 {

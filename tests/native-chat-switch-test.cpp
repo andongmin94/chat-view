@@ -268,6 +268,36 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     }, "empty subscribed chat renders before first text");
     expect(!Access::first_text_rendered(chat), "empty subscription does not acknowledge the first text");
     expect_status(chat, Status::Receiving);
+    if (mode == "memory") {
+        // Real owned WebView2 document rejects one deliberately invalid
+        // synthetic frame BEFORE the first provider text exists. No extra
+        // credential, retry loop, login or second account may be substituted.
+        const auto prior = Access::membership(chat);
+        expect(prior.has_value(), "original role/session approved before first-display failure");
+        expect(Access::surface(chat).publish(
+            LR"JSON({"type":"chat-snapshot","version":2,"snapshot":{}})JSON"),
+            "deliver a synthetic invalid renderer frame to the real owned DOM");
+        await(chat, [&] { return !Access::active(chat); }, "first-display rejection stops native delivery");
+        await(chat, [&] { return !Access::client(chat).running(); }, "worker stops without discarding approval");
+        expect(!Access::surface(chat).ready() && !Access::membership(chat).has_value() &&
+            !Access::first_text_rendered(chat), "failure clears private document, metadata and first-text status");
+        expect(text(dialog, 106).find(L"현재 승인으로 자체 채팅 복귀") != std::wstring::npos,
+            "failure directs the user to the existing explicit return button");
+        expect(Access::client(chat).can_resume_current(), "first display failure retains the exact in-run approval");
+        expect_status(chat, Status::IdleResumable);
+        command(dialog, 104);
+        expect(!Access::client(chat).running(), "new login does not replace a retained approval");
+        command(dialog, 112);
+        await(chat, [&] {
+            return Access::client(chat).running() && Access::membership(chat).has_value() &&
+                Access::surface(chat).rendered_frames() >= 1U &&
+                Access::surface(chat).rendered_messages() == 0U;
+        }, "explicit same-approval return renders an empty subscribed frame");
+        expect(Access::membership(chat)->membership == prior->membership,
+            "first-display recovery cannot change approved role/session/connection");
+        expect(!Access::first_text_rendered(chat), "recovery waits for a new first text acknowledgement");
+        expect_status(chat, Status::Receiving);
+    }
     std::cout << "chat-empty-ready\n" << std::flush;
     try {
         await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "initial private chat renders");

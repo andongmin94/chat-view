@@ -94,8 +94,8 @@ for (const mode of ['memory', 'remembered', 'unrelated', 'revoked', 'mismatch', 
     } finally { clearTimeout(deadline); }
     assert(firstPublished, 'initial text follows the empty subscribed DOM acknowledgement');
     assert(externalSeen); assert.equal(loginStarts, 1, 'return never issues a new browser approval');
-    assert.equal(refreshes, ['revoked', 'mismatch'].includes(mode) ? 1 : 2,
-      'one renewal per explicit return, duplicate button commands do not replay');
+    assert.equal(refreshes, ['revoked', 'mismatch'].includes(mode) ? 1 : mode === 'memory' ? 3 : 2,
+      'one extra explicit renewal only after the first-display failure in memory mode');
     assert.equal(signouts, ['revoked', 'mismatch'].includes(mode) ? 0 : mode === 'logout-failure' ? 2 : 1);
     assert(f.store.find(observer.lease.sessionToken)); assert(f.store.find(other.lease.sessionToken));
     if (mode !== 'mismatch') assert.equal(f.store.find(target), undefined);

@@ -23,6 +23,11 @@ const criticalStyle = readFileSync(new URL('../../web/ad-source.css', import.met
 const bootstrap = "void import('/public/ads/ad-source.js').catch(() => {});";
 const hash = (source: string) => `'sha256-${createHash('sha256').update(source).digest('base64')}'`;
 const publicPolicy = `default-src 'none'; script-src 'self' ${hash(bootstrap)}; style-src ${hash(criticalStyle)}; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`;
+// The authenticated campaign page is the ONLY management route that opts
+// into this tiny script. All other management pages remain script-disabled.
+const campaignSetupScript = readFileSync(new URL('../../web/campaign-setup.js', import.meta.url), 'utf8')
+  .replace(/\r\n?/gu, '\n');
+export const campaignSetupScriptHash = hash(campaignSetupScript);
 const document = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width"><title>ChatView 시험 공개 배너</title>
 <style>${criticalStyle}</style>
@@ -76,11 +81,42 @@ ${authorized ? form(`/campaigns/${TEST_CAMPAIGN.id}/select`, status.selected ? '
 </section>
 ${form('/campaigns/stop', '공개 배너 중지')}
 <p>선택하려면 이 계정의 송출 역할 승인이 필요합니다. 선택은 해당 승인에 묶이고, 그 연결의 로그아웃·철회 시 해제됩니다. 선택 중 받은 출력 보고의 비지급 활동 구간은 계정별로 최대 7일·1,000건 보관하며, 광고 시청시간으로 계산하지 않습니다.</p>
-${source ? `<h2>OBS 공개 배너 연결</h2><p>이 주소는 공개 배너만 읽습니다. 로그인·채팅 표시키가 아니며, 계정 관리나 개인 채팅에는 접근할 수 없습니다.</p>
-<label for="source-url">OBS 브라우저 소스 URL</label><textarea id="source-url" readonly rows="3" style="width:100%">${escape(source)}</textarea>
-<p><a href="${escape(source)}" target="_blank" rel="noopener noreferrer">공개 배너 미리보기</a></p>
-<p>송출 PC의 OBS에서 소스 추가 → 브라우저를 선택하고 위 URL과 크기 960 × 180을 지정하세요. 페이지 권한은 없음으로 설정하고, 소스가 보이지 않을 때 종료 및 장면 활성화 시 새로고침을 켜세요. 위치·크기를 직접 확인한 뒤 사용할 장면에 배치하세요. 챗뷰는 장면을 자동으로 수정하지 않습니다.</p>`
+${source ? `<section id="obs-source-setup" aria-labelledby="obs-source-title">
+<h2 id="obs-source-title">OBS 공개 시험 배너 연결</h2>
+<p>방송에 배치할 공개 시험 배너입니다. 개인 채팅 HUD가 아니며 로그인·채팅 권한을 부여하지 않습니다.</p>
+<ol>
+<li><strong>공개 URL 복사</strong>
+<label for="source-url" style="display:block">OBS 브라우저 소스 URL</label>
+<input id="source-url" type="url" readonly spellcheck="false" autocomplete="off" value="${escape(source)}" style="width:100%;max-width:100%;box-sizing:border-box">
+<button id="copy-public-source" type="button">공개 주소 복사</button>
+<p id="copy-public-result" role="status" aria-live="polite">주소 복사 버튼을 누르거나 주소 칸을 선택해 복사하세요.</p>
+</li>
+<li><strong>송출 PC의 OBS에 브라우저 소스 추가</strong>
+<p>사용할 장면의 소스 목록에서 <strong>+ → 브라우저</strong>를 선택합니다. 로컬 파일은 끄고, 복사한 주소를 URL 칸에 붙여넣으세요.</p>
+<dl><dt>너비 (Width)</dt><dd><strong>960</strong></dd>
+<dt>높이 (Height)</dt><dd><strong>180</strong></dd>
+<dt>페이지 권한 (Page permissions)</dt><dd><strong>없음 (None)</strong></dd>
+<dt>소스가 보이지 않을 때 종료</dt><dd><strong>켜기</strong></dd>
+<dt>장면 활성화 시 브라우저 새로고침</dt><dd><strong>켜기</strong></dd></dl>
+</li>
+<li><strong>OBS 화면에서 직접 확인</strong>
+<p>장면에서 배너의 위치와 크기를 조정한 뒤 OBS 미리보기 및 필요한 경우 테스트 녹화로 화면을 직접 확인하세요. 챗뷰는 장면을 자동 편집하지 않습니다.</p>
+<p data-obs-setup-readiness="${preview.state}">현재 서버 판단: ${preview.text}</p>
+<p>표시 조건이 충족돼도 실제 OBS 합성·송출·시청자 노출 확인이 아닙니다. 송출 전 미리보기 역시 광고 노출 근거가 아닙니다.</p>
+</li>
+</ol>
+<details><summary>배너가 투명하거나 보이지 않을 때 확인할 항목</summary>
+<ul>
+<li>캠페인이 선택됐는지, 위 서버 준비 상태가 최신 출력 보고를 기다리는지 확인하고 관리 페이지를 새로고침하세요.</li>
+<li>OBS 브라우저 소스의 로컬 파일 사용이 꺼져 있고 URL·너비 960·높이 180이 맞는지 확인하세요.</li>
+<li>송출 역할로 승인한 PC가 실행 중이며 최신 출력 보고를 보내는지 확인하세요. 실제 방송을 시작하지 않아도 미리보기에서 보일 수 있습니다.</li>
+<li>중지·로그아웃·보고 만료 상태라면 공개 소스가 투명한 것이 정상입니다. 같은 URL을 다시 사용하려면 캠페인을 명시적으로 재선택하세요.</li>
+</ul></details>
+<p><a href="${escape(source)}" target="_blank" rel="noopener noreferrer">공개 시험 배너 별도 미리보기</a> ·
+<a href="https://obsproject.com/kb/browser-source" target="_blank" rel="noopener noreferrer">OBS 브라우저 소스 공식 안내</a></p>
+</section>`
   : '<p>캠페인을 선택하면 OBS에 넣을 공개 배너 주소가 표시됩니다.</p>'}
 <p>최근 송출 PC 보고가 있을 때만 배너를 표시합니다. 방송 시작 전 미리보기에서도 보일 수 있으며, 이것은 실제 시청자 노출의 증거가 아닙니다. 보고/서버 연결이 끊기면 마지막 확인으로부터 최대 15초 뒤 투명해집니다. 중지는 정상 연결에서 다음 조회(약 2초)에 반영됩니다.</p>
-<p>공개 주소는 선택을 중지해도 유지됩니다. 송출 연결을 로그아웃·철회한 뒤 새로 승인하면 광고를 다시 선택해야 합니다. 일반 서비스 재시작은 유효한 기존 선택을 보존하지만 새 보고 전에는 표시하지 않습니다. 개인 채팅 HUD에는 광고를 넣지 않습니다.</p>`;
+<p>공개 주소는 선택을 중지해도 유지됩니다. 송출 연결을 로그아웃·철회한 뒤 새로 승인하면 광고를 다시 선택해야 합니다. 일반 서비스 재시작은 유효한 기존 선택을 보존하지만 새 보고 전에는 표시하지 않습니다. 개인 채팅 HUD에는 광고를 넣지 않습니다.</p>
+${source ? `<script>${campaignSetupScript}</script>` : ''}`;
 }

@@ -161,6 +161,34 @@ def run() -> None:
                         if index == 1:
                             flow.image("channel-confirmation-mobile")
                         flow.confirm(path)
+                        if path == "/campaigns":
+                            # Browser/CSP really execute the fixed copy helper;
+                            # no service credentials or private messages are copied.
+                            source = flow.page.locator("#source-url")
+                            assert source.get_attribute("readonly") is not None
+                            public_url = source.input_value()
+                            assert public_url.startswith(f.origin + "/public/ads/")
+                            assert len(public_url.rsplit("/", 1)[-1]) == 32
+                            expect(flow.page.locator('[data-public-banner-state="waiting-report"]')).to_have_count(1)
+                            flow.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=f.origin)
+                            copy = flow.page.get_by_role("button", name="공개 주소 복사")
+                            copy.click()
+                            expect(flow.page.locator("#copy-public-result")).to_have_text(
+                                "공개 배너 주소를 복사했습니다. OBS의 URL 칸에 붙여넣으세요.")
+                            assert flow.page.evaluate("navigator.clipboard.readText()") == public_url
+                            # Deterministic browser clipboard denial exercises
+                            # keyboard selection fallback; the public URL and
+                            # server/CSRF state remain unchanged.
+                            flow.page.evaluate("""() => Object.defineProperty(navigator, 'clipboard', {
+                                configurable: true, value: {writeText: () => Promise.reject(new Error('blocked'))}
+                            })""")
+                            copy.click()
+                            expect(flow.page.locator("#copy-public-result")).to_contain_text("Ctrl+C")
+                            assert source.evaluate("(el) => el.selectionStart === 0 && el.selectionEnd === el.value.length")
+                            expect(flow.page.get_by_role("heading", name="OBS 공개 시험 배너 연결")).to_have_count(1)
+                            results.append("selected campaign copies only the public OBS URL, with blocked clipboard fallback")
+                        else:
+                            expect(flow.page.locator("#copy-public-source")).to_have_count(0)
                         flow.image("management-" + str(index))
                         assert f.command("check")["ok"]
                         results.append("browser round trip: " + path)

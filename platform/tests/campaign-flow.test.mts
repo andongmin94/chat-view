@@ -51,6 +51,23 @@ test('existing account chooses a test campaign; separate public page renders onl
     const alice = await f.connect('alice-private-channel', 'streaming');
     const bob = await f.connect('bob', 'streaming');
     const aliceId = await select(f, alice.b), bobId = await select(f, bob.b);
+    const management = await f.request('/campaigns', { headers: { Cookie: alice.b.cookie } });
+    assert.equal(management.status, 200);
+    const setup = await management.text();
+    const inline = /<script>([\s\S]*?)<\/script>/u.exec(setup)?.[1];
+    assert(inline, 'selected owner receives the fixed URL copy helper');
+    const hash = `'sha256-${createHash('sha256').update(inline).digest('base64')}'`;
+    const csp = management.headers.get('content-security-policy')!;
+    assert(csp.includes(`script-src ${hash}`), 'management permits only its exact copy script');
+    assert(!/unsafe-inline|unsafe-eval/u.test(csp), 'new script permission cannot bypass CSP');
+    assert(setup.includes(`value="${f.origin}/public/ads/${aliceId}"`), "owner setup URL matches the live public source");
+    assert.match(setup, /name="csrf"/u);
+    assert.match(setup, /페이지 권한 \(Page permissions\)/u);
+    assert.match(setup, /시청자 노출 확인이 아닙니다/u);
+    const account = await f.request('/account', { headers: { Cookie: alice.b.cookie } });
+    assert.equal(account.status, 200);
+    assert(!account.headers.get('content-security-policy')!.includes('script-src'),
+      'copy helper is not enabled on any other management page');
     const bannerState = async (browser: Browser) =>
       /data-public-banner-state="([^"]+)"/u.exec(await f.page('/campaigns', browser))?.[1];
     assert.equal(await bannerState(alice.b), 'waiting-report', 'selection alone does not imply a displayed banner');
@@ -121,6 +138,11 @@ test('public addresses and native capabilities cannot select campaigns or read p
     assert.equal((await f.request('/campaigns')).status, 401);
     const alice = await f.connect('alice', 'gaming');
     await f.page('/campaigns', alice.b);
+    const empty = await f.request('/campaigns', { headers: { Cookie: alice.b.cookie } });
+    assert.equal(empty.status, 200);
+    assert(!empty.headers.get('content-security-policy')!.includes('script-src'),
+      'copy permission stays disabled until a public source URL exists');
+    assert(!(await empty.text()).includes('id="copy-public-source"'));
     const missing = await f.post(selectPath, alice.b);
     assert.equal(missing.status, 409); assert.match(await missing.text(), /송출 역할/u);
     assert.equal((await f.post('/campaigns/unknown/select', alice.b)).status, 404);

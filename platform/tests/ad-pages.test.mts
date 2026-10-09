@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { SessionStore } from '../server/chat/session-store.mts';
 import { Campaigns, HIDDEN_AD, TEST_CAMPAIGN } from '../server/ads/campaigns.mts';
-import { campaignsPage, servePublicAd } from '../server/ads/pages.mts';
+import { campaignSetupScriptHash, campaignsPage, servePublicAd } from '../server/ads/pages.mts';
 
 test('public HTTP serves only transparent-first artwork and fixed assets; management form stays separate', async () => {
   const sessions = new SessionStore();
@@ -63,15 +63,35 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     assert.match(management, /name="csrf"/u);
     assert.match(management, /960 × 180/u);
     assert.match(management, /data-public-banner-state="report-ready"/u);
+    assert.match(management, /id="obs-source-setup"/u);
+    assert.match(management, /<input id="source-url" type="url" readonly/u);
+    assert.match(management, /<button id="copy-public-source" type="button">공개 주소 복사<\/button>/u);
+    assert.match(management, /role="status" aria-live="polite"/u);
+    assert.match(management, /페이지 권한 \(Page permissions\)/u);
+    assert.match(management, /장면 활성화 시 브라우저 새로고침/u);
+    assert.match(management, /배너가 투명하거나 보이지 않을 때 확인할 항목/u);
+    assert.match(management, /직접 확인/u);
+    const inline = /<script>([\s\S]*?)<\/script>/u.exec(management)?.[1];
+    assert(inline && !inline.includes('\r'), 'only fixed management-copy script is inline');
+    const exactHash = `'sha256-${createHash('sha256').update(inline).digest('base64')}'`;
+    assert.equal(campaignSetupScriptHash, exactHash);
+    assert.equal((management.match(/<script>/gu) ?? []).length, 1);
+    assert(!inline.includes('fetch(') && !inline.includes('localStorage') && !inline.includes('sessionStorage'),
+      'copy helper cannot fetch or persist private state');
     assert.match(management, /OBS나 시청자 화면에서 보였다는 뜻은 아닙니다/u);
     const waiting = campaignsPage(selected, 'a'.repeat(64), origin, true, false);
     assert.match(waiting, /data-public-banner-state="waiting-report"/u);
     assert.match(waiting, /투명하게 대기/u);
+    assert.match(waiting, /data-obs-setup-readiness="waiting-report"/u);
     ads.stop('private-account');
     const stopped = campaignsPage(ads.status('private-account'), 'a'.repeat(64), origin, true, false);
     assert.match(stopped, /data-public-banner-state="not-selected"/u);
     assert(!stopped.includes('data-public-banner-state="report-ready"'));
-    assert.doesNotMatch(stopped, /<script/u);
+    assert.match(stopped, /id="source-url"/u, 'public URL persists after Stop');
+    assert.match(stopped, /data-obs-setup-readiness="not-selected"/u);
+    const noSource = campaignsPage({ selected: false }, 'a'.repeat(64), origin, true, false);
+    assert.doesNotMatch(noSource, /id="copy-public-source"|<script|id="source-url"/u,
+      'before the first selection there is no copy control or active management script');
     sessions.remove(stream.token);
     assert.deepEqual(await (await get(`/public/ads/${id}/state`)).json(), HIDDEN_AD);
   } finally {

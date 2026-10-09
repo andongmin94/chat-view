@@ -12,7 +12,7 @@ import type { Channel } from '../chzzk/api.mts';
 import { readOutputReport } from '../chat/broadcast-output.mts';
 import { Campaigns, CampaignError } from '../ads/campaigns.mts';
 import { activityPage } from '../ads/activity-page.mts';
-import { campaignsPage, servePublicAd } from '../ads/pages.mts';
+import { campaignSetupScriptHash, campaignsPage, servePublicAd } from '../ads/pages.mts';
 
 const nonce = () => randomBytes(32).toString('hex');
 const escape = (value: string) => value.replace(/[&<>"']/gu,
@@ -327,6 +327,12 @@ ${this.#form(b, '/account/cancel', '취소')}
         // proves actual rendering or audience exposure.
         const previewReady = !!(status.selected && status.sourceId &&
           this.#campaigns.snapshot(status.sourceId).state === 'visible');
+        if (status.sourceId) {
+          // Only this authenticated page permits the exact fixed copy helper.
+          // All other management routes remain default-src 'none', no script.
+          response.setHeader('Content-Security-Policy',
+            `${response.getHeader('Content-Security-Policy')}; script-src ${campaignSetupScriptHash}`);
+        }
         this.#page(response, '시험 캠페인 · 공개 배너', this.#accountNotice(b) + campaignsPage(
           status, b.csrf, this.#origin, this.#creators.describe(b.owner).authorized, previewReady)); return;
       }

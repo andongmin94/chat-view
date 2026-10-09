@@ -167,7 +167,16 @@ int main()
             expect(SUCCEEDED(browser->core->Navigate(url.c_str())), "load public renderer, not management UI");
             await([&] { return navigation->done; }, "public navigation completion", remaining());
             expect(SUCCEEDED(navigation->code) && navigation->success, "public navigation succeeded");
-            await([&] { return evaluate(browser->core.Get(), L"document.readyState === 'complete' && !!document.getElementById('banner')", remaining()); }, "public page load", remaining());
+            // This executes while the HTTP fixture is deliberately holding
+            // ad-source.js. The first browser document must already be a fully
+            // loaded, transparent, text-free page, with no state read or artwork.
+            // The module may start only after the fixture releases its response.
+            await([&] { return evaluate(browser->core.Get(),
+                L"document.readyState === 'complete' && !!document.getElementById('banner') && "
+                L"document.getElementById('banner').hidden && "
+                L"document.getElementById('title').textContent === '' && "
+                L"getComputedStyle(document.body).backgroundColor === 'rgba(0, 0, 0, 0)'",
+                remaining()); }, "transparent first public DOM without executable asset response", remaining());
         } catch (...) {
             // Phase/IDs/errors only, never URL, account, script result or DOM.
             std::cerr << "Public ad navigation evidence: started=" << navigation->started

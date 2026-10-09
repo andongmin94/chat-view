@@ -66,7 +66,7 @@ export function campaignsPage(status: CampaignStatus, csrf: string, origin: stri
   const preview = !status.selected ? { state: 'not-selected', text: '캠페인이 선택되지 않아 공개 소스는 투명하게 대기합니다.' }
     : previewReady ? { state: 'report-ready', text: '캠페인 선택과 최근 송출 PC 출력 보고가 확인됐습니다. 공개 시험 배너를 표시할 조건은 충족됐지만 OBS나 시청자 화면에서 보였다는 뜻은 아닙니다.' }
     : { state: 'waiting-report', text: '캠페인은 선택됐지만 최근 송출 PC 출력 보고가 없어 공개 소스는 투명하게 대기합니다.' };
-  return `<p><a href="/account">내 연결 관리</a> · <a href="/campaigns/activity">비지급 활동 기록</a></p>
+  return `<p><a href="/account">내 연결 관리</a> · <a href="/campaigns/activity">비지급 활동 기록 · 근거 구분 보기</a></p>
 <p><strong>시험 광고 · 지급 없음</strong> — 이 단계에서는 시청 실적, HP, 수익을 계산하지 않습니다.</p>
 <section><h2>${escape(TEST_CAMPAIGN.brand)} · ${escape(TEST_CAMPAIGN.title)}</h2>
 <p>${escape(TEST_CAMPAIGN.description)}</p><p>권장 브라우저 소스 크기: <strong>960 × 180</strong></p>

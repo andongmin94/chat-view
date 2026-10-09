@@ -186,7 +186,25 @@ def run() -> None:
                             expect(flow.page.locator("#copy-public-result")).to_contain_text("Ctrl+C")
                             assert source.evaluate("(el) => el.selectionStart === 0 && el.selectionEnd === el.value.length")
                             expect(flow.page.get_by_role("heading", name="OBS 공개 시험 배너 연결")).to_have_count(1)
-                            results.append("selected campaign copies only the public OBS URL, with blocked clipboard fallback")
+                            # Follow the evidence explanation from the campaign setup,
+                            # then return without changing the source address or consent.
+                            flow.page.get_by_role("link", name="비지급 활동 기록 · 근거 구분 보기").click()
+                            expect(flow.page).to_have_url(f.origin + "/campaigns/activity")
+                            for stage in ("output", "audience", "exposure"):
+                                expect(flow.page.locator(f'[data-evidence-stage="{stage}"]')).to_have_count(1)
+                            expect(flow.page.locator('[data-evidence-state="not-measured"]')).to_have_count(1)
+                            flow.page.get_by_role("link", name="캠페인 선택·중지").click()
+                            expect(flow.page).to_have_url(f.origin + "/campaigns")
+                            assert source.input_value() == public_url, "evidence navigation cannot change public OBS URL"
+                            results.append("selected campaign copies public OBS URL and returns from private evidence intact")
+                        elif path == "/campaigns/activity":
+                            for stage in ("output", "audience", "exposure"):
+                                expect(flow.page.locator(f'[data-evidence-stage="{stage}"]')).to_have_count(1)
+                            for state in ("no-reports", "unmeasured", "not-measured"):
+                                expect(flow.page.locator(f'[data-evidence-state="{state}"]')).to_have_count(1)
+                            flow.page.get_by_role("link", name="2. 채널 시청자 추정").click()
+                            assert flow.page.evaluate("location.hash") == "#activity-audience"
+                            results.append("owner-only evidence stages and in-page navigation are readable in Chromium")
                         else:
                             expect(flow.page.locator("#copy-public-source")).to_have_count(0)
                         flow.image("management-" + str(index))

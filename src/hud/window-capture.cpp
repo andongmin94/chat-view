@@ -285,13 +285,24 @@ void WindowCapture::run(std::shared_ptr<State> state, HWND source, HWND output, 
                 state->clipped_frames.fetch_add(1);
                 release_frame(); presenter->clear(); painted = false;
                 if (resize) {
-                    // A single static redraw can deliver ContentSize larger than
-                    // the old surface exactly once. Recreate discards that frame;
-                    // rearm the SAME selected item so it yields a new complete
-                    // initial frame without asking the source to repaint.
+                    // A static window may paint only once at the larger size.
+                    // Retire the old session AND pool before opening a fresh
+                    // pool/session on the same capture item. Recreate on the old
+                    // pool after closing its session failed with E_UNEXPECTED.
+                    capture.frame.revoke();
                     capture.session.Close();
                     capture.session = nullptr;
-                    recreate();
+                    capture.pool.Close();
+                    const SizeInt32 capacity{std::max(size.Width, content.Width), std::max(size.Height, content.Height)};
+                    capture.pool = Direct3D11CaptureFramePool::CreateFreeThreaded(presenter->capture_device,
+                        DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, capacity);
+                    capture.frame = capture.pool.FrameArrived(winrt::auto_revoke, [state](auto const &, auto const &) {
+                        SetEvent(state->wake.value);
+                    });
+                    size = capacity;
+                    state->pool_width.store(static_cast<unsigned>(size.Width));
+                    state->pool_height.store(static_cast<unsigned>(size.Height));
+                    state->recreates.fetch_add(1);
                     if (!state->cancel.load() && !state->closed.load() && source_alive(source, process, thread)) {
                         capture.session = capture.pool.CreateCaptureSession(capture.item);
                         capture.session.StartCapture();

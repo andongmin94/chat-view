@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { SessionStore } from '../server/chat/session-store.mts';
 import { Campaigns, HIDDEN_AD, TEST_CAMPAIGN } from '../server/ads/campaigns.mts';
@@ -29,16 +30,27 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     const page = await get(`/public/ads/${id}`), html = await page.text();
     assert.equal(page.status, 200);
     assert.match(html, /id="banner" hidden/u);
-    assert.match(page.headers.get('content-security-policy')!, /script-src 'self';/u);
+    const csp = page.headers.get('content-security-policy')!;
+    const style = /<style>([\s\S]*?)<\/style>/u.exec(html)?.[1];
+    const bootstrap = /<script type="module">([\s\S]*?)<\/script>/u.exec(html)?.[1];
+    assert(style && bootstrap, 'transparent HTML has critical CSS and a fixed asynchronous bootstrap');
+    const digest = (value: string) => `'sha256-${createHash('sha256').update(value).digest('base64')}'`;
+    assert(csp.includes(`script-src 'self' ${digest(bootstrap)};`), 'exact bootstrap CSP hash');
+    assert(csp.includes(`style-src ${digest(style)};`), 'exact CSS CSP hash');
+    assert.doesNotMatch(csp, /unsafe-inline|unsafe-eval|data:/u);
+    assert.match(style, /background: transparent/u);
+    assert.match(bootstrap, /import\('\/public\/ads\/ad-source\.js'\)/u);
+    assert.doesNotMatch(html, /(?:src|href)="\/public\/ads\/(?:ad-source\.js|ad-source\.css)"/u);
     assert.equal(page.headers.get('set-cookie'), null);
     for (const value of ['private-account', stream.token, stream.id, 'csrf', 'ChatView-Session'])
       assert(!html.includes(value));
-    for (const [asset, mime] of [['ad-source.js', 'text/javascript'], ['ad-renderer.js', 'text/javascript'], ['ad-source.css', 'text/css']]) {
+    for (const [asset, mime] of [['ad-source.js', 'text/javascript'], ['ad-renderer.js', 'text/javascript']]) {
       const response = await get(`/public/ads/${asset}`);
       assert.equal(response.status, 200);
       assert(response.headers.get('content-type')?.startsWith(mime!));
       assert((await response.text()).length > 0);
     }
+    assert.equal((await get('/public/ads/ad-source.css')).status, 404, 'removed asset is not a compatibility endpoint');
     const state = await get(`/public/ads/${id}/state`);
     assert.equal((await state.json()).state, 'visible');
     assert.equal((await fetch(`${origin}/public/ads/${id}`, { method: 'POST' })).status, 405);

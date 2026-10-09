@@ -14,13 +14,26 @@ const child = spawn(executable, [], { stdio: ['pipe', 'pipe', 'pipe'] });
 const exited = once(child, 'exit');
 const events = new EventEmitter(), lines = new Set<string>();
 let buffer = '', errors = '', publicRequests = 0, stalled = false;
+let moduleStarted = false, stateReads = 0;
+let releaseModule!: () => void;
+const blockedModule = new Promise<void>(resolve => { releaseModule = resolve; });
 const handle = f.app.handle.bind(f.app);
 f.app.handle = async (request, response) => {
   if (request.url?.startsWith('/public/ads/')) {
     assert.equal(request.headers.authorization, undefined);
     assert.equal(request.headers.cookie, undefined);
     publicRequests++;
-    if (stalled && request.url.endsWith('/state')) return; // explicit fixture network loss
+    if (request.url === '/public/ads/ad-source.js') {
+      // Hold the actual module HTTP response. The first transparent document
+      // must finish its NavigationCompleted WITHOUT this blocking module.
+      // This fails with the former <script type="module" src="..."> markup.
+      moduleStarted = true; events.emit('module-requested');
+      await blockedModule;
+    }
+    if (request.url.endsWith('/state')) {
+      stateReads++;
+      if (stalled) return; // explicit fixture network loss
+    }
   }
   return handle(request, response);
 };
@@ -59,8 +72,14 @@ try {
     headers: { Authorization: `Bearer ${alice.lease.token}` }, handshakeTimeout: 3000,
   });
   peer.on('error', () => {}); await once(peer, 'open');
+  // Register the request observer BEFORE the browser receives its URL.
+  // No second navigation, retry loop, extra page-load budget or fake DOM ACK.
+  const requested = once(events, 'module-requested', { signal: AbortSignal.timeout(15000) });
   send(`${f.origin}/public/ads/${id}`);
-  await wait('loaded');
+  await Promise.all([wait('loaded'), requested]);
+  assert(moduleStarted && stateReads === 0,
+    'first transparent document completes while executable assets are still blocked');
+  releaseModule();
   const report = async (sequence: number) => {
     const response = await f.request('/broadcast/output', { method: 'POST', headers: {
       Authorization: `ChatView-Output ${alice.lease.outputToken}`, 'Content-Type': 'application/json',
@@ -79,4 +98,4 @@ try {
   send('finish'); child.stdin.end();
   const [code] = await exited; assert.equal(code, 0, errors);
   console.log('Actual public ad browser rendering, stop and fail-closed expiry passed');
-} finally { clearTimeout(timeout); child.kill(); await f.close(); }
+} finally { releaseModule(); clearTimeout(timeout); child.kill(); await f.close(); }

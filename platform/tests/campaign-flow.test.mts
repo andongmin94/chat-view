@@ -6,7 +6,7 @@ import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { WebSocket } from 'ws';
 import { DisplayGateway } from '../server/chat/display-gateway.mts';
 import { BroadcastOutput } from '../server/chat/broadcast-output.mts';
@@ -66,11 +66,19 @@ test('existing account chooses a test campaign; separate public page renders onl
     for (const secret of [alice.lease.token, alice.lease.outputToken!, alice.lease.sessionToken,
       alice.lease.membership.broadcastSessionId, 'alice-private-channel']) assert(!JSON.stringify(visible).includes(secret));
     const page = await f.request(`/public/ads/${aliceId}`);
-    assert.match(page.headers.get('content-security-policy')!, /script-src 'self';/u);
     const html = await page.text();
+    const csp = page.headers.get('content-security-policy')!;
+    const style = /<style>([\s\S]*?)<\/style>/u.exec(html)?.[1];
+    const bootstrap = /<script type="module">([\s\S]*?)<\/script>/u.exec(html)?.[1];
+    assert(style && bootstrap, 'first public document is a self-contained transparent shell');
+    const digest = (value: string) => `'sha256-${createHash('sha256').update(value).digest('base64')}'`;
+    assert(csp.includes(`script-src 'self' ${digest(bootstrap)};`));
+    assert(csp.includes(`style-src ${digest(style)};`));
+    assert.doesNotMatch(csp, /unsafe-inline|unsafe-eval/u);
     assert.match(html, /id="banner" hidden/u); assert.doesNotMatch(html, /csrf|alice-private-channel|sessionToken/u);
-    for (const asset of ['ad-source.js', 'ad-renderer.js', 'ad-source.css'])
+    for (const asset of ['ad-source.js', 'ad-renderer.js'])
       assert.equal((await f.request(`/public/ads/${asset}`)).status, 200);
+    assert.equal((await f.request('/public/ads/ad-source.css')).status, 404);
     await f.page('/campaigns', alice.b);
     assert.equal((await f.post('/campaigns/stop', alice.b)).status, 303);
     assert.deepEqual(await snapshot(f, aliceId), HIDDEN_AD);

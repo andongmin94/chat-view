@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { TEST_CAMPAIGN } from './campaigns.mts';
 import type { Campaigns, CampaignStatus } from './campaigns.mts';
@@ -11,13 +12,18 @@ const assets = new Map([
     body: readFileSync(new URL('../../web/ad-source.js', import.meta.url), 'utf8') }],
   ['/public/ads/ad-renderer.js', { type: 'text/javascript; charset=utf-8',
     body: readFileSync(new URL('../../web/ad-renderer.js', import.meta.url), 'utf8') }],
-  ['/public/ads/ad-source.css', { type: 'text/css; charset=utf-8',
-    body: readFileSync(new URL('../../web/ad-source.css', import.meta.url), 'utf8') }],
 ]);
+// Keep the first opaque/hidden public HTML load independent of potentially
+// stalled CSS or JS assets; the banner remains hidden until the async entry
+// module fetches a fresh, authorized nonpayable test snapshot.
+const criticalStyle = readFileSync(new URL('../../web/ad-source.css', import.meta.url), 'utf8');
+const bootstrap = "void import('/public/ads/ad-source.js').catch(() => {});";
+const hash = (source: string) => `'sha256-${createHash('sha256').update(source).digest('base64')}'`;
+const publicPolicy = `default-src 'none'; script-src 'self' ${hash(bootstrap)}; style-src ${hash(criticalStyle)}; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`;
 const document = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width"><title>ChatView 시험 공개 배너</title>
-<link rel="stylesheet" href="/public/ads/ad-source.css">
-<script type="module" src="/public/ads/ad-source.js"></script></head><body>
+<style>${criticalStyle}</style>
+<script type="module">${bootstrap}</script></head><body>
 <section id="banner" hidden aria-label="지급 없는 시험 광고">
 <div class="brand-block"><div id="brand"></div><div class="badge">시험 광고 · 지급 없음</div></div>
 <div class="copy"><h1 id="title"></h1><p id="description"></p></div>
@@ -27,7 +33,7 @@ const document = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 // The identifier discloses only public test artwork, never creator/private state.
 export function servePublicAd(request: IncomingMessage, response: ServerResponse,
   path: string, campaigns: Campaigns): void {
-  response.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  response.setHeader('Content-Security-Policy', publicPolicy);
   response.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   if (request.method !== 'GET') { response.writeHead(405); response.end(); return; }
   if (request.headers['transfer-encoding'] !== undefined ||

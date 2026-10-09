@@ -208,6 +208,19 @@ int main()
         // neither authorize its stale document nor invalidate the newer one.
         expect(surface.open(host), "immediate reopen while clear is queued");
         await([&] { return surface.ready(); }, "queued clear followed by fresh handshake");
+        // Each case supersedes two pending setup navigations without pumping
+        // between requests. No retry-on-failure or relaxed DOM/time bounds.
+        for (unsigned transition = 0; transition < 4; ++transition) {
+            host.show_setup_page();
+            expect(host.reload(), "queue prior setup replacement");
+            expect(surface.open(host), "private chat supersedes pending setup");
+            await([&] { return surface.ready(); }, "new owned document after cancelled setup");
+            expect(surface.publish(kMessage), "first message after superseded setup");
+            await([&] { return surface.rendered_frames() == 1U && surface.rendered_messages() == 1U; },
+                "first real render after superseded setup");
+            expect(evaluate(core.Get(), L"document.querySelectorAll('#messages li').length === 1") == L"true",
+                "first text row exists in the latest owned DOM");
+        }
         expect(host.navigate(L"https://www.youtube.com/live_chat?is_popout=1&v=abcdefghijk"), "existing external navigation policy remains usable");
         expect(!surface.publish(kMessage), "external page cannot receive chat");
         surface.close(); host.close(); core.Reset();

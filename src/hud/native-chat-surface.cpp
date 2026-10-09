@@ -28,6 +28,8 @@ struct NativeChatSurface::State {
     ICoreWebView2 *identity = nullptr;
     bool active = true;
     bool saw_navigation = false;
+    // Old setup navigation can dispatch before the fresh URL is installed.
+    bool opening = true;
     bool loaded = false;
     bool handshake = false;
     UINT64 navigation = 0U;
@@ -81,15 +83,22 @@ bool NativeChatSurface::open(WebViewHost &host) noexcept
         HRESULT result = webview_->add_NavigationStarting(
             Callback<ICoreWebView2NavigationStartingEventHandler>(
                 [state](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
-                    if (!state->attached()) { state->invalidate(); return S_OK; }
+                    if (!state->active) return S_OK;
                     BOOL cancelled = FALSE;
                     if (FAILED(args->get_Cancel(&cancelled))) { state->invalidate(); return S_OK; }
-                    // The host may cancel a superseded queued navigation. That
-                    // does not replace the current document or grant authority.
+                    // A host-cancelled old page cannot retire the new receiver.
                     if (cancelled) return S_OK;
                     LPWSTR uri = nullptr;
                     const bool own = SUCCEEDED(args->get_Uri(&uri)) && uri && state->document_url == uri;
                     CoTaskMemFree(uri);
+                    if (!state->attached()) {
+                        // navigate_local_document binds the caller URL before
+                        // Stop() retires the previous document, but binds the
+                        // host URL only after Stop(). Ignore only stale, unowned
+                        // events in that interval; they grant no readiness.
+                        if (state->opening && !own) return S_OK;
+                        state->invalidate(); return S_OK;
+                    }
                     if (!own || state->saw_navigation || state->handshake ||
                         FAILED(args->get_NavigationId(&state->navigation))) {
                         state->invalidate();
@@ -146,6 +155,7 @@ bool NativeChatSurface::open(WebViewHost &host) noexcept
         if (FAILED(result) || !host.navigate_local_document(document.c_str(), state->document_url)) {
             close(); return false;
         }
+        state->opening = false;
         return true;
     } catch (...) { close(); return false; }
 }

@@ -256,7 +256,19 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
     SendDlgItemMessageW(dialog, 107, BM_SETCHECK, mode == "remembered" ? BST_CHECKED : BST_UNCHECKED, 0);
     command(dialog, 104);
-    await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "initial private chat renders");
+    try {
+        await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "initial private chat renders");
+    } catch (...) {
+        // Bounded phase evidence only: no chat, URLs, session IDs or tokens.
+        const auto &surface = Access::surface(chat);
+        std::cerr << "Initial private chat phase: worker=" << Access::client(chat).running()
+            << " active=" << Access::active(chat) << " surface_ready=" << surface.ready()
+            << " rendered_frames=" << surface.rendered_frames()
+            << " rendered_rows=" << surface.rendered_messages()
+            << " rejected=" << surface.rejected_frames()
+            << " membership_present=" << Access::membership(chat).has_value() << '\n';
+        throw;
+    }
     expect_status(chat, Status::Receiving);
     const auto initial = Access::membership(chat);
     expect(initial.has_value(), "initial approved membership");

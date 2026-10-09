@@ -1,6 +1,7 @@
 # ChatView 작업 목표 체크리스트
 
 갱신: 2026-10-09 (Asia/Seoul). 시작 기준 **`fb3c908386c4a123bba31cc73aa7986cff233283`**. 최신 OBS와 AGENTS → PRODUCT → development-workflow → architecture → 이 문서를 순서대로 읽었다. **#364 / run `37275017123` / job `111650053171`은 현재 jobs 조회 404이며, 코드 `af41b5c28e3ba96b66e8455fa2a12b6b777e35bb`의 실행 목록도 0건이다.** 삭제·권한·보관 등 원인은 단정하지 않는다. 이전 마지막 확인은 실행 중이었고 최종 성공/실패는 여전히 미확정이다.
+이번 시작 기준 `4a4085df1a2cbcd154d80808c8bdd2add5866312`. D1의 최초 채팅 표시에서 이전 설정 페이지의 취소/오래된 navigation 이벤트를 새 자체 문서의 잘못된 종료로 취급할 수 있는 구간을 수정했다. 새 문서 URL 연결 전 구 페이지 이벤트만 무시하고, 새 문서의 소유권·탐색 ID·nonce handshake와 표시 확인을 그대로 요구한다. WebView2 실제 DOM 첫 메시지 4개 고정 전환 회귀를 추가하며 15초 검사 시간은 유지한다. #294/#366의 기존 간헐 실패와 동일한 원인이라고 확정하지 않는다.
 #365는 코드 `61f81158cbcd965822e80aa4771be8f25553af85`, run `37935365412`에서 빌드 성공·39/40(WGC static sequence6 실패)이었다. 그 다음 **#366 / code `f00dc3dcb1b2509a6d80a4e4f5af43438e143a18` / run `37941705504` / Windows x64 job `113857516728`은 빌드 성공·37/40, 150.33초, failure**. WGC 첫 크기 증가에서 E_UNEXPECTED(`0x8000FFFF`), native video lifecycle의 resize 실패, 독립적인 native-chat-switch 첫 표시 실패였다. 잘린 성장 프레임에서 pool과 session을 함께 교체한 코드 `4b711c244efba276e3f783c213124390dfab2154`를 원격에 반영했다. **Windows #367 / run `37943089840` / job `113862282591`: 빌드 성공, 39/40, 165.17초, failure.** WGC 12단계 정지 재그리기·실제 픽셀/여백과 패널 재개, target-loss, OBS core 및 native chat switch는 통과했다. 별개 `chat-view-hud-smoke`가 30.53초로 30초 제한을 초과했으며 원인은 미확정이다.
 이 문서가 유일한 현재 작업 목록이다. 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다.
 
@@ -70,7 +71,7 @@
 
 | ID | 근거 | 범위 |
 | --- | --- | --- |
-| D1 | `82f36a6`/#294 반복3 첫 gateway frame 표시 미확인; #366 native-chat-switch 첫 private chat renders 실패, #367 해당 검사는 통과(원인 미확정). | G4/R-01. 원인 미확정, routine만으로 종료하지 않음. |
+| D1 | `82f36a6`/#294 반복3 첫 gateway frame 표시 미확인; #366 native-chat-switch 첫 private chat renders 실패, #367 통과. 이번 새 자체 문서의 초기 구-navigation 취소 처리 수정은 native 검증 대기. | G4/R-01. 과거 실패와 동일 원인 불명·실계정 미검증, routine만으로 종료하지 않음. |
 | D2 | #292 후반 핸들 +104>64; #294 초기 +284>256, 후반 +8. | R-02. 기존 자원 한도 유지. |
 | D4 | CI 캡처 module의 동기 UI-task/join 및 borrowed item은 `510f8e1`에서 보완. #353 좌표는 #354, core queue 정리는 `66fd5a6`/#355에서 통과. #356/#357/#359/#361/#363도 core 통과 기록. | core fixture만 확인. 실제 OBS frontend 종료/장면 전환·qualification 남음. Control Center에 Q4/Q5 시험 UI는 없음. |
 | D6 | `9e9863a`/#339 WGC 첫 픽셀10초 실패, #340 미재현. #353 단발 resize/레터박스 실패. #359 별도 burst단계9 재현 후 `4cbcc5e`/#361 동일 입력·강화 assertion 통과. | 연속 burst만 좁게 확인. #353 인과와 첫 표시 문제는 미해결. #363의 통과와 #365 lifecycle 통과도 종료 근거가 아님; #366는 session+same-pool 재시작의 E_UNEXPECTED, #367는 새로운 pool/session 구현에서 12단계 WGC 통과(원래 #353의 인과 미확정).  #365 sequence 6에서 received=601×201, surface=600×500, pool=601×500, Waiting·검정 정지 재현. |
@@ -101,6 +102,10 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 
 ## 이번 검증 상태
 
+- **이번 D1 구현:** `NativeChatSurface`의 `NavigationStarting`은 이전 setup 페이지의 취소 이벤트를 새 문서 소유권 검사 전에 걸러낸다. 새 URL 설치 중에만 이전 문서의 unowned 탐색을 무시하고, 새 문서의 예기치 않은 탐색·오류·중복 핸드셰이크는 기존대로 무효화한다. 앱 첫 접속의 실제 `WebViewHost`/WebView2 이벤트 순서를 대상으로 한다. 로그인·권한·모델·메시지 스키마는 변경하지 않는다.
+- **연결 검사:** 기존 실제 WebView2 native-chat-surface 테스트에 setup/reload → 즉시 native own document → 새 첫 메시지와 실제 DOM 한 행의 고정 4회 전환을 추가했다. native-chat-switch의 기존 15초 실패 경로에는 worker/문서 준비/렌더 프레임·행·거부 수·membership 존재 여부만 출력한다. 이는 권한·메시지·토큰을 로그에 넣지 않는다.
+- **검증 상태:** 새 원격 코드 커밋과 Windows 실행 결과는 실제 반영·검사 후 추가한다. 이 수정만으로 #294/#366 D1이나 #367 별도 HUD smoke 30초 초과를 해결했다고 선언하지 않는다.
+
 - **#365 명확한 실패:** 기존 `601×201` 단발 정지 재그리기에서 WGC는 크기 601×201을 보고했으나 이전 pool의 600×500 표면으로 전달했다. 기존 로직은 잘린 프레임을 폐기하고 601×500으로 Recreate했으나, 정지 소스의 새 프레임이 5초 안에 나타나지 않았다. 출력 보호는 검정으로 유지됐고 HRESULT=0이며 worker는 살아 있었다. 이전 #359와 단계/표면은 다르며 원인이 동일하다고 확정하지 않는다.
 - **#366 실패에서 확인한 문제:** 성장 첫 프레임(600×300)이 표면 400×300으로 도착했을 때 session.Close → 같은 pool.Recreate → CreateCaptureSession 경로가 `0x8000FFFF`로 실패했다. 이 로그만으로 세 개 호출 중 정확히 어디서 던졌는지는 확정할 수 없다. WGC는 Failed, 출력은 검정 유지. Lifecycle 역시 후속 resize 실패. 별도 `native-chat-switch`의 initial private chat renders 실패는 변경한 GPU 코드의 직접 원인으로 간주하지 않으며 D1에 보존한다.
 - **새 구현:** `WindowCapture::run`의 `ResizeOnly`에서 프레임·텍스처를 놓고 검정을 표시한 후, 기존 pool 이벤트·session·pool을 정리하고 새로운 2버퍼 pool을 확대된 축별 용량으로 생성한다. 새 session은 동일 `GraphicsCaptureItem`을 사용해 초기 프레임을 요청한다. `Recreate`는 기존의 완전한 성장 프레임에만 그대로 사용한다. 정상 사용자 중지·대상 상실 시에는 새 session을 시작하지 않고, 이미 충분한 용량에서 도착한 작은 표면에는 반복 재생성/재시작하지 않는다. 전체 화면 캡처, 게임 redraw 요청, 시간·픽셀 완화 없음.
@@ -110,7 +115,7 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 
 ### 다음 사용자 흐름
 
-최신 OBS와 지정 문서를 순서대로 읽고 **G4/G1의 치지직 채팅 첫 메시지 실제 표시 신뢰성(D1)**을 다음 사용자 흐름으로 개선한다. #294/#366의 첫 frame/DOM 실패와 #367의 재통과를 함께 보고, 새로운 재현 근거 없이 타임아웃·검사를 완화하거나 불필요한 재설계를 하지 않는다. 별개 #367 HUD smoke 30초 제한 초과는 실패로 보존하고 차기 해당 경로에서 원인/영향을 확인한다. #364 조회 불가는 통과로 덮지 않는다. 대상 상실/재선택·엔진 resize를 다시 만들거나 시간/색상/재시도 한도를 늘리지 않는다.
+D1의 새 코드에 대한 Windows `native-chat-surface`, `native-chat-switch`, `native-display-client`와 관련 routine 결과를 우선 확인한다. 첫 메시지가 표시되지 않으면 안전한 초기 단계 관측으로 수신·문서 로딩·DOM 처리 중 위치를 구분해 고친다. 원인 근거 없이 한도를 늘리거나 전송 체계를 재작성하지 않는다. 별개 #367 HUD smoke 30초 초과는 보존하고 영향 범위를 확인한다. #364 조회 불가는 통과로 덮지 않는다. 대상 상실/재선택·엔진 resize를 다시 만들거나 시간/색상/재시도 한도를 늘리지 않는다.
 
 OBS만 변경한다. main·새 작업 브랜치·검증 태그·강제 push, 새 브라우저 복구/인증/기기등록/표시키/옛 ZIP, 게임 PC OBS, 임의 HP/단가/지급 규칙을 추가하지 않는다. D1/D2/D4/D6는 해당 근거 전까지 남긴다. 별도 보고서 대신 이 문서를 갱신한다.
 

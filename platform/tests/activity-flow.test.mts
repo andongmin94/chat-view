@@ -38,6 +38,9 @@ async function activeOnPage(f: Fixture, b: Browser) {
   assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
   const html = await response.text();
   assert.match(html, /비지급 시험 기록/u); assert.match(html, /미측정/u);
+  assert.match(html, /data-evidence-stage="output"/u);
+  assert.match(html, /data-evidence-stage="audience"/u);
+  assert.match(html, /data-evidence-stage="exposure"/u);
   return Number(/data-metric="active-ms" data-value="(\d+)"/u.exec(html)![1]!);
 }
 

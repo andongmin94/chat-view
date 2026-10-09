@@ -99,6 +99,9 @@ test('official sample -> accepted report estimate -> private owner page, without
     const summary=f.creators.activity.summary('alice');assert(summary.estimatedViewerMs!>0);
     assert.equal(summary.estimatedViewerMs,17*summary.audienceCoverageMs);assert(summary.audienceUnmeasuredMs>0);
     const html=await f.get('/campaigns/activity',alice.b);assert.match(html,/17명/u);assert.match(html,/시청자·분/u);
+    assert.match(html,/data-evidence-state="partial"/u);
+    assert.match(html,/data-evidence-state="not-measured"/u);
+    assert.match(html,/표본이 없던 송출 구간은 추가하지 않았습니다/u);
     for(const secret of [alice.lease.token,alice.lease.outputToken,alice.lease.sessionToken,'PRIVATE_CLIENT']) assert(!html.includes(secret));
     assert.equal(f.creators.activity.summary('bob').estimatedViewerMs,null);
     assert.doesNotMatch(await f.get('/campaigns/activity',bob.b),/17명/u);
@@ -121,6 +124,8 @@ test('quota failure leaves counts unmeasured and chat alive, never refreshes a u
     assert.equal(f.liveCalls,1);assert.equal(alice.peer.readyState,WebSocket.OPEN);
     const html=await f.get('/campaigns/activity',alice.b);
     assert.match(html,/제공자 호출 제한/u);assert.doesNotMatch(html,/private quota body/u);
+    assert.match(html,/data-evidence-stage="audience"[\s\S]*?data-evidence-state="unmeasured"/u);
+    assert.match(html,/data-evidence-state="not-measured"/u);
     assert.equal(f.creators.activity.summary('alice').estimatedViewerMs,null);
   } finally {await f.close();}
 });
@@ -130,7 +135,11 @@ test('disabled production collection preserves existing activity without any liv
   try {
     const alice=await f.connect('alice');await alice.report();await pause(550);await alice.report();
     assert.equal(f.liveCalls,0);assert(f.creators.activity.summary('alice').activeMs>0);
-    assert.match(await f.get('/campaigns/activity',alice.b),/수집 비활성/u);
+    const html=await f.get('/campaigns/activity',alice.b);
+    assert.match(html,/수집 비활성/u);
+    assert.match(html,/data-evidence-stage="output"[\s\S]*?data-evidence-state="reported-intervals"/u);
+    assert.match(html,/data-evidence-stage="audience"[\s\S]*?data-evidence-state="unmeasured"/u);
+    assert.match(html,/data-evidence-state="not-measured"/u);
     assert.equal(alice.peer.readyState,WebSocket.OPEN);
   } finally {await f.close();}
 });

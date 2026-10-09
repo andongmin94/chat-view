@@ -48,6 +48,10 @@ test('last valid sample is held only across accepted consecutive streaming repor
     assert.equal(s.estimatedViewerMs,270000); assert.equal(s.audienceCoverageMs,15000); assert.equal(s.audienceUnmeasuredMs,0);
     assert.equal(s.activeMs,15000); assert.equal(s.audienceMethod,'last-sample-hold');
     assert.equal(s.measuredAdViewerMs,null); assert.equal(s.hp,null); assert.equal(s.revenue,null); assert.equal(s.payable,false);
+    const html=activityPage(s);
+    assert.match(html,/data-evidence-stage="output"[\s\S]*?data-evidence-state="reported-intervals"/u);
+    assert.match(html,/data-evidence-stage="audience"[\s\S]*?data-evidence-state="covered"/u);
+    assert.match(html,/data-evidence-stage="exposure"[\s\S]*?data-evidence-state="not-measured"/u);
     assert.equal(f.sessions.database.prepare('SELECT COUNT(*) AS n FROM campaign_audience').get()!.n,1,'estimates coalesce with activity, not unbounded sample rows');
     const before=s.estimatedViewerMs; f.advance();
     for(let i=0;i<10;i++) assert.equal(f.activity.summary('alice').estimatedViewerMs,before,'reading never extrapolates or accrues');
@@ -63,7 +67,12 @@ test('unknown is null, explicit observed zero is numeric zero, with uncovered st
     assert.equal(f.activity.summary('alice').estimatedViewerMs,null,'one new sample cannot backfill');
     f.advance(); f.report(); const s=f.activity.summary('alice');
     assert.equal(s.estimatedViewerMs,0); assert.equal(s.audienceCoverageMs,5000); assert.equal(s.audienceUnmeasuredMs,10000);
-    assert.match(activityPage(s),/0\.000 시청자·분/u);
+    const html=activityPage(s);
+    assert.match(html,/0\.000 시청자·분/u);
+    assert.match(html,/data-evidence-state="partial"/u);
+    assert.match(html,/유효한 공식 시청자 0명 표본으로 계산된 추정값 0/u);
+    assert.match(html,/표본이 없던 송출 구간은 추가하지 않았습니다/u);
+    assert.match(html,/data-evidence-state="not-measured"/u);
   } finally {f.close();}
 });
 
@@ -142,6 +151,10 @@ test('owner page distinguishes channel estimate, coverage, unmeasured attention 
     for(const text of ['12명','1.000 시청자·분','0명으로 대체하지 않음','제공자 표본 시각은 미제공',
       '배너를 본 사람 수가 아니며','미측정 — 노출·시청 계측 없음','계산하지 않음 — 지급 가능한 실적 없음']) assert(html.includes(text));
     for(const secret of ['sample-epoch',f.approval.token,f.approval.membership!.connectionId]) assert(!html.includes(secret));
-    f.sample({state:'unavailable',reason:'disabled'}); assert.match(activityPage(f.activity.summary('alice')),/이용 조건·권한·할당량/u);
+    f.sample({state:'unavailable',reason:'disabled'});
+    const disabled=activityPage(f.activity.summary('alice'));
+    assert.match(disabled,/이용 조건·권한·할당량/u);
+    assert.match(disabled,/data-evidence-state="covered"/u);
+    assert.match(disabled,/현재 시청자 표본과 아래 7일 이내 보존된 추정 합계는 시점이 다를 수 있습니다/u);
   } finally {f.close();}
 });

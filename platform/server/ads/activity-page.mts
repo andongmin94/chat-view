@@ -25,15 +25,50 @@ const date = (at: number) => new Date(at).toISOString().replace('T', ' ').replac
 // selector, tokens, private chat, client HTML, or public access to the history.
 export function activityPage(summary: ActivitySummary): string {
   const audience = summary.audience;
+  // Reported activity, estimated channel-wide viewers and unmeasured
+  // advertisement exposure are different evidence; never coerce missing to 0.
+  const outputState = summary.reports === 0 ? 'no-reports'
+    : summary.activeMs === 0 ? 'no-active-interval' : 'reported-intervals';
+  const outputExplanation = summary.reports === 0
+    ? '아직 이 캠페인의 승인된 송출 PC 출력 보고가 없습니다. 기록이 없다는 뜻이지 광고 시청자가 0명이라는 뜻은 아닙니다.'
+    : summary.activeMs === 0
+      ? '보고는 도착했지만 유효한 연속 활성 출력 구간은 0초입니다. 처음 보고·상태 전환·누락 구간은 합산하지 않습니다.'
+      : '연속된 유효 출력 보고 사이의 활성 구간만 합산했습니다. 실제 OBS 영상 픽셀이나 시청자 화면은 확인하지 않았습니다.';
+  const estimateState = summary.audienceCoverageMs === 0 ? 'unmeasured'
+    : summary.estimatedViewerMs === null ? 'unrepresentable'
+      : summary.audienceUnmeasuredMs > 0 ? 'partial' : 'covered';
+  const estimateExplanation = estimateState === 'unmeasured'
+    ? '시청자 시간 추정에 포함할 수 있는 연속 송출 보고 구간이 없습니다. 미측정은 시청자 0명과 다릅니다.'
+    : estimateState === 'unrepresentable'
+      ? '추정에 포함한 구간은 있지만 수치 범위 초과로 합계를 표시할 수 없습니다. 0으로 대체하지 않습니다.'
+      : summary.estimatedViewerMs === 0
+        ? '유효한 공식 시청자 0명 표본으로 계산된 추정값 0입니다. 미측정 광고 노출이 0회였다는 뜻은 아닙니다.' +
+          (summary.audienceUnmeasuredMs > 0 ? ' 표본이 없던 송출 구간은 추가하지 않았습니다.' : '')
+        : estimateState === 'partial'
+          ? '시청자 표본이 유효했던 송출 구간만 추정했습니다. 표본이 없던 송출 구간은 추가하지 않았습니다.'
+          : '유효 표본이 있는 연속 송출 보고 구간만 추정했습니다. 시청자 수는 채널 전체 기준입니다.';
   return `<p><strong>비지급 시험 기록 · 출력 활동은 광고 노출·시청시간이 아닙니다.</strong></p>
+<nav aria-label="측정 근거 단계"><a href="#activity-output">1. 송출 PC 출력 보고</a> ·
+<a href="#activity-audience">2. 채널 시청자 추정</a> ·
+<a href="#activity-exposure">3. 광고 노출·HP 미측정</a></nav>
 <p>선택한 시험 캠페인의 승인된 송출 연결이 보낸 보고만 기록합니다.
 같은 상태의 연속 보고 두 개 사이를 보수적으로 근사하며, 실제 지속 송출을 보증하지 않습니다.
 첫 보고·상태 전환·누락 구간은 계산하지 않고 마지막 보고 이후 시간도 더하지 않습니다.</p>
+<section id="activity-output" aria-labelledby="activity-output-title" data-evidence-stage="output">
+<h2 id="activity-output-title">1. 송출 PC 출력 보고 · 관측된 활동</h2>
+<p data-evidence-state="${outputState}">${outputExplanation}</p>
 <dl>
 <dt>출력 활성 구간 합집합</dt><dd data-metric="active-ms" data-value="${summary.activeMs}">${duration(summary.activeMs)}</dd>
 <dt>송출 활성 보고 구간</dt><dd data-metric="streaming-ms" data-value="${summary.streamingMs}">${duration(summary.streamingMs)}</dd>
 <dt>녹화 활성 보고 구간</dt><dd data-metric="recording-ms" data-value="${summary.recordingMs}">${duration(summary.recordingMs)}</dd>
 <dt>출력 비활성 보고 구간</dt><dd>${duration(summary.idleMs)} (활동 합계 제외)</dd>
+</dl></section>
+<section id="activity-audience" aria-labelledby="activity-audience-title" data-evidence-stage="audience">
+<h2 id="activity-audience-title">2. 공식 채널 시청자 표본 · 조건부 추정</h2>
+<p data-evidence-state="${estimateState}">${estimateExplanation}</p>
+<p>현재 시청자 표본과 아래 7일 이내 보존된 추정 합계는 시점이 다를 수 있습니다.
+표본 수집은 기본적으로 꺼져 있으며, 송출 보고 구간과 같은 라이브의 유효 표본이 연결된 경우에만 추정합니다.</p>
+<dl>
 <dt>공식 현재 시청자 표본</dt><dd data-metric="audience-state">${audience.state === 'sampled'
   ? `${audience.viewers}명 · 서버 조회 시작 ${date(audience.requestedAt)} (제공자 표본 시각은 미제공)`
   : audienceReasons[audience.reason]}</dd>
@@ -42,15 +77,24 @@ export function activityPage(summary: ActivitySummary): string {
   : `${(summary.estimatedViewerMs / 60000).toFixed(3)} 시청자·분 (추정)`}</dd>
 <dt>추정에 포함한 송출 보고 구간</dt><dd data-metric="audience-coverage-ms" data-value="${summary.audienceCoverageMs}">${duration(summary.audienceCoverageMs)}</dd>
 <dt>시청자 표본 없이 남은 송출 보고 구간</dt><dd>${duration(summary.audienceUnmeasuredMs)} (0명으로 대체하지 않음)</dd>
-<dt>실측 광고 시청시간</dt><dd>미측정 — 노출·시청 계측 없음</dd>
-<dt>HP·수익·지급</dt><dd>계산하지 않음 — 지급 가능한 실적 없음</dd>
 </dl>
 <p>추정 방식: 각 연속 송출 보고 구간 시작에 알려진 마지막 공식 시청자 수를 해당 구간 동안 유지하는 근사입니다.
 같은 라이브의 유효 표본이 양 끝에 있는 연속 송출 보고 구간만 계산하며, 표본 유효시간은 조회 시작 후 최대 90초입니다.
 녹화만 켠 구간·조회 실패·라이브 교체·재시작 공백은 시청자 시간으로 채우지 않습니다.
 치지직 채널 전체의 시청자 수이지 배너를 본 사람 수가 아니며, 광고 가시성과 주목 여부는 미검증입니다.</p>
+</section>
+<section id="activity-exposure" aria-labelledby="activity-exposure-title" data-evidence-stage="exposure">
+<h2 id="activity-exposure-title">3. 광고 실제 시청 · HP · 보상</h2>
+<p data-evidence-state="not-measured">실제 광고 노출·시청시간은 측정하지 않습니다.
+출력 보고가 있거나 시청자 시간이 추정돼도 시청자 화면의 광고 표시·주목 여부를 확인할 수 없습니다.</p>
+<dl>
+<dt>실측 광고 시청시간</dt><dd>미측정 — 노출·시청 계측 없음</dd>
+<dt>HP·수익·지급</dt><dd>계산하지 않음 — 지급 가능한 실적 없음</dd>
+</dl></section>
 <p>송출·녹화 동시 구간은 합집합에 한 번만 반영합니다. 공개 배너 조회, 미리보기,
 소스 표시/숨김 이벤트는 기록을 만들거나 시간을 늘리지 않습니다.</p>
+<section aria-labelledby="activity-history-title">
+<h2 id="activity-history-title">4. 최근 서버 보고 근거</h2>
 <p>최근 7일 이내에 시작한 구간 중 최대 1,000건을 보관합니다. 동일 상태는 시간 단위로 합칩니다.
 보관 중 ${summary.intervals}건, 수신 보고 ${summary.reports}개, 계산 제외 ${summary.unknownIntervals}건.
 아래는 최근 50건입니다. 전체 방송 이력이나 평생 합계가 아닙니다.</p>
@@ -63,5 +107,5 @@ ${summary.rows.length ? `<div style="overflow-x:auto"><table style="width:100%;t
 : '<p>아직 저장된 보고가 없습니다. 캠페인을 선택하고 승인된 송출 연결에서 새 보고를 받아야 합니다.</p>'}
 <p>중지·철회 뒤에도 보관 기간 안의 기록은 남습니다. 재선택·연결 복귀·서버 재시작 전후의
 공백은 이어 계산하지 않습니다. 이 화면은 새로고침 시 저장된 기록만 다시 읽습니다.</p>
-<p><a href="/campaigns/activity">기록 새로고침</a> · <a href="/campaigns">캠페인 선택·중지</a> · <a href="/account">내 연결</a></p>`;
+<p><a href="/campaigns/activity">기록 새로고침</a> · <a href="/campaigns">캠페인 선택·중지</a> · <a href="/account">내 연결</a></p></section>`;
 }

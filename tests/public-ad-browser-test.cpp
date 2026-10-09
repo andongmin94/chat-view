@@ -193,6 +193,8 @@ int main()
             document.getElementById('title').textContent === '방송과 함께하는 챗뷰' &&
             document.querySelector('.badge').textContent === '시험 광고 · 지급 없음' &&
             document.querySelectorAll('img,iframe,form').length === 0 &&
+            getComputedStyle(document.getElementById('banner')).backgroundColor === 'rgb(20, 30, 50)' &&
+            getComputedStyle(document.getElementById('banner')).display === 'flex' &&
             document.documentElement.scrollWidth === innerWidth &&
             document.documentElement.scrollHeight === innerHeight &&
             !document.body.textContent.includes('alice-private')

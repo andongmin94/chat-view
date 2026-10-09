@@ -16,7 +16,10 @@ const assets = new Map([
 // Keep the first opaque/hidden public HTML load independent of potentially
 // stalled CSS or JS assets; the banner remains hidden until the async entry
 // module fetches a fresh, authorized nonpayable test snapshot.
-const criticalStyle = readFileSync(new URL('../../web/ad-source.css', import.meta.url), 'utf8');
+// HTML parsing normalizes CRLF to LF before checking inline CSP hashes.
+// Hash and embed identical LF source even on Windows Git checkouts.
+const criticalStyle = readFileSync(new URL('../../web/ad-source.css', import.meta.url), 'utf8')
+  .replace(/\r\n?/gu, '\n');
 const bootstrap = "void import('/public/ads/ad-source.js').catch(() => {});";
 const hash = (source: string) => `'sha256-${createHash('sha256').update(source).digest('base64')}'`;
 const publicPolicy = `default-src 'none'; script-src 'self' ${hash(bootstrap)}; style-src ${hash(criticalStyle)}; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`;

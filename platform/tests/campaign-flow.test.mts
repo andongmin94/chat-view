@@ -71,6 +71,7 @@ test('existing account chooses a test campaign; separate public page renders onl
     const style = /<style>([\s\S]*?)<\/style>/u.exec(html)?.[1];
     const bootstrap = /<script type="module">([\s\S]*?)<\/script>/u.exec(html)?.[1];
     assert(style && bootstrap, 'first public document is a self-contained transparent shell');
+    assert(!style.includes('\r'), 'CSP inline style hash uses HTML-normalized line endings');
     const digest = (value: string) => `'sha256-${createHash('sha256').update(value).digest('base64')}'`;
     assert(csp.includes(`script-src 'self' ${digest(bootstrap)};`));
     assert(csp.includes(`style-src ${digest(style)};`));

@@ -197,7 +197,8 @@ try {
       }
       await delay(250);
     } while (performance.now() < deadline);
-    throw new Error(`${label}: composite pixels did not match ${JSON.stringify(metrics)}`);
+    // Counts only: never output URLs, account data, private chat or page content.
+    throw new Error(`${label}: composite pixels did not match ${JSON.stringify(metrics)}; documents=${documents} publicStateReads=${reads} obsUserAgent=${sawObs}`);
   };
   const enabled = (value: boolean) => call('SetSceneItemEnabled', { sceneName: main, sceneItemId, sceneItemEnabled: value });
   const stableHiddenReads = async () => {

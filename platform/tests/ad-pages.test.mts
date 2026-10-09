@@ -34,6 +34,7 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     const style = /<style>([\s\S]*?)<\/style>/u.exec(html)?.[1];
     const bootstrap = /<script type="module">([\s\S]*?)<\/script>/u.exec(html)?.[1];
     assert(style && bootstrap, 'transparent HTML has critical CSS and a fixed asynchronous bootstrap');
+    assert(!style.includes('\r'), 'inline CSS is normalized before hashing on Windows');
     const digest = (value: string) => `'sha256-${createHash('sha256').update(value).digest('base64')}'`;
     assert(csp.includes(`script-src 'self' ${digest(bootstrap)};`), 'exact bootstrap CSP hash');
     assert(csp.includes(`style-src ${digest(style)};`), 'exact CSS CSP hash');

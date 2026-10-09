@@ -1,6 +1,7 @@
 # ChatView 작업 목표 체크리스트
 
 갱신: 2026-10-09 (Asia/Seoul). 시작 기준 **`fb3c908386c4a123bba31cc73aa7986cff233283`**. 최신 OBS와 AGENTS → PRODUCT → development-workflow → architecture → 이 문서를 순서대로 읽었다. **#364 / run `37275017123` / job `111650053171`은 현재 jobs 조회 404이며, 코드 `af41b5c28e3ba96b66e8455fa2a12b6b777e35bb`의 실행 목록도 0건이다.** 삭제·권한·보관 등 원인은 단정하지 않는다. 이전 마지막 확인은 실행 중이었고 최종 성공/실패는 여전히 미확정이다.
+이번 코드 **`61f81158cbcd965822e80aa4771be8f25553af85`**는 OBS에 반영했다. **Windows #365 / run `37935365412` / job `113836005952`는 실행 중**이다. 마지막 확인은 OBS 개발 라이브러리 빌드 중이며 ChatView 빌드와 네 지정 CTest는 아직 미실행이다.
 이 문서가 유일한 현재 작업 목록이다. 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다.
 
 ## 현재 위치
@@ -92,20 +93,21 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 | #362 / `f21e00bc113ef1e92be6b3b5e84624fe3f156c9f` | `37220157340` / `111488721555` | 빌드 실패, CTest 전체 미실행. lifecycle243행 const auto near의 Windows 매크로 충돌/C2513. 네 지정 캡처 검사 모두 미실행. |
 | #363 / `04c1558bad2474e7ef444f5c1891b2dbbe7f6ec3` | `37242100880` / `111552735174` | 빌드 성공·40/40,127.02초, completed/success. core0.06초·WGC6.73초·output-lifecycle4.76초·target-loss5.30초·public-ad-browser15.04초 통과. |
 | #364 / `af41b5c28e3ba96b66e8455fa2a12b6b777e35bb` | `37275017123` / `111650053171` | **최종 결과 미확정.** 이전 마지막 기록은 OBS 개발 라이브러리 성공·ChatView 빌드/검사 실행 중. 2026-10-09에는 jobs404, 해당 SHA 실행목록0건. 네 지정 검사의 결과도 확인 불가. |
+| #365 / `61f81158cbcd965822e80aa4771be8f25553af85` | `37935365412` / `113836005952` | **실행 중, 최종 결과 없음.** 마지막 확인은 OBS 개발 라이브러리 빌드 중, ChatView 빌드/CTest pending. 네 지정 검사는 아직 미실행. |
 
 #357 이후 광고 검사 재통과로 #356 내부 원인을 확정하지 않는다. #359의 별도 burst 수정/통과는 #353의 동일 원인 해결로 소급하지 않는다. 기존 routine은 development이며 qualification/package/전체 OBS 단계는 미실행이었다. #364 조회 불가를 성공·실패·현재 실행 중 어느 것으로도 새로 분류하지 않는다.
 
 ## 이번 검증 상태
 
-- **코드:** 위 기준의 panel/lifecycle 원본 Git blob을 로컬에서 대조한 뒤 수정했다. 검사한 새 원격 blob은 panel `3fa30edb73d08495505a28ec4fbb03cfb69d9965`, lifecycle `f16a5d38ec98ed8f14c59992ce527681d3447f0a`. 반영 완료 후 정확한 코드 커밋과 실행 ID를 이 항목에 기록한다.
+- **코드:** 위 기준의 panel/lifecycle 원본 Git blob을 로컬에서 대조한 뒤 수정했다. 검사한 새 원격 blob은 panel `3fa30edb73d08495505a28ec4fbb03cfb69d9965`, lifecycle `f16a5d38ec98ed8f14c59992ce527681d3447f0a`. 원격 코드 커밋은 `61f81158cbcd965822e80aa4771be8f25553af85`이며 비교 결과 이 세 파일만 변경됐다. 원격 panel/test blob이 검사한 로컬 파일과 일치함을 확인했다. 이후 실행 상태 기록은 이 계획만 바꾼다.
 - **로컬 실행:** 실제 `show_pattern`/`begin_capture`/`stop` 본문과 현재 `VideoOutputCheck`를 사용하고 Win32/캡처만 대체한 검사에서 원본은 GCC·Clang 모두 늦은 Stop 후 worker 시작 및 패턴 부활에 각각 실패. 수정본은 C++20 `-Wall -Wextra -Werror -pedantic`, Clang ASan+UBSan에서 각각 **40 assertion 통과**. stop 세대 증가·start 재검사·pattern 재검사를 하나씩 제거한 세 변형은 각각 실패했다. 취소 뒤 새 확인으로 재개, 미확인/미그림/만료, mask 실패, shutdown, 즉시 시작 거절과 선택 폐기도 검사했다.
 - **검사 코드 검토:** 추가 native helper/흐름을 Win32 선언 stub·near 매크로와 함께 GCC/Clang에서 문법 검사했다. 기존 lifecycle의 모든 줄/조건을 유지한 추가임을 대조했고, CMake60초 및 기존 시간/픽셀 기준은 수정하지 않았다. 이는 MSVC/SDK 전체 빌드나 실제 WGC 실행 근거가 아니다.
-- **새 Windows:** 아직 미실행. 반영 후 새 코드의 실행 등록/실제 상태를 확인하며 #363 통과나 #364 과거 진행 상태로 대신하지 않는다. 기존 실행 재시도·검증 태그·qualification은 요청하지 않는다.
+- **새 Windows:** **#365 / `37935365412` / `113836005952`: in_progress, conclusion=null**. 마지막 확인은 `Build OBS development libraries` 실행 중이며 `Build and test ChatView`는 pending이다. `chat-view-obs-capture-scene`, `chat-view-video-target-loss`, `chat-view-video-output-lifecycle`, `chat-view-window-capture` 각각은 아직 미실행/결과 없음이다. #363 통과나 #364 과거 진행 상태로 대신하지 않는다. 기존 실행 재시도·검증 태그·qualification은 요청하지 않았고 이 문서 갱신은 native 실행을 취소하지 않는다.
 - **미실행 범위:** 로컬 Windows/WGC/libobs/WebView2, 실제 OBS frontend 전체 흐름·물리 투컴 수신 영상·실계정·유료 정산·전체 배포 qualification.
 
 ### 다음 사용자 흐름
 
-새 코드의 Windows 결과를 먼저 확인하고 **해제 취소 → 패턴/재개 직전 중지 → 검정 유지 → 새 패턴 확인 후 같은 출력창 재개**를 마무리한다. 실패하면 해당 경로부터 수정한다. 네 지정 검사 결과를 각각 확인하고 #364의 조회 불가를 통과로 덮지 않는다. 대상 상실/재선택·엔진 resize를 다시 만들거나 시간/색상/재시도 한도를 늘리지 않는다.
+최신 OBS와 지정 문서를 순서대로 읽고 **#365 / `37935365412` / `113836005952`**의 Windows 결과를 먼저 확인한다. **해제 취소 → 패턴/재개 직전 중지 → 검정 유지 → 새 패턴 확인 후 같은 출력창 재개**를 마무리한다. 실패하면 해당 경로부터 수정한다. 네 지정 검사 결과를 각각 확인하고 #364의 조회 불가를 통과로 덮지 않는다. 대상 상실/재선택·엔진 resize를 다시 만들거나 시간/색상/재시도 한도를 늘리지 않는다.
 
 OBS만 변경한다. main·새 작업 브랜치·검증 태그·강제 push, 새 브라우저 복구/인증/기기등록/표시키/옛 ZIP, 게임 PC OBS, 임의 HP/단가/지급 규칙을 추가하지 않는다. D1/D2/D4/D6는 해당 근거 전까지 남긴다. 별도 보고서 대신 이 문서를 갱신한다.
 

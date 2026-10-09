@@ -211,11 +211,15 @@ void VideoOutputPanel::identify()
     confirming_ = false;
     if (answer != IDYES || epoch != selection_epoch_ || !topology(true)) return;
     ensure_output();
+    if (epoch != selection_epoch_ || closing_) return;
     show_pattern();
 }
 void VideoOutputPanel::show_pattern()
 {
+    const auto epoch = selection_epoch_;
     if (capture_.running() || requested_ || !output_intact() || !mask()) throw std::runtime_error("Pattern output unavailable");
+    // Synchronous cover messages may have delivered a later Stop.
+    if (epoch != selection_epoch_ || closing_) return;
     std::uint32_t identifier = 0;
     if (BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&identifier), static_cast<ULONG>(sizeof(identifier)), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
         throw std::runtime_error("Pattern label unavailable");
@@ -279,10 +283,13 @@ void VideoOutputPanel::begin_capture()
 {
     // The worker-start boundary owns the single-use check, including restart.
     // Callers must not consume it themselves or revive a stopped selection.
-    if (!check_.confirm(GetTickCount64(), selection_epoch_)) {
+    const auto epoch = selection_epoch_;
+    if (!check_.confirm(GetTickCount64(), epoch)) {
         stop(L"유효한 새 시험 패턴을 확인한 뒤 게임 출력을 다시 시작하세요."); return;
     }
     if (!mask()) throw std::runtime_error("Video cover unavailable");
+    // mask() sends window messages. A Stop processed there wins over this start.
+    if (epoch != selection_epoch_ || closing_) return;
     requested_ = capture_.start(source_, output_);
     if (!requested_) {
         interrupt(L"선택한 창의 캡처를 시작하지 못했습니다. 검은 출력창을 유지합니다. 목록을 새로고침하고 새 대상·시험 패턴부터 다시 선택하세요.");
@@ -349,6 +356,7 @@ void VideoOutputPanel::stop(const wchar_t *message) noexcept
     // Retire it before masking can synchronously dispatch owner messages.
     releasing_ = false;
     requested_ = false;
+    ++selection_epoch_; // Cancel in-flight consent without discarding live choices.
     const bool covered = mask();
     capture_.stop();
     notice(covered ? message : L"검은 덮개를 확인하지 못했습니다. 수신 PC의 장면을 즉시 중지하세요. 캡처 중지를 요청했습니다.");

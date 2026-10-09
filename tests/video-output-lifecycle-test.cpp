@@ -387,6 +387,92 @@ void cancel_release_restart(chatview::VideoOutputPanel &panel, HWND controls, HW
         Access::cover(panel) == cover && IsWindowVisible(hud), "explicit restart preserves output binding and visible HUD");
     std::cout << "Pending release cancelled by later Stop: real dialog, black pixels, same HWNDs and new-pattern restart passed\n";
 }
+// Deliver a real Stop command from a synchronous paint of the production cover.
+// The ordering is injected, not a driver stall or physical receiver assertion.
+class StopOnCoverPaint final {
+public:
+    StopOnCoverPaint(HWND cover, HWND controls) : cover_(cover), controls_(controls)
+    {
+        expect(active_ == nullptr, "one scoped cover paint interception");
+        previous_ = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(cover_, GWLP_WNDPROC));
+        expect(previous_ != nullptr, "production cover window procedure");
+        active_ = this;
+        if (!SetWindowLongPtrW(cover_, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(procedure))) {
+            active_ = nullptr;
+            throw std::runtime_error("intercept production cover paint");
+        }
+    }
+    ~StopOnCoverPaint()
+    {
+        SetWindowLongPtrW(cover_, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previous_));
+        active_ = nullptr;
+    }
+    StopOnCoverPaint(const StopOnCoverPaint &) = delete;
+    StopOnCoverPaint &operator=(const StopOnCoverPaint &) = delete;
+    bool delivered() const noexcept { return delivered_; }
+private:
+    static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+    {
+        auto &self = *active_;
+        if (message == WM_PAINT && !self.delivered_) {
+            self.delivered_ = true; // The Stop itself paints; never inject recursively.
+            SendMessageW(self.controls_, WM_COMMAND, 205, 0);
+        }
+        return CallWindowProcW(self.previous_, window, message, wparam, lparam);
+    }
+    inline static StopOnCoverPaint *active_ = nullptr;
+    HWND cover_, controls_;
+    WNDPROC previous_ = nullptr;
+    bool delivered_ = false;
+};
+void stop_during_restart(chatview::VideoOutputPanel &panel, HWND controls, HWND game, HWND hud)
+{
+    const HWND output = Access::output(panel), cover = Access::cover(panel);
+    auto late = Access::capture(panel).snapshot();
+    SendMessageW(controls, WM_COMMAND, 205, 0); stopped(panel, hud);
+    const auto stopped_frames = Access::capture(panel).snapshot().frames;
+    for (bool preparing_pattern : {false, true}) {
+        Access::pattern(panel, game);
+        await(cyan_bar, "fresh pattern before synchronous cancellation");
+        {
+            StopOnCoverPaint interception(cover, controls);
+            if (preparing_pattern) Access::pattern(panel, game);
+            else expect(!Access::accept_for_fixture(panel), "Stop during mask cancels the older worker start");
+            expect(interception.delivered(), "Stop was delivered inside the cover paint, not before start");
+        }
+        expect(!Access::requested(panel) && !Access::releasing(panel) && !Access::check(panel).active() &&
+            !Access::capture(panel).running() && Access::capture(panel).snapshot().frames == stopped_frames,
+            "synchronous Stop prevents both pattern revival and any new capture");
+        expect(Access::output(panel) == output && Access::cover(panel) == cover && Access::source(panel) == game &&
+            Access::intact(panel) && IsWindowVisible(cover) && !IsWindowEnabled(GetDlgItem(controls, 204)),
+            "cancelled transition preserves the live target and black output HWNDs");
+        await([&] { return output_pixels(RGB(0,0,0), {0,0,320,240}); }, "synchronous cancellation leaves nine black pixels", 2000);
+        wchar_t notice[512]{}; GetDlgItemTextW(controls, 207, notice, 512);
+        expect(std::wstring_view(notice).find(L"출력 중지") != std::wstring_view::npos,
+            "older transition cannot replace the later Stop notice");
+        late.content_at_ms = GetTickCount64(); Access::apply_snapshot(panel, late);
+        SendMessageW(cover, WM_TIMER, 0x435650, 0); panel.tick();
+        expect(!Access::requested(panel) && !Access::check(panel).active() && IsWindowVisible(cover) &&
+            output_pixels(RGB(0,0,0), {0,0,320,240}) && IsWindowVisible(hud),
+            "late status and queued timer cannot revive the cancelled transition or hide HUD");
+        expect(!Access::accept_for_fixture(panel), "cancelled confirmation cannot be reused");
+    }
+    Access::pattern(panel, game); await(cyan_bar, "new pattern after synchronous Stop");
+    expect(!Access::capture(panel).running() && Access::capture(panel).snapshot().frames == stopped_frames,
+        "new identification still does not capture the game");
+    expect(Access::accept_for_fixture(panel) && IsWindowVisible(cover), "new explicit confirmation starts covered");
+    await([&] {
+        const auto value = Access::capture(panel).snapshot();
+        Access::apply_snapshot(panel, value);
+        return Access::requested(panel) && value.frames >= 2 && value.width == 400 && value.height == 300 &&
+            value.status == chatview::WindowCaptureStatus::Capturing &&
+            chatview::video_frame_fresh(GetTickCount64(), value.content_at_ms) &&
+            !IsWindowVisible(cover) && output_pixels(RGB(20,100,180), {0,0,320,240});
+    }, "fresh WGC pixels resume only after a new confirmation", 10000);
+    expect(Access::output(panel) == output && Access::cover(panel) == cover && Access::intact(panel) &&
+        Access::source(panel) == game && IsWindowVisible(hud), "fresh restart preserves output binding and readable local HUD");
+    std::cout << "Synchronous Stop during pattern/restart: no revival, black pixels and explicit same-HWND restart passed\n";
+}
 void exercise(const wchar_t *source_executable)
 {
     pattern_pixels();
@@ -478,6 +564,7 @@ void exercise(const wchar_t *source_executable)
     expect(Access::output(panel) == output && !Access::requested(panel) && black(), "retarget cannot implicitly release existing output");
     start_pixels(panel, game);
     cancel_release_restart(panel, controls, game, hud_window);
+    stop_during_restart(panel, controls, game, hud_window);
     release_answer(panel, IDNO);
     stopped(panel, hud_window);
     expect(IsWindow(output) && !Access::releasing(panel), "declined release retains black output");

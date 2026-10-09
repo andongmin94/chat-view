@@ -340,8 +340,36 @@ ${this.#form(b, '/account/cancel', '취소')}
       if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/account')) {
         if (!b?.owner) throw new DisplayAccessError(401);
         const account = this.#creators.describe(b.owner);
+        const gamingApproved = account.connections.filter(connection => connection.role === 'gaming').length;
+        const streamingApproved = account.connections.filter(connection => connection.role === 'streaming').length;
+        const outputText = account.output.state === 'unknown' ? '최근 유효한 송출 PC 출력 보고 없음'
+          : account.output.streaming ? '최근 송출 활성 보고 수신 (실제 영상 미검증)'
+          : account.output.recording ? '최근 녹화 활성 보고 수신 (방송 송출 미확인)'
+          : '최근 출력 비활성 보고 수신 (미리보기 배치 가능)';
         this.#page(response, '내 채팅과 연결', `${this.#accountNotice(b)}<p>채널: <strong>${escape(account.channel.channelName)}</strong></p>
 <p>채팅 상태: ${escape(account.chatState)} · ${account.authorized ? '치지직 승인 유효' : '앱에서 치지직 재로그인 필요'}</p>
+<section aria-labelledby="two-pc-title" id="two-pc-status">
+<h2 id="two-pc-title">이 계정의 PC 역할·현재 채팅 연결</h2>
+<table><thead><tr><th>앱 실행 역할</th><th>유효한 PC 승인</th><th>지금 열린 채팅 연결</th></tr></thead><tbody>
+<tr data-pc-role="gaming"><th>게임 PC · 개인 HUD</th><td data-approved-count="${gamingApproved}">${gamingApproved}건</td>
+<td data-online-count="${account.presence.gamingConnections}">${account.presence.gamingConnections}개</td></tr>
+<tr data-pc-role="streaming"><th>송출 PC · OBS 역할</th><td data-approved-count="${streamingApproved}">${streamingApproved}건</td>
+<td data-online-count="${account.presence.streamingConnections}">${account.presence.streamingConnections}개</td></tr>
+</tbody></table>
+<p>승인은 해당 역할로 다시 접속할 수 있는 권한이고, 현재 연결은 서버에서 열린 채팅 WebSocket입니다.
+승인된 PC가 오프라인일 수 있고, 연결되어도 실제 채팅 글자 표시·영상 출력·장치 등록을 증명하지 않습니다.</p>
+<p data-output-report="${account.output.state}">송출 PC 출력 상태: ${outputText}.
+이것은 클라이언트의 최근 보고이며, OBS 합성/송출 영상이나 개인 HUD 제외의 검증이 아닙니다.</p>
+<p><a href="/account">현재 연결 다시 확인</a></p>
+<h3>각 PC에서 연결하거나 복귀하는 방법</h3>
+<p>게임 PC에서는 OBS 없이 ChatView companion을 실행해 <strong>게임 PC · 개인 HUD</strong> 역할로 승인합니다.
+송출 PC에서는 OBS 관리 런타임에서 <strong>송출 PC · OBS 역할</strong>을 승인합니다.
+두 역할은 같은 치지직 채널을 선택하더라도 자동으로 다른 역할로 바뀌지 않습니다.</p>
+<p>이전에 승인한 PC가 채팅을 중지했거나 외부 페이지로 전환했다면 해당 PC의 ChatView 연결 패널에서
+<strong>현재 승인으로 자체 채팅 복귀</strong>를 직접 선택하세요. 이 버튼은 원래 역할·승인이 유효할 때만 동작하며,
+새 로그인이나 다른 저장 계정 전환을 자동으로 실행하지 않습니다. 승인 만료·철회 시에는 해당 PC에서 다시 로그인하세요.</p>
+</section>
+<h2>승인된 연결별 해제</h2>
 ${account.connections.map(connection => `<section><p>${connection.role === 'gaming' ? '게임 PC · 개인 HUD' : '송출 PC · OBS 역할'}<br>
 연결: ${connection.connectionId}</p>${this.#form(b!, `/connections/${connection.connectionId}/revoke`, '이 연결 해제')}</section>`).join('')}
 <p><a href="/campaigns">시험 캠페인 선택 · OBS 공개 배너</a> · <a href="/campaigns/activity">비지급 활동 기록</a></p>

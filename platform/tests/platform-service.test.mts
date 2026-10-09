@@ -3,6 +3,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
+import { DisplayGateway } from '../server/chat/display-gateway.mts';
 import { PlatformApplication } from '../server/service/application.mts';
 import type { Tokens } from '../server/chzzk/api.mts';
 import { fixture, tokens, nonce, denied, deferred } from './fixtures/service.mts';
@@ -31,6 +34,87 @@ test('HTTP login of two creators/two PCs routes only each owner chat and role', 
     assert.equal((await f.post(`/login/${duplicate.id}/approve`, alice.b)).status, 409);
     assert.equal(f.store.connections('alice').length, 2);
   } finally { await f.close(); }
+});
+
+test('one creator sees approved roles separately from live gaming/OBS chat peers and returns without a new role',
+  async () => {
+  // Same actual HTTP/SQLite/WebSocket implementation used by the two role
+  // runtimes; provider and physical machines are deliberately synthetic.
+  const f = await fixture({ createDisplay: (access, origin, snapshot) =>
+    new DisplayGateway(access, origin, snapshot) });
+  const sockets: WebSocket[] = [];
+  const open = async (token: string) => {
+    const peer = new WebSocket(f.origin.replace('http:', 'ws:') + '/display/events',
+      { headers: { Authorization: `Bearer ${token}` }, handshakeTimeout: 3000 });
+    sockets.push(peer); peer.on('error', () => {});
+    await once(peer, 'message', { signal: AbortSignal.timeout(3000) });
+    return peer;
+  };
+  const row = (html: string, role: 'gaming' | 'streaming') => {
+    const value = new RegExp(`<tr data-pc-role="${role}">([\\s\\S]*?)<\\/tr>`, 'u').exec(html)?.[1];
+    assert(value, `owner account has an explicit ${role} row`); return value;
+  };
+  const expectRole = (html: string, role: 'gaming' | 'streaming', approved: number, online: number) => {
+    const content = row(html, role);
+    assert(content.includes(`data-approved-count="${approved}"`), `${role} approved independently`);
+    assert(content.includes(`data-online-count="${online}"`), `${role} actual sockets counted independently`);
+  };
+  try {
+    const gaming = await f.connect('alice', 'gaming'), streaming = await f.connect('alice', 'streaming');
+    const bob = await f.connect('bob', 'streaming');
+    assert.equal(gaming.lease.membership.broadcastSessionId, streaming.lease.membership.broadcastSessionId);
+    let html = await f.page('/account', gaming.b);
+    expectRole(html, 'gaming', 1, 0); expectRole(html, 'streaming', 1, 0);
+    assert.match(html, /현재 승인으로 자체 채팅 복귀/u);
+    assert.match(html, /게임 PC에서는 OBS 없이/u);
+    assert.match(html, /data-output-report="unknown"/u);
+    assert.doesNotMatch(html, /channel &lt;bob&gt;|access:bob|refresh:bob/u);
+    const player = await open(gaming.lease.token);
+    html = await f.page('/account', streaming.b);
+    expectRole(html, 'gaming', 1, 1); expectRole(html, 'streaming', 1, 0);
+    const broadcaster = await open(streaming.lease.token);
+    html = await f.page('/account', gaming.b);
+    expectRole(html, 'gaming', 1, 1); expectRole(html, 'streaming', 1, 1);
+    assert.equal((await f.request('/broadcast/output', { method: 'POST', headers: {
+      Authorization: `ChatView-Output ${streaming.lease.outputToken}`,
+      'Content-Type': 'application/json',
+    }, body: JSON.stringify({sequence:1,streaming:false,recording:false,sampleAgeMs:0}) })).status, 200);
+    html = await f.page('/account', gaming.b);
+    assert.match(html, /data-output-report="reported"/u);
+    assert.match(html, /출력 비활성 보고 수신/u);
+    assert.match(html, /OBS 합성\/송출 영상이나 개인 HUD 제외의 검증이 아닙니다/u);
+    const bobHtml = await f.page('/account', bob.b);
+    expectRole(bobHtml, 'gaming', 0, 0); expectRole(bobHtml, 'streaming', 1, 0);
+    assert.match(bobHtml, /data-output-report="unknown"/u);
+    assert.equal((await f.native('/display/refresh', 'ChatView-Session',
+      gaming.lease.sessionToken, 'streaming')).status, 409, 'wrong role cannot replace the open gaming lease');
+    const oldClosed = once(player, 'close', { signal: AbortSignal.timeout(3000) });
+    const resumed = await f.native('/display/refresh', 'ChatView-Session',
+      gaming.lease.sessionToken, 'gaming');
+    assert.equal(resumed.status, 200);
+    const renewed = await resumed.json() as { token: string; membership: typeof gaming.lease.membership };
+    assert.deepEqual(renewed.membership, gaming.lease.membership, 'same membership and role on explicit refresh');
+    await oldClosed;
+    html = await f.page('/account', gaming.b);
+    expectRole(html, 'gaming', 1, 0); expectRole(html, 'streaming', 1, 1);
+    const returning = await open(renewed.token);
+    html = await f.page('/account', streaming.b);
+    expectRole(html, 'gaming', 1, 1); expectRole(html, 'streaming', 1, 1);
+    assert.equal(f.refreshCalls, 0, 'same approved role does not require provider refresh');
+    await f.page('/account', gaming.b);
+    assert.equal((await f.post('/logout', gaming.b)).status, 303);
+    html = await f.page('/account', streaming.b);
+    expectRole(html, 'gaming', 1, 1); expectRole(html, 'streaming', 1, 1);
+    const broadcasterClosed = once(broadcaster, 'close', { signal: AbortSignal.timeout(3000) });
+    assert.equal((await f.post(`/connections/${streaming.lease.membership.connectionId}/revoke`,
+      streaming.b)).status, 303);
+    await broadcasterClosed;
+    html = await f.page('/account', streaming.b);
+    expectRole(html, 'gaming', 1, 1); expectRole(html, 'streaming', 0, 0);
+    assert.match(html, /data-output-report="unknown"/u);
+    assert.equal(returning.readyState, WebSocket.OPEN, 'other approved role remains usable');
+    expectRole(await f.page('/account', bob.b), 'streaming', 1, 0);
+  } finally { for (const peer of sockets) peer.terminate(); await f.close(); }
 });
 
 test('native renewal/logout and browser per-connection revocation are creator scoped', async () => {

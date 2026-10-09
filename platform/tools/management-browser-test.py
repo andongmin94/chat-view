@@ -197,6 +197,24 @@ def run() -> None:
                             expect(flow.page).to_have_url(f.origin + "/campaigns")
                             assert source.input_value() == public_url, "evidence navigation cannot change public OBS URL"
                             results.append("selected campaign copies public OBS URL and returns from private evidence intact")
+                        elif path == "/account":
+                            # The fixture keeps one Alice streaming-role peer open.
+                            # Its gaming approval count is zero; Bob's distinct
+                            # gaming approval must never show on Alice's page.
+                            expect(flow.page.get_by_role("heading",
+                                name="이 계정의 PC 역할·현재 채팅 연결")).to_have_count(1)
+                            gamer = flow.page.locator('[data-pc-role="gaming"]')
+                            sender = flow.page.locator('[data-pc-role="streaming"]')
+                            expect(gamer.locator('[data-approved-count]')).to_have_attribute("data-approved-count", "0")
+                            expect(gamer.locator('[data-online-count]')).to_have_attribute("data-online-count", "0")
+                            expect(sender.locator('[data-approved-count]')).to_have_attribute("data-approved-count", "1")
+                            expect(sender.locator('[data-online-count]')).to_have_attribute("data-online-count", "1")
+                            expect(flow.page.locator('[data-output-report="unknown"]')).to_have_count(1)
+                            expect(flow.page.locator("#two-pc-status")).to_contain_text("게임 PC에서는 OBS 없이")
+                            expect(flow.page.locator("#two-pc-status")).to_contain_text("현재 승인으로 자체 채팅 복귀")
+                            flow.page.get_by_role("link", name="현재 연결 다시 확인").click()
+                            expect(sender.locator('[data-online-count]')).to_have_attribute("data-online-count", "1")
+                            results.append("owner roles, server socket presence and explicit native return are distinct")
                         elif path == "/campaigns/activity":
                             for stage in ("output", "audience", "exposure"):
                                 expect(flow.page.locator(f'[data-evidence-stage="{stage}"]')).to_have_count(1)

@@ -28,7 +28,7 @@ export function deferred<T>() {
 type Options = {
   path?: string; key?: Uint8Array; now?: () => number;
   createDisplay?: (access: DisplayAccess, origin: () => string, snapshot: () => unknown) =>
-    Pick<DisplayGateway, 'changed' | 'upgrade' | 'close' | 'report' | 'outputFor'>;
+    Pick<DisplayGateway, 'changed' | 'upgrade' | 'close' | 'report' | 'outputFor' | 'connectionCounts'>;
 };
 export async function fixture(options: Options = {}) {
   const now = options.now ?? Date.now;
@@ -81,6 +81,7 @@ export async function fixture(options: Options = {}) {
       if (options.createDisplay) return options.createDisplay(access, () => origin, snapshot);
       const capture = { snapshot, changed: 0 }; gateways.push(capture);
       return { changed() { capture.changed++; }, close() {},
+        connectionCounts() { return { gamingConnections: 0, streamingConnections: 0 }; },
         outputFor() { return { state: 'unknown' as const }; },
         report(): never { throw new Error('Synthetic fixture does not accept output reports'); },
         upgrade() { throw new Error('Synthetic fixture does not claim a WebSocket handshake'); } };

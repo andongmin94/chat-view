@@ -146,17 +146,23 @@ export class DisplayGateway {
     if (!this.#clients.size) return;
     this.#flush ??= setTimeout(() => { this.#flush = undefined; this.#broadcast(); }, 50);
   }
+  // Use the same actual open WebSocket presence in private frames and the
+  // owner's read-only account view. Approval and physical/video validity are
+  // never inferred from a socket's OPEN state.
+  connectionCounts(broadcastSessionId: string): Readonly<{gamingConnections: number; streamingConnections: number}> {
+    const gaming = new Set<string>(), streaming = new Set<string>();
+    if (!this.#closed) for (const [peerId, peer] of this.#clients) {
+      if (peer.readyState !== WebSocket.OPEN) continue;
+      const other = this.#access.membership(peerId);
+      if (!other || other.broadcastSessionId !== broadcastSessionId) continue;
+      (other.role === 'gaming' ? gaming : streaming).add(other.connectionId);
+    }
+    return { gamingConnections: gaming.size, streamingConnections: streaming.size };
+  }
   #connection(id: string): DisplayConnectionState {
     const membership = this.#access.membership(id);
     if (!membership) throw new DisplayAccessError(401);
-    const gaming = new Set<string>(), streaming = new Set<string>();
-    for (const [peerId, peer] of this.#clients) {
-      if (peer.readyState !== WebSocket.OPEN) continue;
-      const other = this.#access.membership(peerId);
-      if (!other || other.broadcastSessionId !== membership.broadcastSessionId) continue;
-      (other.role === 'gaming' ? gaming : streaming).add(other.connectionId);
-    }
-    return { ...membership, gamingConnections: gaming.size, streamingConnections: streaming.size,
+    return { ...membership, ...this.connectionCounts(membership.broadcastSessionId),
       captureState: 'unverified', output: this.#output.snapshot(leaseId => {
         const other = this.#access.membership(leaseId);
         return this.#clients.get(leaseId)?.readyState === WebSocket.OPEN &&

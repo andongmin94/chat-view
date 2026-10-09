@@ -17,7 +17,7 @@ import type { StoredProviderGrant } from './provider-grants.mts';
 export type BrowserIdentity = Readonly<{ channel: Channel; revision: number }>;
 
 type Chat = Pick<ChzzkChatSession, 'start' | 'stop' | 'snapshot'>;
-type Gateway = Pick<DisplayGateway, 'changed' | 'upgrade' | 'close' | 'report' | 'outputFor'>;
+type Gateway = Pick<DisplayGateway, 'changed' | 'upgrade' | 'close' | 'report' | 'outputFor' | 'connectionCounts'>;
 type Provider = Pick<ChzzkApi, 'exchangeCode' | 'getUser' | 'refresh' | 'revoke'>;
 type Creator = {
   channel: Channel; tokens?: Tokens; expires: number; epoch: number; revision?: string;
@@ -90,9 +90,16 @@ export class Creators {
     return c;
   }
   describe(owner: string) {
-    const c = this.#get(owner);
+    const c = this.#get(owner), connections = this.sessions.connections(owner);
+    // Only existing approved memberships and their currently open server
+    // sockets. A management GET cannot resume a peer or grant another role.
+    const presence = connections.length
+      ? c.gateway.connectionCounts(connections[0]!.broadcastSessionId)
+      : { gamingConnections: 0, streamingConnections: 0 };
+    const streamer = connections.find(connection => connection.role === 'streaming');
+    const output = streamer ? this.outputFor(owner, streamer) : UNKNOWN_OUTPUT;
     return { channel: c.channel, authorized: !!c.tokens && c.expires > this.#now(),
-      chatState: c.chat?.snapshot().state ?? 'stopped', connections: this.sessions.connections(owner) };
+      chatState: c.chat?.snapshot().state ?? 'stopped', connections, presence, output };
   }
   access(owner: string): DisplayAccess { return this.#get(owner).access; }
   #stopChat(c: Creator) {

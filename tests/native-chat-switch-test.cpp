@@ -28,6 +28,7 @@ struct NativeChatConnectionTestAccess {
     static NativeChatSurface &surface(NativeChatConnection &c) { return c.surface_; }
     static auto membership(NativeChatConnection &c) { return c.connection_state_; }
     static bool first_text_rendered(NativeChatConnection &c) { return c.first_text_rendered_; }
+    static void cached_status(NativeChatConnection &c, NativeChatStatus status) { c.displayed_status_ = status; }
 };
 struct NativeChatSurfaceTestAccess {
     static ICoreWebView2 *core(NativeChatSurface &s) { return s.webview_.Get(); }
@@ -279,6 +280,15 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
             "deliver a synthetic invalid renderer frame to the real owned DOM");
         await(chat, [&] { return !Access::active(chat); }, "first-display rejection stops native delivery");
         await(chat, [&] { return !Access::client(chat).running(); }, "worker stops without discarding approval");
+        // Race: the worker finishes just before the message loop computes its
+        // next wait. A still-visible Stopping label must force one more tick
+        // even with no worker/events, then return to idle waiting after refresh.
+        Access::cached_status(chat, Status::Stopping);
+        expect(chat.wait_timeout() == 100U, "stale Stopping label keeps the owner loop awake");
+        chat.tick();
+        expect(chat.wait_timeout() == INFINITE, "worker completion and refreshed panel restore idle waiting");
+        expect(IsWindowEnabled(GetDlgItem(dialog, 112)) != FALSE,
+            "existing explicit return button activates without new user input");
         expect(!Access::surface(chat).ready() && !Access::membership(chat).has_value() &&
             !Access::first_text_rendered(chat), "failure clears private document, metadata and first-text status");
         expect(text(dialog, 106).find(L"현재 승인으로 자체 채팅 복귀") != std::wstring::npos,

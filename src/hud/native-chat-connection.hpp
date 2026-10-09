@@ -20,7 +20,15 @@ public:
     bool open_dialog() noexcept;
     void tick() noexcept;
     void observe_outputs(ObsOutputObservation sample) noexcept { client_.observe_outputs(sample); }
-    [[nodiscard]] DWORD wait_timeout() const noexcept { return active_ || auto_connect_pending_ || signing_out_ || client_.running() ? 100U : INFINITE; }
+    [[nodiscard]] DWORD wait_timeout() const noexcept
+    {
+        // The worker can finish between tick() and the message-loop wait.
+        // Keep ticking only while a real panel still displays "Stopping";
+        // otherwise its explicit return button may remain disabled forever.
+        const bool pending_status = dialog_ && displayed_status_ == NativeChatStatus::Stopping;
+        return active_ || auto_connect_pending_ || signing_out_ || client_.running() ||
+            pending_status ? 100U : INFINITE;
+    }
     void close() noexcept;
 private:
     friend struct NativeChatConnectionTestAccess;

@@ -110,7 +110,7 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 - **이번 사용자 흐름 — 캠페인 관리 준비 상태:** G5-01/02의 기존 캠페인 관리 페이지가 "선택됨" 외에 **공개 배너 서버 준비 상태**를 표시한다. 서버가 해당 브라우저 계정의 기존 `Campaigns.status(owner)`와 공개 소스와 동일한 `Campaigns.snapshot(sourceId)`를 읽어 `not-selected` / `waiting-report` / `report-ready`를 계산한다. 새로운 상태 저장·인증·조회/광고 노출 데이터나 별도 스케줄러는 없다. ready는 최신 송출 PC *출력 보고*를 받아 시험 배너를 표시할 조건이라는 뜻뿐이고, 녹화/미리보기·비송출에서도 충족될 수 있어 실제 OBS 렌더·시청자 노출·지급 근거로 표시하지 않는다. 관리자 페이지에 새로고침 링크를 제공하며 공개 URL은 중지 후에도 기존대로 유지한다.
 - **실제 서비스 연결 검사:** 기존 HTTP/SQLite/WebSocket `campaign-flow`가 Alice/Bob 두 계정에서 선택만 했을 때 waiting, 상대방 출력 보고 후 격리, 본인 보고 후 ready, Stop 후 stopped/다른 계정 유지, 동일 URL 재선택, 15초 보고 만료 후 waiting, 새 보고 후 ready를 새 실제 관리자 HTTP에서 검사한다. 사용자 노출 여부를 가정하지 않는다. `ad-pages`도 no-JS/CSRF/HTML 상태 및 보안 경계를 확인한다.
 - **직전 #374:** 코드 `1cda0c0ef616ed9f9aa345e37821464f5b0bef2e`, Windows run `37960224150`, job `113920936588`: completed/success, **40/40, 135.28초**. 실제 지연 모듈 HTTP 내 NavigationCompleted·CSS/DOM 검사가 포함된 `chat-view-public-ad-browser` 13.21초, native-chat-switch18.14초, WGC/OBS core 통과. 공식 OBS CEF #11의 합성 영상 13/13 통과와 구분한다. 오래된 D7/#371과 #10의 실패 인과·반복 안정성은 미확정.
-- **이번 코드 검증:** 원격 새 SHA/CHZZK·공식 OBS 흐름 등의 실행 상태는 확인 후 기록한다. 미완료 D1/D2/D4/D6/D7, 실계정·물리 투컴·배포 qualification 및 G5 HP/보상 미정 규격은 그대로 둔다.
+- **이번 코드와 검증:** code `c63aeb49ccd4e00e56dd04894cc7836e9f05c445`, 단일 fast-forward. CHZZK contract **#56/run `37962152483`**에서 Windows/Linux Node22/24 4개 + Chromium 관리 1개 **5/5 job completed/success**. 실제 HTTP·SQLite·WS `campaign-flow`는 선택/보고 대기/다른 계정 격리/ready/Stop/같은 URL 재선택/보고15초 만료/보고 갱신을 통과했다. 공식 OBS public-ad-flow **#12/run `37962152677`/job `113927407134` completed/success**, OBS32.2.2/CEF 실제 합성 PNG **13/13** (정위치, 축소, 숨김, 중지·재선택, 장면/미리보기/종료·복귀 포함). Windows development **#375/run `37962152420`**의 native scope는 completed/success이고 x64는 **skipped**: C++ 수정이 없으므로 네이티브 40/40으로 세지 않는다. 변경된 UI는 서버/브라우저 사용자가 볼 수 있는 준비 구분이지만, 실계정/실수신 영상·관중 노출/결제 증명이 아니다. 미완료 D1/D2/D4/D6/D7 및 실제 장비·배포 qualification, G5 HP·보상 미정 규격은 유지한다.
 
 - **최신 광고 코드:** `1cda0c0ef616ed9f9aa345e37821464f5b0bef2e`. 공개 HTML에 CSS를 LF로 정규화해 포함하고 정확한 SHA-256 CSP 해시로 허용한다. 후속 광고 모듈은 비동기이고 실행 전에는 투명 상태를 유지한다. 이전 공개 CSS URL은 폐기, 별도 개인/결제 콘텐츠 추가 없음.
 - **치지직 계약 #55:** run `37960224055`, Chromium 관리 및 Node22/24×Windows/Linux **5/5 job success**. 실제 CHZZK OAuth 인증은 아님.
@@ -153,7 +153,7 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 
 ### 다음 사용자 흐름
 
-이번 G5 계정 캠페인 페이지의 **선택 → 최신 송출 PC 보고 대기 → 시험 배너 서버 준비 → 중지 → 같은 URL 재선택 → 보고 만료 → 보고 재개** 표시 상태를 서비스 계약 검사로 검증한다. 실패하면 실제 상태 계산·계정 경계를 수정한다. 통과하면 기존 OBS 공개 소스 설정/사용자 안내와 연결되는 다음 제품 흐름을 추진한다. 두 PC의 실제 캡처·송출/시청자 화면 인증과 G5 HP·수익은 미정 규격과 실제 근거 없이는 완료 처리하지 않는다. D1/D2/D4/D6/D7와 qualification 경계는 유지한다.
+캠페인 관리의 **선택 → 보고 대기 → 시험 배너 준비 → 중지 → 동일 공개 URL 재선택 → 보고 만료·갱신**은 #56의 실제 서버/브라우저 계약과 공식 OBS CEF #12의 13개 합성 영상 조건에서 통과했다. 다음 사용자 흐름은 **기존 관리 페이지에서 OBS 브라우저 소스 설정·초기 표시 확인을 사용자가 실수 없이 진행하도록 개선**하는 것으로 한다. 사용자가 직접 OBS에 소스를 추가하도록 유지하고, 현재 서버가 확인할 수 없는 OBS 실제 합성/시청자 노출을 readiness로 오표시하거나 계측 실적·HP·정산 규격을 임의 생성하지 않는다. D1/D2/D4/D6/D7 및 실계정·물리 투컴·공식 배포 qualification의 미완료는 해당 근거가 나올 때까지 보존한다.
 
 OBS만 변경한다. main·새 작업 브랜치·검증 태그·강제 push, 새 브라우저 복구/인증/기기등록/표시키/옛 ZIP, 게임 PC OBS, 임의 HP/단가/지급 규칙을 추가하지 않는다. D1/D2/D4/D6/D7는 해당 근거 전까지 남긴다. 별도 보고서 대신 이 문서를 갱신한다.
 

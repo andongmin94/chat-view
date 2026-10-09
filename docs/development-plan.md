@@ -1,6 +1,6 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-10 (Asia/Seoul). 이번 시작 기준 **`8623c7bdf114a8315d0f91a08177ff6f326e28e2`**. 최신 OBS와 AGENTS → PRODUCT → development-workflow → architecture → 이 문서를 순서대로 읽었다. **#364 / run `37275017123` / job `111650053171`은 현재 jobs 조회 404이며, 코드 `af41b5c28e3ba96b66e8455fa2a12b6b777e35bb`의 실행 목록도 0건이다.** 삭제·권한·보관 등 원인은 단정하지 않는다. 이전 마지막 확인은 실행 중이었고 최종 성공/실패는 여전히 미확정이다.
+갱신: 2026-10-10 (Asia/Seoul). 최근 사용자 오류 복구 코드 **`c478f789e3ae59a4278b00cb658083043d7d9b4f`** 및 UI 완료 표시 경계 보강 코드 **`a91921f87ad361b6dfdbcc32fcef4ee9a5e18be6`**를 OBS에 반영했다. 최신 OBS와 AGENTS → PRODUCT → development-workflow → architecture → 이 문서를 순서대로 읽었다. **#364 / run `37275017123` / job `111650053171`은 현재 jobs 조회 404이며, 코드 `af41b5c28e3ba96b66e8455fa2a12b6b777e35bb`의 실행 목록도 0건이다.** 삭제·권한·보관 등 원인은 단정하지 않는다. 이전 마지막 확인은 실행 중이었고 최종 성공/실패는 여전히 미확정이다.
 이번 시작 기준 `4a4085df1a2cbcd154d80808c8bdd2add5866312`. D1의 최초 채팅 표시에서 이전 설정 페이지의 취소/오래된 navigation 이벤트를 새 자체 문서의 잘못된 종료로 취급할 수 있는 구간을 수정했다. 새 문서 URL 연결 전 구 페이지 이벤트만 무시하고, 새 문서의 소유권·탐색 ID·nonce handshake와 표시 확인을 그대로 요구한다. WebView2 실제 DOM 첫 메시지 4개 고정 전환 회귀를 추가하며 15초 검사 시간은 유지한다. #294/#366의 기존 간헐 실패와 동일한 원인이라고 확정하지 않는다. **코드 `bf272ec18dc648e2f569cb83fa25d1ee40816cd0`, Windows #368 / run `37947737894` / job `113878352527`는 빌드 성공·40/40·144.09초, 완료**. 같은 기능의 후속 사용자 표시 흐름은 `006ae2c`/#369에서 별도로 검증했다.
 #365는 코드 `61f81158cbcd965822e80aa4771be8f25553af85`, run `37935365412`에서 빌드 성공·39/40(WGC static sequence6 실패)이었다. 그 다음 **#366 / code `f00dc3dcb1b2509a6d80a4e4f5af43438e143a18` / run `37941705504` / Windows x64 job `113857516728`은 빌드 성공·37/40, 150.33초, failure**. WGC 첫 크기 증가에서 E_UNEXPECTED(`0x8000FFFF`), native video lifecycle의 resize 실패, 독립적인 native-chat-switch 첫 표시 실패였다. 잘린 성장 프레임에서 pool과 session을 함께 교체한 코드 `4b711c244efba276e3f783c213124390dfab2154`를 원격에 반영했다. **Windows #367 / run `37943089840` / job `113862282591`: 빌드 성공, 39/40, 165.17초, failure.** WGC 12단계 정지 재그리기·실제 픽셀/여백과 패널 재개, target-loss, OBS core 및 native chat switch는 통과했다. 별개 `chat-view-hud-smoke`가 30.53초로 30초 제한을 초과했으며 원인은 미확정이다.
 이 문서가 유일한 현재 작업 목록이다. 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다.
@@ -56,14 +56,14 @@
 개인 HUD·OBS 활동 보고·채널 시청자 추정은 검증된 광고 시청 실적이 아니다. 시험 수치는 지급 불가다.
 
 - [x] **G5-01 — 시험 캠페인 목록·선택·중지.** 계정/CSRF·송출 승인 결합·철회·재시작 보존·재선택. 브라우저 복구/전환은 기존 선택을 바꾸지 않는다.
-- [x] **G5-02 — 별도 OBS 공개 시험 소스.** `f083dc7`의 OBS32.2.2/CEF 합성 PNG13개 검사. 사용자 URL 배치이며 실방송/녹화·개인 HUD 제외 보장은 아님.
+- [x] **G5-02 — 별도 OBS 공개 시험 소스.** `f083dc7`의 OBS32.2.2/CEF 합성 PNG13개 검사. 사용자 URL 배치이며 실방송/녹화·개인 HUD 제외 보장은 아님. #371에서 공개 광고 브라우저 첫 탐색 완료 이벤트 미도착 실패가 다시 관찰돼 첫 표시 신뢰성은 D7로 유지.
 - [ ] **G5-03 — 시청시간 집계.** 비지급 활동·누락 기록, 공식 Live API 표본·추정/측정 범위. 0명/미측정 구분, 녹화/미리보기 제외, 소유자만 조회, 공개 조회로 증가하지 않음. 수집 기본 꺼짐, 권한·할당량·보관 조건 확인 후 서버 `CHATVIEW_AUDIENCE_SAMPLING=1`. 실제 광고 노출/주의 미검증.
 - [ ] **G5-04 — 서버 HP·수익.** 규격 미정. 비지급/예상/확정 구분, HP0 지급 조건 임의 추가 금지.
 - [ ] **G5-05 — 유료 운영·정산.** 단가·예산·배분·지급·중복/초과·부정 실적·개인정보·광고 고지 필요.
 
 ## R. 통합 후 배포
 
-- [ ] **R-01 — 첫 표시/연결 신뢰성과 방송 안정성.** #366 첫 채팅 표시 실패(D1) 뒤 #367 통과는 인과 미확정. #367 HUD smoke 30초 초과(30.53초)는 원인 미확정이며 임계시간 유지. 해당 경로에서 해결하며 독립 구현은 계속.
+- [ ] **R-01 — 첫 표시/연결 신뢰성과 방송 안정성.** #366 첫 채팅 표시 실패(D1) 뒤 #370/#371의 수동 복구 통과는 인과 미확정. #367 HUD smoke 30초 초과(30.53초) 원인 미확정. #371 공개 광고 브라우저 navigation completion 실패(D7)를 분리하여 기록한다. 기존 시간 한도 유지.
 - [ ] **R-02 — 반복·자원·설치·캡처·패키지 qualification.** routine/개별 flow와 구분.
 - [ ] **R-03 — 원컴/투컴 설치본·안내.** 실험/미지원/검증 범위 구분.
 
@@ -75,6 +75,7 @@
 | D2 | #292 후반 핸들 +104>64; #294 초기 +284>256, 후반 +8. | R-02. 기존 자원 한도 유지. |
 | D4 | CI 캡처 module의 동기 UI-task/join 및 borrowed item은 `510f8e1`에서 보완. #353 좌표는 #354, core queue 정리는 `66fd5a6`/#355에서 통과. #356/#357/#359/#361/#363도 core 통과 기록. | core fixture만 확인. 실제 OBS frontend 종료/장면 전환·qualification 남음. Control Center에 Q4/Q5 시험 UI는 없음. |
 | D6 | `9e9863a`/#339 WGC 첫 픽셀10초 실패, #340 미재현. #353 단발 resize/레터박스 실패. #359 별도 burst단계9 재현 후 `4cbcc5e`/#361 동일 입력·강화 assertion 통과. | 연속 burst만 좁게 확인. #353 인과와 첫 표시 문제는 미해결. #363의 통과와 #365 lifecycle 통과도 종료 근거가 아님; #366는 session+same-pool 재시작의 E_UNEXPECTED, #367는 새로운 pool/session 구현에서 12단계 WGC 통과(원래 #353의 인과 미확정).  #365 sequence 6에서 received=601×201, surface=600×500, pool=601×500, Waiting·검정 정지 재현. |
+| D7 | #371 `chat-view-public-ad-browser` 16.85초 실패: synthetic public-ad browser navigation started=1, completed=0, id=2, success=0, HRESULT=0, web_error=0. #356의 browser assertion callback 실패와 유사한 첫 표시 불안정성이지만 동일 원인은 확인되지 않았다. #370 통과는 이 간헐 상태 종료 근거가 아니다. | G5-02/R-01. 공개 광고 브라우저 초기 표시 미보장, 실제 송출·유료 노출 증거 아님. |
 
 D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-investigation.md](resource-growth-investigation.md).
 
@@ -100,14 +101,18 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 | #368 / `bf272ec18dc648e2f569cb83fa25d1ee40816cd0` | `37947737894` / `113878352527` | **빌드 성공·40/40, 144.09초, completed/success.** native-chat-surface2.85초(첫 DOM4회)·native-display-client25.20초·native-chat-switch14.41초·HUD smoke21.91초·WGC6.72초·output-lifecycle6.10초·target-loss4.97초·core0.07초 통과. #294/#366 D1이나 #367 HUD timeout의 인과는 미확정. |
 | #369 / `006ae2ca6d408de49833e8b16fe439ff0a77a986` | `37952931756` / `113896149170` | **빌드 성공·40/40, 127.90초, completed/success.** 첫 빈 구독→첫 텍스트/동일 승인 복귀 native-chat-switch16.41초·surface2.83초·display-client22.09초·HUD smoke9.21초·WGC6.74초·video-output-lifecycle6.41초·target-loss1.64초·OBS core0.07초 통과. CHZZK #52 별도 5개 job 성공. D1 과거 간헐 실패 인과·실계정/qualification은 미확정. |
 | #370 / `c478f789e3ae59a4278b00cb658083043d7d9b4f` | `37955193990` / `113903875657` | **빌드 성공·40/40, 133.39초, completed/success.** 최초 렌더 거부→동일 승인 복귀(native-chat-switch19.00초), native-chat-surface2.89초, native-display-client21.69초, HUD smoke9.52초, WGC6.79초, lifecycle6.18초, target-loss1.64초, OBS core0.09초 통과. CHZZK #53 Node 4개 성공, Chromium은 별도 미확정. |
+| #371 / `a91921f87ad361b6dfdbcc32fcef4ee9a5e18be6` | `37956504160` / `113908318750` | **빌드 성공·39/40, 163.33초, completed/failure.** `native-chat-switch`21.68초(기존 승인 오류 복귀 및 종료 직후 버튼 UI wake 검사), `native-chat-surface`3.21초·display-client29.22초·HUD smoke11.33초·WGC9.76초·video-output-lifecycle7.33초·target-loss8.68초·core0.98초 통과. `chat-view-public-ad-browser`16.85초 실패: navigation started=1, completed=0, id=2, success=0, HRESULT=0, web_error=0. 본 코드 변경과 다른 영역이며 인과 미확정. |
 
 #357 이후 광고 검사 재통과로 #356 내부 원인을 확정하지 않는다. #359의 별도 burst 수정/통과는 #353의 동일 원인 해결로 소급하지 않는다. 기존 routine은 development이며 qualification/package/전체 OBS 단계는 미실행이었다. #364 조회 불가를 성공·실패·현재 실행 중 어느 것으로도 새로 분류하지 않는다.
 
 ## 이번 검증 상태
 
+- **#371 실제 결과:** `a91921f87ad361b6dfdbcc32fcef4ee9a5e18be6`, run `37956504160`, Windows job `113908318750`: 빌드 및 관련 native 채팅 전환 21.68초 통과. 종료 직후 stale `Stopping` 상태의 100ms 갱신 → 실제 복귀 버튼 활성화 → 유휴 대기 복귀까지 통과. 전체는 **39/40, failure**이며 원래 광고 브라우저 첫 navigation completion 미도착(D7)으로 실패했다. 광고 코드는 이번 수정에서 바꾸지 않았으며 재실행만으로 성공을 주장하지 않는다. 이번 사용자 복구 경로는 좁게 통과했으나 배포 qualification은 아니다.
+- **CHZZK #53:** run `37955193959`에서 Node22/24 × Windows/Linux 네 job success, Chromium management flow cancelled. 전체 성공으로 분류하거나 취소 이유를 단정하지 않는다.
+
 - **이번 변경:** `NativeChatConnection`의 첫 표시 실패(문서 교체·로딩 초과·수신 데이터 거부·WebView2 ACK 초과·메시지 publish 실패)가 자동 로그인이나 다른 계정 교체 없이 기존 읽기 승인을 유지하도록 정리했다. 오류 안내에서 실제 이미 존재하는 **현재 승인으로 자체 채팅 복귀** 조작을 설명한다. 서버 승인 거절·로그아웃·역할 불일치의 별도 정책은 그대로 유지한다.
 - **연결 검사 추가:** 기존 실제 WebView2+WinHTTP `native-chat-switch`의 `memory` 모드가 첫 텍스트 전에 잘못된 버전의 합성 렌더 프레임을 직접 전달해 검증한다. 렌더 거부 뒤 비공개 표시·멤버십·첫 표시 상태를 모두 폐기하고, 원래 승인과 같은 역할/세션/연결ID를 보유한 상태로 사용자가 버튼으로 명시적 복귀한다. 빈 구독 응답 이후 첫 텍스트 수신까지 검증하고, 새 브라우저 로그인·DPAPI 계정 대체·자동 복귀는 거부한다. 기존 15초·모드/테스트 수·성공 기준 완화 없음.
-- **#370 결과:** 원격 코드 `c478f789e3ae59a4278b00cb658083043d7d9b4f`, Windows development #370 run `37955193990`, Windows job `113903875657`: 빌드 성공·40/40, **133.39초**, completed/success. 실제 native-chat-switch19.00초, WinHTTP display-client21.69초, WebView2 surface2.89초, HUD smoke9.52초, WGC6.79초, lifecycle6.18초, target-loss1.64초·OBS core0.09초 통과. 첫 렌더 실패→같은 승인 수동 복귀 검증은 완료됐으나 D1 과거 간헐 인과·실계정/qualification은 미확정. CHZZK #53의 Windows/Linux Node22/24 job 4개는 success, Chromium 관리 흐름은 마지막 확인 시 in_progress.
+- **#370 결과:** 원격 코드 `c478f789e3ae59a4278b00cb658083043d7d9b4f`, Windows development #370 run `37955193990`, Windows job `113903875657`: 빌드 성공·40/40, **133.39초**, completed/success. 실제 native-chat-switch19.00초, WinHTTP display-client21.69초, WebView2 surface2.89초, HUD smoke9.52초, WGC6.79초, lifecycle6.18초, target-loss1.64초·OBS core0.09초 통과. 첫 렌더 실패→같은 승인 수동 복귀 검증은 완료됐으나 D1 과거 간헐 인과·실계정/qualification은 미확정. CHZZK #53은 Windows/Linux Node22/24 job 네 개 completed/success, Chromium 관리 흐름은 completed/cancelled이며 5/5 통과로 세지 않는다.
 - **추가 UI 경계 수정:** `NativeChatConnection::wait_timeout()`은 화면에 `Stopping`을 표시한 사이 작업자가 종료돼도 기존 100ms UI 갱신 한 번을 유지한다. 그렇지 않으면 event가 더 이상 오지 않을 때 복귀 버튼이 화면상 비활성화 상태로 남을 수 있다. 정상 idle에서는 다시 INFINITE 대기하여 지속 폴링하지 않는다. 실제 네이티브 통합 테스트가 worker 완료 직후 stale Stopping 상태를 재현해 버튼 활성화를 확인하도록 추가했다. #370은 이 추가 변경 이전의 성공이고 새 코드의 Windows 결과는 별도다.
 
 - **이번 원격 코드:** `006ae2ca6d408de49833e8b16fe439ff0a77a986`, 기존 OBS HEAD `8623c7bdf114a8315d0f91a08177ff6f326e28e2` 위의 단일 fast-forward. Native 연결창·상태·6모드 실제 첫 텍스트 수신 흐름 및 기존 계약과 이 계획만 변경했다. 서비스 코어·광고 계측·인증·OBS 캡처 로직은 변경하지 않았다.
@@ -131,8 +136,8 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 
 ### 다음 사용자 흐름
 
-#370에서 **첫 텍스트 이전 렌더 데이터 거부 → 비공개 HUD 지우기 → 승인 유지 → 명시적 복귀 → 같은 멤버십의 첫 텍스트 표시**가 통과했다. 추가로 사용자 복귀 버튼이 작업자 종료 직후 메시지 루프의 무기한 대기 때문에 늦게 활성화되는 문제를 수정하고 native 검사를 연결했다. **이 추가 수정의 Windows 결과를 우선 확인**한다. 통과하면 최초 메시지 신뢰성 D1의 간헐 실패 가능성은 유지하되, 정상 경로뿐 아니라 사용자가 회복 가능한 오류 상태까지 확인한 것으로 구분한다. 그다음 G4 실계정 없이 가능한 사용자 흐름을 진행한다. 실계정 없이 확정할 수 없는 제공자 토큰/장시간 수신은 미검증으로 보존한다. 실제 공급자 토큰·실송출·배포 완료로 세지 않는다. 첫 메시지가 표시되지 않으면 안전한 초기 단계 관측으로 수신·문서 로딩·DOM 처리 중 위치를 구분해 고친다. 원인 근거 없이 한도를 늘리거나 전송 체계를 재작성하지 않는다. 별개 #367 HUD smoke 30초 초과는 보존하고 영향 범위를 확인한다. #364 조회 불가는 통과로 덮지 않는다. 대상 상실/재선택·엔진 resize를 다시 만들거나 시간/색상/재시도 한도를 늘리지 않는다.
+최신 OBS와 지정 문서를 순서대로 확인하고 **G5 공개 광고 소스의 첫 브라우저 화면 표시 실패(D7)**부터 진행한다. #371의 navigation started=1, completed=0 증거를 현재 실제 CEF/브라우저 fixture의 표시 흐름과 대조하고, 완료·첫 텍스트/이미지 표시가 안정적으로 확인되도록 필요한 제품 코드를 고친다. 이미 성공한 #370/#371 채팅 수동 복귀 경로와 G3 WGC, 광고·보상 근거 경계는 그대로 둔다. 실패한 브라우저 결과를 단순 재실행이나 시간 기준 확대만으로 종료하지 않는다. CHZZK #53의 Chromium 취소는 성공으로 세지 않는다. D1/D2/D4/D6 및 물리 투컴·실계정·qualification은 해당 근거 전까지 유지한다.
 
-OBS만 변경한다. main·새 작업 브랜치·검증 태그·강제 push, 새 브라우저 복구/인증/기기등록/표시키/옛 ZIP, 게임 PC OBS, 임의 HP/단가/지급 규칙을 추가하지 않는다. D1/D2/D4/D6는 해당 근거 전까지 남긴다. 별도 보고서 대신 이 문서를 갱신한다.
+OBS만 변경한다. main·새 작업 브랜치·검증 태그·강제 push, 새 브라우저 복구/인증/기기등록/표시키/옛 ZIP, 게임 PC OBS, 임의 HP/단가/지급 규칙을 추가하지 않는다. D1/D2/D4/D6/D7는 해당 근거 전까지 남긴다. 별도 보고서 대신 이 문서를 갱신한다.
 
 미확정 입력: 실제 앱/채널·수집 조건/할당량, 투컴 배선/기기, HP/보상 규격, 인프라. 비밀은 대화/공개 저장소에 넣지 않는다.

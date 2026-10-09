@@ -58,8 +58,11 @@ test('existing account chooses a test campaign; separate public page renders onl
     assert(inline, 'selected owner receives the fixed URL copy helper');
     const hash = `'sha256-${createHash('sha256').update(inline).digest('base64')}'`;
     const setupCsp = management.headers.get('content-security-policy')!;
-    assert(setupCsp.includes(`script-src ${hash}`), 'management permits only its exact copy script');
-    assert(!/unsafe-inline|unsafe-eval/u.test(setupCsp), 'new script permission cannot bypass CSP');
+    const scriptDirective = setupCsp.split(';').map(value => value.trim())
+      .find(value => value.startsWith('script-src '));
+    assert.equal(scriptDirective, `script-src ${hash}`, 'only the exact copy script is executable');
+    assert(setupCsp.includes("style-src 'unsafe-inline'"),
+      'existing management styling permissions remain unchanged');
     assert(setup.includes(`value="${f.origin}/public/ads/${aliceId}"`), "owner setup URL matches the live public source");
     assert.match(setup, /name="csrf"/u);
     assert.match(setup, /페이지 권한 \(Page permissions\)/u);

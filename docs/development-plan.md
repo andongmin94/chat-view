@@ -56,7 +56,7 @@
 개인 HUD·OBS 활동 보고·채널 시청자 추정은 검증된 광고 시청 실적이 아니다. 시험 수치는 지급 불가다.
 
 - [x] **G5-01 — 시험 캠페인 목록·선택·중지.** 계정/CSRF·송출 승인 결합·철회·재시작 보존·재선택. 브라우저 복구/전환은 기존 선택을 바꾸지 않는다.
-- [x] **G5-02 — 별도 OBS 공개 시험 소스.** `f083dc7`의 OBS32.2.2/CEF 합성 PNG13개 검사. 사용자 URL 배치이며 실방송/녹화·개인 HUD 제외 보장은 아님. #371의 첫 탐색 미완료 D7을 겨냥해 투명 HTML과 필수 CSS를 한 응답에 전달하고 외부 광고 모듈은 비동기 로딩하도록 보강했다. 이 코드의 native/CEF 확인 전까지 D7은 미해결.
+- [x] **G5-02 — 별도 OBS 공개 시험 소스.** `f083dc7` 이후 독립 공개 배너. `1cda0c0`의 HTML 투명 껍데기·LF 정규화·비동기 모듈은 **공식 OBS32.2.2/CEF #11에서 합성 PNG 13개 조건 통과**. 그러나 실방송/시청자 노출·개인 HUD 제외/광고 정산 근거가 아니며 #371/D7 간헐 첫 탐색 실패의 원인 확정/완전 종료도 아니다.
 - [ ] **G5-03 — 시청시간 집계.** 비지급 활동·누락 기록, 공식 Live API 표본·추정/측정 범위. 0명/미측정 구분, 녹화/미리보기 제외, 소유자만 조회, 공개 조회로 증가하지 않음. 수집 기본 꺼짐, 권한·할당량·보관 조건 확인 후 서버 `CHATVIEW_AUDIENCE_SAMPLING=1`. 실제 광고 노출/주의 미검증.
 - [ ] **G5-04 — 서버 HP·수익.** 규격 미정. 비지급/예상/확정 구분, HP0 지급 조건 임의 추가 금지.
 - [ ] **G5-05 — 유료 운영·정산.** 단가·예산·배분·지급·중복/초과·부정 실적·개인정보·광고 고지 필요.
@@ -75,7 +75,7 @@
 | D2 | #292 후반 핸들 +104>64; #294 초기 +284>256, 후반 +8. | R-02. 기존 자원 한도 유지. |
 | D4 | CI 캡처 module의 동기 UI-task/join 및 borrowed item은 `510f8e1`에서 보완. #353 좌표는 #354, core queue 정리는 `66fd5a6`/#355에서 통과. #356/#357/#359/#361/#363도 core 통과 기록. | core fixture만 확인. 실제 OBS frontend 종료/장면 전환·qualification 남음. Control Center에 Q4/Q5 시험 UI는 없음. |
 | D6 | `9e9863a`/#339 WGC 첫 픽셀10초 실패, #340 미재현. #353 단발 resize/레터박스 실패. #359 별도 burst단계9 재현 후 `4cbcc5e`/#361 동일 입력·강화 assertion 통과. | 연속 burst만 좁게 확인. #353 인과와 첫 표시 문제는 미해결. #363의 통과와 #365 lifecycle 통과도 종료 근거가 아님; #366는 session+same-pool 재시작의 E_UNEXPECTED, #367는 새로운 pool/session 구현에서 12단계 WGC 통과(원래 #353의 인과 미확정).  #365 sequence 6에서 received=601×201, surface=600×500, pool=601×500, Waiting·검정 정지 재현. |
-| D7 | #371 `chat-view-public-ad-browser` 16.85초 실패: navigation started=1 completed=0 id=2. #10 공식 OBS CEF는 초기 배너 배경이 거의 없는 PNG(inside4082/painted102, outside20730/changed0)로 실패. LF/CSP 문제 가능성을 보강하지만 아직 새 CEF 검증 전이며 #356의 별도 browser callback 실패와 동일 원인도 확정하지 않는다. | G5-02/R-01. 공개 배너 첫 로딩/레이아웃 실영상 안정성 미확정; 실방송·유료 노출 증거 아님. |
+| D7 | #371 WebView2 `NavigationCompleted` 미도착(started1 completed0), #10 공식 OBS CEF 배너 배경 PNG 실패(inside4082/painted102). LF/CSP 보강 코드 `1cda0c0`의 공식 OBS CEF #11은 실제 13개 픽셀 상태 전부 통과. 새 WebView2 #374는 실행 중. 위 실패·재통과 간 인과 및 반복 안정성 미확정. | G5-02/R-01. 단일 공식 OBS 합성 수명 검사는 좁게 통과, 최초 지연 D7·실방송/유료 노출 및 배포 qualification 미확정. |
 
 D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-investigation.md](resource-growth-investigation.md).
 
@@ -106,6 +106,11 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 #357 이후 광고 검사 재통과로 #356 내부 원인을 확정하지 않는다. #359의 별도 burst 수정/통과는 #353의 동일 원인 해결로 소급하지 않는다. 기존 routine은 development이며 qualification/package/전체 OBS 단계는 미실행이었다. #364 조회 불가를 성공·실패·현재 실행 중 어느 것으로도 새로 분류하지 않는다.
 
 ## 이번 검증 상태
+
+- **최신 광고 코드:** `1cda0c0ef616ed9f9aa345e37821464f5b0bef2e`. 공개 HTML에 CSS를 LF로 정규화해 포함하고 정확한 SHA-256 CSP 해시로 허용한다. 후속 광고 모듈은 비동기이고 실행 전에는 투명 상태를 유지한다. 이전 공개 CSS URL은 폐기, 별도 개인/결제 콘텐츠 추가 없음.
+- **치지직 계약 #55:** run `37960224055`, Chromium 관리 및 Node22/24×Windows/Linux **5/5 job success**. 실제 CHZZK OAuth 인증은 아님.
+- **공식 OBS Browser Source #11:** run `37960224136`, Windows scene-flow job `113920880525` completed/success. `placed-960`, `scaled-480`, `local-hide`, `return-after-stop`, `reselected`, `scene-away`, `return-during-outage`, `scene-return`, `inactive-preview`, `shutdown-mode-visible/hidden/return`, `campaign-stop` 등 **실제 합성 PNG 13/13** 통과. 내부 95%·외부 불변 픽셀 기준 그대로, 실수신·실방송 노출은 아님. 이전 #10(run `37959515778`) 실패는 역사에서 제거하지 않는다.
+- **Windows 네이티브 검증:** 이전 #372/run `37959515842`는 코드에 네이티브 파일이 없어 x64 **skipped**. #373/run `37959731390`의 native 작업은 후속 코드로 인해 **cancelled**, 성공/실패 분류 금지. 현재 코드 Windows development #374/run `37960224150`/job `113920936588`는 마지막 확인 시 OBS 개발 라이브러리 성공·ChatView 빌드/CTest in_progress, 결과 없음. 기존 10초 NavigationCompleted + 모듈 응답 차단/첫 투명 DOM/배너 실제 CSS computed 검사 성공 여부는 이번 #374로 확인해야 한다.
 
 - **공식 OBS #10 실패 추가 확인:** 공개 광고 소스 코드 `b2cc79c43000953cf30c94291e889d42a33ce7cb`, OBS public-ad-flow #10/run `37959515778`/job `113918478289`: completed/failure, `placed-960` 실제 CEF 합성 PNG에서 inside 4082 중 painted 102, outside 20730 모두 불변. 초기 모듈 부트스트랩은 실행됐을 수 있으나 기대한 배경 채움이 없어 CSP 인라인 CSS 거부 가능성을 우선 점검한다. Windows checkout의 CRLF CSS와 HTML 파서가 LF로 정규화한 스타일 텍스트의 SHA-256이 서로 다르면 해시 허용이 실패한다. 원인을 단정하지 않고 서버의 CSS를 LF로 정규화해 해시·HTML에 동일 문자열을 쓰는 수정 및 Windows/CEF 컴포지션 재검증을 진행한다. 픽셀 허용률 95%·15초 OBS 배치 제한은 유지한다.
 - **추가 검사:** HTTP 계약은 인라인 스타일에 CR 바이트가 없고 CSP 해시가 일치해야 한다. 실제 WebView2는 배너 표시 후 계산된 CSS 배경색 `rgb(20,30,50)`와 flex 레이아웃까지 확인한다. 공식 OBS 컴포지션 실패 시엔 콘텐츠를 기록하지 않고 문서 수·공개 상태 요청 수·OBS user agent 여부만 출력한다. CHZZK #54/run `37959515860`의 Chromium 및 Node22/24×Windows/Linux 5개 job은 completed/success, Windows #372 네이티브 skipped, #373/run `37959731390`은 진행 중이었으며 최종 native 결과는 아직 미확정. 성공과 실패의 원인·영향 범위를 분리한다.
@@ -143,7 +148,7 @@ D3·D5는 좁은 범위에서 종료했다. 자원 상세는 [resource-growth-in
 
 ### 다음 사용자 흐름
 
-최신 OBS와 지정 문서를 읽은 후 **비동기 광고 모듈 응답을 막은 상태에서의 WebView2 첫 문서 navigation/투명 DOM 확인**, 이어 모듈을 해제한 후의 공개 시험 광고 표시·중지·재선택·만료를 검사한다. CHZZK contract #54는 5개 job 성공, 공식 OBS Browser Source #10은 CSS 채움 실패였으므로 수정된 LF 정규화 코드의 신규 CEF/Windows 실행을 확인한다. #373의 모듈 응답 차단 native 결과도 별도로 확인한다. 실패하면 초기 HTML·모듈 응답·탐색 완료 중 해당 경로의 구체적인 근거를 보고 보완한다. 성공하면 새 코드에서 기존 OBS CEF의 광고 배치/수명 검사 증거가 있는지 확인하고, D7 간헐 문제의 원인 및 반복/배포 범위는 별도로 유지한다. 이미 성공한 #370/#371 채팅 수동 복귀 경로와 G3 WGC, 광고·보상 근거 경계는 그대로 둔다. 실패한 브라우저 결과를 단순 재실행이나 시간 기준 확대만으로 종료하지 않는다. CHZZK #53의 Chromium 취소는 성공으로 세지 않는다. D1/D2/D4/D6 및 물리 투컴·실계정·qualification은 해당 근거 전까지 유지한다.
+최신 OBS와 지정 문서를 읽고 **#374/run `37960224150`/job `113920936588`**의 Windows 네이티브 첫 광고 페이지 검사를 확인한다. 외부 모듈 응답이 지연된 상태에서 첫 문서 NavigationCompleted·투명 DOM·스타일 적용을 기존 한도 내에서 확인한 뒤 모듈 해제→실제 렌더→중지·재선택·만료를 따라간다. CHZZK contract #54는 5개 job 성공, 공식 OBS Browser Source #10은 CSS 채움 실패였으므로 수정된 LF 정규화 코드의 신규 CEF/Windows 실행을 확인한다. #373의 모듈 응답 차단 native 결과도 별도로 확인한다. 실패하면 초기 HTML·모듈 응답·탐색 완료 중 해당 경로의 구체적인 근거를 보고 보완한다. 성공하면 새 코드에서 기존 OBS CEF의 광고 배치/수명 검사 증거가 있는지 확인하고, D7 간헐 문제의 원인 및 반복/배포 범위는 별도로 유지한다. 이미 성공한 #370/#371 채팅 수동 복귀 경로와 G3 WGC, 광고·보상 근거 경계는 그대로 둔다. 실패한 브라우저 결과를 단순 재실행이나 시간 기준 확대만으로 종료하지 않는다. CHZZK #53의 Chromium 취소는 성공으로 세지 않는다. D1/D2/D4/D6 및 물리 투컴·실계정·qualification은 해당 근거 전까지 유지한다.
 
 OBS만 변경한다. main·새 작업 브랜치·검증 태그·강제 push, 새 브라우저 복구/인증/기기등록/표시키/옛 ZIP, 게임 PC OBS, 임의 HP/단가/지급 규칙을 추가하지 않는다. D1/D2/D4/D6/D7는 해당 근거 전까지 남긴다. 별도 보고서 대신 이 문서를 갱신한다.
 

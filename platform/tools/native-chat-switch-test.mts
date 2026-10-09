@@ -53,7 +53,7 @@ for (const mode of ['memory', 'remembered', 'unrelated', 'revoked', 'mismatch', 
     };
     child = spawn(executable, [mode, configExecutable], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: false });
     const exited = once(child, 'exit'); child.stdin!.write(`${f.origin}\n${other.lease.sessionToken}\n`);
-    let buffer = '', errors = '', failure: unknown, externalSeen = false;
+    let buffer = '', errors = '', failure: unknown, externalSeen = false, firstPublished = false;
     let browserTask: Promise<void> | undefined;
     child.stdout!.setEncoding('utf8');
     child.stdout!.on('data', (chunk: string) => {
@@ -62,9 +62,16 @@ for (const mode of ['memory', 'remembered', 'unrelated', 'revoked', 'mismatch', 
         browserTask = (async () => {
           assert(pending); await f.authenticate('alice', pending);
           assert.equal((await f.post(`/login/${pending.id}/approve`)).status, 200);
-          f.chats.get('alice')!.publish('Native return fixture');
+          // Wait for the native HUD to render the subscribed empty state.
         })();
         void browserTask.catch(error => { failure = error; child?.kill(); });
+      }
+      if (!firstPublished && /(?:^|\n)chat-empty-ready\r?\n/u.test(buffer)) {
+        try {
+          firstPublished = true;
+          assert(f.chats.get('alice'), 'synthetic upstream subscribed before first text');
+          f.chats.get('alice')!.publish('Native return fixture');
+        } catch (error) { failure = error; child?.kill(); }
       }
       if (!externalSeen && /(?:^|\n)external-ready\r?\n/u.test(buffer)) {
         try {
@@ -85,6 +92,7 @@ for (const mode of ['memory', 'remembered', 'unrelated', 'revoked', 'mismatch', 
       if (failure) throw failure;
       assert.equal(code, 0, `${mode}: ${errors}`);
     } finally { clearTimeout(deadline); }
+    assert(firstPublished, 'initial text follows the empty subscribed DOM acknowledgement');
     assert(externalSeen); assert.equal(loginStarts, 1, 'return never issues a new browser approval');
     assert.equal(refreshes, ['revoked', 'mismatch'].includes(mode) ? 1 : 2,
       'one renewal per explicit return, duplicate button commands do not replay');

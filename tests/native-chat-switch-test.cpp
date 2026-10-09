@@ -27,6 +27,7 @@ struct NativeChatConnectionTestAccess {
     static DisplayClient &client(NativeChatConnection &c) { return c.client_; }
     static NativeChatSurface &surface(NativeChatConnection &c) { return c.surface_; }
     static auto membership(NativeChatConnection &c) { return c.connection_state_; }
+    static bool first_text_rendered(NativeChatConnection &c) { return c.first_text_rendered_; }
 };
 struct NativeChatSurfaceTestAccess {
     static ICoreWebView2 *core(NativeChatSurface &s) { return s.webview_.Get(); }
@@ -74,7 +75,10 @@ void expect_status(chatview::NativeChatConnection &chat, Status expected)
     await(chat, [&] {
         const auto status = chatview::decode_native_chat_status(static_cast<std::uint64_t>(
             SendMessageW(Access::host(chat), query, 0, 0)));
-        return status == expected && text(Access::dialog(chat), 113) == chatview::native_chat_status_text_ko(expected) &&
+        const wchar_t *label = expected == Status::Receiving && Access::first_text_rendered(chat)
+            ? L"자체 채팅 첫 텍스트 렌더링 확인 · 로컬 HUD 응답"
+            : chatview::native_chat_status_text_ko(expected);
+        return status == expected && text(Access::dialog(chat), 113) == label &&
             (IsWindowEnabled(GetDlgItem(Access::dialog(chat), 112)) != FALSE) == chatview::can_request_native_chat_return(expected) &&
             (!center || center->matches(expected));
     }, "Control Center, native status and return button agree");
@@ -256,6 +260,15 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
     SendDlgItemMessageW(dialog, 107, BM_SETCHECK, mode == "remembered" ? BST_CHECKED : BST_UNCHECKED, 0);
     command(dialog, 104);
+    // Force the first subscribed zero-row render before the provider sends
+    // the first text. Do not use a retry loop or broaden the 15-second limit.
+    await(chat, [&] {
+        return Access::client(chat).running() && Access::membership(chat).has_value() &&
+            Access::surface(chat).rendered_frames() >= 1U && Access::surface(chat).rendered_messages() == 0U;
+    }, "empty subscribed chat renders before first text");
+    expect(!Access::first_text_rendered(chat), "empty subscription does not acknowledge the first text");
+    expect_status(chat, Status::Receiving);
+    std::cout << "chat-empty-ready\n" << std::flush;
     try {
         await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "initial private chat renders");
     } catch (...) {
@@ -270,6 +283,7 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
         throw;
     }
     expect_status(chat, Status::Receiving);
+    expect(Access::first_text_rendered(chat), "first local text render acknowledged");
     const auto initial = Access::membership(chat);
     expect(initial.has_value(), "initial approved membership");
     ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(Access::surface(chat));
@@ -330,6 +344,7 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     } else {
         await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "same approval returns to native chat");
         expect_status(chat, Status::Receiving);
+        expect(Access::first_text_rendered(chat), "new owned document acknowledges its first text");
         expect(Access::membership(chat)->membership == initial->membership, "exact role/session/connection survives return");
         auto saved = chatview::load_connection();
         if (mode == "remembered") expect(saved.has_value(), "remembered connection preserved");
@@ -338,6 +353,7 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
         if (saved) SecureZeroMemory(saved->credential.data(), saved->credential.size() * sizeof(wchar_t));
         command(dialog, 105);
         await(chat, [&] { return !Access::client(chat).running(); }, "ordinary stop completes", 2000U);
+        expect(!Access::first_text_rendered(chat), "stop retires first-text acknowledgement");
         expect_status(chat, Status::IdleResumable);
         command(dialog, 112);
         await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "return after ordinary stop");

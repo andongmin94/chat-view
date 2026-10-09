@@ -105,7 +105,12 @@ void NativeChatConnection::show_display_status() noexcept
     EnableWindow(GetDlgItem(dialog_, kManage), can_open_management(status));
     if (displayed_status_ == status) return;
     displayed_status_ = status;
-    SetDlgItemTextW(dialog_, kDisplayStatus, native_chat_status_text_ko(status));
+    // A subscribed empty chat is not an acknowledged first text message.
+    // This is local DOM status, not physical display or broadcast evidence.
+    const wchar_t *label = status == NativeChatStatus::Receiving && first_text_rendered_
+        ? L"자체 채팅 첫 텍스트 렌더링 확인 · 로컬 HUD 응답"
+        : native_chat_status_text_ko(status);
+    SetDlgItemTextW(dialog_, kDisplayStatus, label);
     EnableWindow(GetDlgItem(dialog_, kResume), can_request_native_chat_return(status));
 }
 bool NativeChatConnection::open_dialog() noexcept
@@ -215,6 +220,7 @@ LRESULT CALLBACK NativeChatConnection::procedure(HWND window, UINT message, WPAR
 bool NativeChatConnection::open_surface() noexcept
 {
     if (!surface_.open(hud_.webview_)) return false;
+    first_text_rendered_ = false;
     ready_ = false; displayed_subscribed_ = false; awaiting_frame_ = 0; pending_.clear();
     loading_deadline_ = GetTickCount64() + 15000U;
     return true;
@@ -329,7 +335,7 @@ void NativeChatConnection::forget() noexcept
 }
 void NativeChatConnection::clear_display(bool preserve_host) noexcept
 {
-    pending_.clear(); connection_state_.reset();
+    pending_.clear(); connection_state_.reset(); first_text_rendered_ = false;
     if (active_) {
         active_ = false; awaiting_login_ = false; ready_ = false; displayed_subscribed_ = false; awaiting_frame_ = 0U; surface_.close();
         if (!preserve_host) {
@@ -420,7 +426,13 @@ void NativeChatConnection::tick() noexcept
         }
         if (surface_.ready()) ready_ = true;
         hud_.cancel_navigation_retry(); hud_.page_connection_recovery_.reset(); hud_.page_health_watchdog_.disarm();
-        if (awaiting_frame_ && surface_.rendered_frames() >= awaiting_frame_) { awaiting_frame_ = 0U; displayed_subscribed_ = in_flight_subscribed_; }
+        if (awaiting_frame_ && surface_.rendered_frames() >= awaiting_frame_) {
+            awaiting_frame_ = 0U; displayed_subscribed_ = in_flight_subscribed_;
+            if (displayed_subscribed_ && !first_text_rendered_ && surface_.rendered_messages() > 0U) {
+                first_text_rendered_ = true;
+                displayed_status_.reset(); show_display_status();
+            }
+        }
         if (awaiting_frame_ && GetTickCount64() >= render_deadline_) { end(L"화면 응답이 중단되어 연결을 종료했습니다."); return; }
         if (ready_ && !awaiting_frame_ && !pending_.empty()) {
             if (!surface_.publish(pending_)) { end(L"화면 전달이 중단됐습니다. 다시 연결하세요."); return; }

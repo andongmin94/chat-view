@@ -51,6 +51,10 @@ test('existing account chooses a test campaign; separate public page renders onl
     const alice = await f.connect('alice-private-channel', 'streaming');
     const bob = await f.connect('bob', 'streaming');
     const aliceId = await select(f, alice.b), bobId = await select(f, bob.b);
+    const bannerState = async (browser: Browser) =>
+      /data-public-banner-state="([^"]+)"/u.exec(await f.page('/campaigns', browser))?.[1];
+    assert.equal(await bannerState(alice.b), 'waiting-report', 'selection alone does not imply a displayed banner');
+    assert.equal(await bannerState(bob.b), 'waiting-report', 'another creator starts without report');
     const gameRequest = await f.start('gaming');
     const game = await f.approve(gameRequest, 'gaming', alice.b);
     assert.notEqual(aliceId, bobId);
@@ -59,7 +63,10 @@ test('existing account chooses a test campaign; separate public page renders onl
     const bobPeer = await open(f.origin, bob.lease.token);
     await report(f, bob.lease.outputToken!);
     assert.deepEqual(await snapshot(f, aliceId), HIDDEN_AD, 'another creator report does not enable this banner');
+    assert.equal(await bannerState(alice.b), 'waiting-report', 'other owner cannot advance my preview');
+    assert.equal(await bannerState(bob.b), 'report-ready', 'owner sees only own recent report');
     await report(f, alice.lease.outputToken!);
+    assert.equal(await bannerState(alice.b), 'report-ready', 'owner dashboard derives the public state');
     const visible = await snapshot(f, aliceId);
     assert.equal(visible.state, 'visible'); assert.equal(visible.mode, 'test');
     assert.deepEqual(visible.campaign, TEST_CAMPAIGN);
@@ -82,8 +89,10 @@ test('existing account chooses a test campaign; separate public page renders onl
     assert.equal((await f.request('/public/ads/ad-source.css')).status, 404);
     await f.page('/campaigns', alice.b);
     assert.equal((await f.post('/campaigns/stop', alice.b)).status, 303);
+    assert.equal(await bannerState(alice.b), 'not-selected', 'owner Stop immediately updates management state');
     assert.deepEqual(await snapshot(f, aliceId), HIDDEN_AD);
     assert.equal((await snapshot(f, bobId)).state, 'visible');
+    assert.equal(await bannerState(bob.b), 'report-ready', 'other creator unaffected by Stop');
     assert.ok(f.store.find(game.sessionToken));
     const nextMessage = once(alicePeer, 'message');
     f.chats.get('alice-private-channel')!.publish('private chat survives public ad stop');
@@ -91,10 +100,13 @@ test('existing account chooses a test campaign; separate public page renders onl
     assert.doesNotMatch(String(frame), /ad-snapshot|chatview-test/u);
     assert.equal(alicePeer.readyState, WebSocket.OPEN);
     assert.equal(await select(f, alice.b), aliceId);
+    assert.equal(await bannerState(alice.b), 'report-ready', 'reselection uses existing recent sender state');
     now += 15000;
     assert.deepEqual(await snapshot(f, aliceId), HIDDEN_AD, 'report expiry blanks the public output');
+    assert.equal(await bannerState(alice.b), 'waiting-report', 'expired report is not a visible or zero-viewer claim');
     now += 500; await report(f, alice.lease.outputToken!, 2);
     assert.equal((await snapshot(f, aliceId)).state, 'visible');
+    assert.equal(await bannerState(alice.b), 'report-ready', 'fresh report restores test-only readiness');
     const closed = once(alicePeer, 'close'); alicePeer.close(); await closed;
     // Retiring the remote socket is observed on the server by the next event turn.
     await new Promise<void>(resolve => setImmediate(resolve));

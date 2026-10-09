@@ -54,9 +54,13 @@ export function servePublicAd(request: IncomingMessage, response: ServerResponse
   response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(document);
 }
 
-export function campaignsPage(status: CampaignStatus, csrf: string, origin: string, authorized: boolean): string {
+export function campaignsPage(status: CampaignStatus, csrf: string, origin: string,
+  authorized: boolean, previewReady: boolean): string {
   const form = (path: string, label: string) => `<form method="post" action="${path}"><input type="hidden" name="csrf" value="${csrf}"><button>${label}</button></form>`;
   const source = status.sourceId ? `${origin}/public/ads/${status.sourceId}` : undefined;
+  const preview = !status.selected ? { state: 'not-selected', text: '캠페인이 선택되지 않아 공개 소스는 투명하게 대기합니다.' }
+    : previewReady ? { state: 'report-ready', text: '캠페인 선택과 최근 송출 PC 출력 보고가 확인됐습니다. 공개 시험 배너를 표시할 조건은 충족됐지만 OBS나 시청자 화면에서 보였다는 뜻은 아닙니다.' }
+    : { state: 'waiting-report', text: '캠페인은 선택됐지만 최근 송출 PC 출력 보고가 없어 공개 소스는 투명하게 대기합니다.' };
   return `<p><a href="/account">내 연결 관리</a> · <a href="/campaigns/activity">비지급 활동 기록</a></p>
 <p><strong>시험 광고 · 지급 없음</strong> — 이 단계에서는 시청 실적, HP, 수익을 계산하지 않습니다.</p>
 <section><h2>${escape(TEST_CAMPAIGN.brand)} · ${escape(TEST_CAMPAIGN.title)}</h2>
@@ -64,6 +68,12 @@ export function campaignsPage(status: CampaignStatus, csrf: string, origin: stri
 ${authorized ? form(`/campaigns/${TEST_CAMPAIGN.id}/select`, status.selected ? '이 시험 캠페인 다시 선택' : '이 시험 캠페인 선택')
   : '<p>캠페인을 선택하려면 앱에서 치지직을 다시 승인하세요.</p>'}</section>
 <p>현재 선택: <strong>${status.selected ? '시험 캠페인 선택됨' : '없음'}</strong></p>
+<section aria-labelledby="public-banner-status-title">
+<h3 id="public-banner-status-title">공개 배너 서버 준비 상태</h3>
+<p data-public-banner-state="${preview.state}">${preview.text}</p>
+<p>최근 출력 보고에는 녹화·미리보기 상태도 포함될 수 있습니다. 이 상태는 실제 OBS 브라우저 화면, 방송 송출 또는 시청자 광고 노출을 측정하지 않습니다.
+<a href="/campaigns">현재 상태 새로고침</a></p>
+</section>
 ${form('/campaigns/stop', '공개 배너 중지')}
 <p>선택하려면 이 계정의 송출 역할 승인이 필요합니다. 선택은 해당 승인에 묶이고, 그 연결의 로그아웃·철회 시 해제됩니다. 선택 중 받은 출력 보고의 비지급 활동 구간은 계정별로 최대 7일·1,000건 보관하며, 광고 시청시간으로 계산하지 않습니다.</p>
 ${source ? `<h2>OBS 공개 배너 연결</h2><p>이 주소는 공개 배너만 읽습니다. 로그인·채팅 표시키가 아니며, 계정 관리나 개인 채팅에는 접근할 수 없습니다.</p>

@@ -56,12 +56,22 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     assert.equal((await state.json()).state, 'visible');
     assert.equal((await fetch(`${origin}/public/ads/${id}`, { method: 'POST' })).status, 405);
     assert.equal((await get('/public/ads/unlisted.js')).status, 404);
-    const management = campaignsPage(ads.status('private-account'), 'a'.repeat(64), origin, true);
+    const selected = ads.status('private-account');
+    const management = campaignsPage(selected, 'a'.repeat(64), origin, true, true);
     assert.match(management, /시험 광고 · 지급 없음/u);
     assert.match(management, /method="post"/u);
     assert.match(management, /name="csrf"/u);
     assert.match(management, /960 × 180/u);
-    assert.doesNotMatch(management, /<script/u);
+    assert.match(management, /data-public-banner-state="report-ready"/u);
+    assert.match(management, /OBS나 시청자 화면에서 보였다는 뜻은 아닙니다/u);
+    const waiting = campaignsPage(selected, 'a'.repeat(64), origin, true, false);
+    assert.match(waiting, /data-public-banner-state="waiting-report"/u);
+    assert.match(waiting, /투명하게 대기/u);
+    ads.stop('private-account');
+    const stopped = campaignsPage(ads.status('private-account'), 'a'.repeat(64), origin, true, false);
+    assert.match(stopped, /data-public-banner-state="not-selected"/u);
+    assert(!stopped.includes('data-public-banner-state="report-ready"'));
+    assert.doesNotMatch(stopped, /<script/u);
     sessions.remove(stream.token);
     assert.deepEqual(await (await get(`/public/ads/${id}/state`)).json(), HIDDEN_AD);
   } finally {

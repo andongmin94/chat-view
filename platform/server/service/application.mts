@@ -321,8 +321,14 @@ ${this.#form(b, '/account/cancel', '취소')}
       }
       if (request.method === 'GET' && url.pathname === '/campaigns') {
         if (!b?.owner) throw new DisplayAccessError(401);
+        const status = this.#campaigns.status(b.owner);
+        // Derive this owner's current public TEST response from the SAME server
+        // predicate as the OBS browser source; neither selection nor a report
+        // proves actual rendering or audience exposure.
+        const previewReady = !!(status.selected && status.sourceId &&
+          this.#campaigns.snapshot(status.sourceId).state === 'visible');
         this.#page(response, '시험 캠페인 · 공개 배너', this.#accountNotice(b) + campaignsPage(
-          this.#campaigns.status(b.owner), b.csrf, this.#origin, this.#creators.describe(b.owner).authorized)); return;
+          status, b.csrf, this.#origin, this.#creators.describe(b.owner).authorized, previewReady)); return;
       }
       if (request.method === 'GET' && url.pathname === '/healthz') { response.writeHead(204); response.end(); return; }
       if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/account')) {

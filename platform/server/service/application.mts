@@ -26,6 +26,8 @@ type Destination = { loginId: string } | { page: ManagementPage };
 type Attempt = { digest: string; destination: Destination; expires: number; used: boolean; controller: AbortController };
 type Browser = { key: string; csrf: string; expires: number; controller: AbortController; owner?: string; channel?: Channel;
   landing?: { path: string; expires: number };
+  // Navigation only, scoped to this authenticated browser. Never a capability.
+  streamingConflict?: string;
   attempt?: Attempt; pending?: { identity: BrowserIdentity; page: ManagementPage; expires: number } };
 const managementPage = (path: string): path is ManagementPage =>
   MANAGEMENT_PAGES.some(page => page === path);
@@ -156,7 +158,7 @@ export class PlatformApplication {
   }
   #beginAuthorization(b: Browser, destination: Destination): string {
     b.attempt?.controller.abort();
-    b.pending = undefined; b.landing = undefined;
+    b.pending = undefined; b.landing = undefined; b.streamingConflict = undefined;
     const state = nonce();
     b.attempt = { digest: hashSecret(state), destination, expires: Date.now() + AUTHORIZATION_MS,
       used: false, controller: new AbortController() };
@@ -180,6 +182,40 @@ ${this.#form(b, `${page}/login`, '치지직으로 브라우저 로그인')}
 <p>앱의 채팅 계정과 다를 수 있습니다. 캠페인·연결을 변경하기 전에 채널을 확인하세요.</p>
 ${this.#form(b, '/account/switch', '브라우저 관리 계정 바꾸기')}
 <p>계정 전환은 이 브라우저만 로그아웃합니다. 치지직에서 원하는 계정으로 전환한 뒤 다시 로그인하세요.</p></section>`;
+  }
+  #streamingRequestNotice(b: Browser): string {
+    const id = b.streamingConflict;
+    if (!id) return '';
+    try {
+      const intent = this.login.view(id);
+      if (intent.role !== 'streaming') throw new DisplayAccessError(409);
+      return `<section aria-label="돌아갈 송출 승인 요청" data-streaming-request="pending">
+<p>돌아갈 요청 확인 번호: <strong>${intent.code}</strong> · 송출 PC · OBS 역할</p>
+<p>기존 송출 연결을 해제한 뒤 원래 요청으로 돌아가 채널과 역할을 다시 확인하세요. 해제만으로 새 연결을 승인하지 않습니다.</p>
+<p><a href="/login/${id}">원래 송출 승인 요청으로 돌아가기</a></p>
+<p>요청이 만료되면 새 송출 PC의 ChatView 연결창에서 로그인 / 연결을 다시 시작하세요.</p></section>`;
+    } catch (error) {
+      if (!(error instanceof DisplayAccessError) || ![409, 410].includes(error.status)) throw error;
+      b.streamingConflict = undefined;
+      return '<p data-streaming-request="unavailable">원래 송출 승인 요청이 종료됐거나 만료됐습니다. 새 송출 PC의 연결창에서 로그인 / 연결을 다시 시작하세요. 기존 연결은 자동 해제하지 않았습니다.</p>';
+    }
+  }
+  #showStreamingConflict(response: ServerResponse, b: Browser, id: string): boolean {
+    const connection = this.#creators.sessions.connections(b.owner!).find(c => c.role === 'streaming');
+    if (!connection) return false;
+    this.login.view(id); // A cancelled/expired request cannot gain a return path.
+    b.streamingConflict = id;
+    this.#page(response, '이미 승인된 송출 연결이 있습니다', `${this.#accountNotice(b)}
+<section aria-label="기존 송출 승인" data-streaming-conflict="existing-approval">
+<p>이 계정은 송출 역할을 하나만 승인할 수 있습니다. 기존 승인은 그대로이며 새 요청은 아직 승인되지 않았습니다.</p>
+<p>기존 송출 연결: <span style="overflow-wrap:anywhere">${connection.connectionId}</span></p>
+<p>기존 연결을 계속 쓸 경우 새 요청을 취소하세요. 다른 송출 PC로 옮기려면 아래 관리 화면에서 이 연결만 직접 해제하세요.</p>
+<p>해제하면 해당 연결의 채팅·출력 보고 권한과 선택한 시험 캠페인이 해제됩니다. 다른 PC 승인과 게임 채팅은 유지합니다.</p>
+<p>새 송출 역할 승인 후에도 광고는 직접 재선택해야 하며 기존 공개 URL은 그대로 사용할 수 있습니다.</p>
+<p><a href="/account#approved-connections">기존 송출 연결 확인·해제</a></p></section>
+${this.#streamingRequestNotice(b)}
+${this.#form(b, `/login/${id}/deny`, '새 송출 요청 취소')}`, 409);
+    return true;
   }
   async #callback(request: IncomingMessage, response: ServerResponse, url: URL) {
     const b = this.#browser(request), state = url.searchParams.get('state');
@@ -283,7 +319,14 @@ ${this.#form(b, '/account/switch', '브라우저 관리 계정 바꾸기')}
       const landing = /^\/login\/([a-f0-9]{32})$/u.exec(url.pathname);
       let b = this.#browser(request);
       if (request.method === 'GET' && landing) {
-        const id = landing[1]!, intent = this.login.view(id);
+        const id = landing[1]!;
+        let intent: ReturnType<BrowserLogin['view']>;
+        try { intent = this.login.view(id); }
+        catch (error) {
+          if (!(error instanceof DisplayAccessError) || ![409, 410].includes(error.status)) throw error;
+          this.#page(response, '채팅 연결 요청 종료',
+            '<p>요청이 종료됐거나 만료됐습니다. 앱의 연결창에서 로그인 / 연결을 다시 시작하세요. 기존 연결은 자동으로 변경하지 않았습니다.</p><p><a href="/account">내 연결 관리</a></p>', error.status); return;
+        }
         if (!b) { this.#createBrowser(response); this.#redirect(response, url.pathname); return; }
         const account = b.owner ? this.#creators.describe(b.owner) : undefined;
         const roleLabel = intent.role === 'gaming' ? '게임 PC · 개인 HUD' : '송출 PC · OBS 관리 런타임';
@@ -352,7 +395,7 @@ ${this.#form(b, '/account/cancel', '취소')}
           : account.output.streaming ? '최근 송출 활성 보고 수신 (실제 영상 미검증)'
           : account.output.recording ? '최근 녹화 활성 보고 수신 (방송 송출 미확인)'
           : '최근 출력 비활성 보고 수신 (미리보기 배치 가능)';
-        this.#page(response, '내 채팅과 연결', `${this.#accountNotice(b)}<p>채널: <strong>${escape(account.channel.channelName)}</strong></p>
+        this.#page(response, '내 채팅과 연결', `${this.#accountNotice(b)}${this.#streamingRequestNotice(b)}<p>채널: <strong>${escape(account.channel.channelName)}</strong></p>
 <p>채팅 상태: ${escape(account.chatState)} · ${account.authorized ? '치지직 승인 유효' : '앱에서 치지직 재로그인 필요'}</p>
 <section aria-labelledby="two-pc-title" id="two-pc-status">
 <h2 id="two-pc-title">이 계정의 PC 역할·현재 채팅 연결</h2>
@@ -375,7 +418,7 @@ ${this.#form(b, '/account/cancel', '취소')}
 <strong>현재 승인으로 자체 채팅 복귀</strong>를 직접 선택하세요. 이 버튼은 원래 역할·승인이 유효할 때만 동작하며,
 새 로그인이나 다른 저장 계정 전환을 자동으로 실행하지 않습니다. 승인 만료·철회 시에는 해당 PC에서 다시 로그인하세요.</p>
 </section>
-<h2>승인된 연결별 해제</h2>
+<h2 id="approved-connections">승인된 연결별 해제</h2>
 ${account.connections.map(connection => `<section><p>${connection.role === 'gaming' ? '게임 PC · 개인 HUD' : '송출 PC · OBS 역할'}<br>
 연결: ${connection.connectionId}</p>${this.#form(b!, `/connections/${connection.connectionId}/revoke`, '이 연결 해제')}</section>`).join('')}
 <p><a href="/campaigns">시험 캠페인 선택 · OBS 공개 배너</a> · <a href="/campaigns/activity">비지급 활동 기록</a></p>
@@ -420,11 +463,13 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
         if (action[2] === 'deny') this.login.deny(id);
         else {
           if (!b.owner) throw new DisplayAccessError(401);
-          if (intent.role === 'streaming' && this.#creators.sessions.connections(b.owner).some(c => c.role === 'streaming'))
-            throw new DisplayAccessError(409);
+          if (intent.role === 'streaming' && this.#showStreamingConflict(response, b, id)) return;
           await this.#creators.ensureChat(b.owner); this.#live(b);
+          // Another browser may occupy the streaming slot during provider I/O.
+          if (intent.role === 'streaming' && this.#showStreamingConflict(response, b, id)) return;
           this.login.approve(id, this.#creators.access(b.owner));
         }
+        if (b.streamingConflict === id) b.streamingConflict = undefined;
         this.#page(response, '연결 요청 처리됨', '<p>챗뷰 앱으로 돌아가세요.</p><p><a href="/account">내 연결 관리</a></p>'); return;
       }
       if (url.pathname === '/logout') {

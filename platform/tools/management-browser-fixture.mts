@@ -54,6 +54,10 @@ try {
   };
   await openSender(alice.lease.token);
   let outputToken = alice.lease.outputToken!, reportSequence = 0;
+  let conflicted: Awaited<ReturnType<typeof f.start>> | undefined;
+  let replacement: typeof alice.lease | undefined;
+  const sourceId = String(f.store.database.prepare('SELECT source_id FROM ad_sources WHERE owner = ?').get('alice')!.source_id);
+  const selection = () => f.store.database.prepare('SELECT connection_id FROM ad_selections WHERE source_id = ?').get(sourceId);
   reply({ ready: true, origin: f.origin });
   const input = createInterface({ input: process.stdin });
   let sequence = 0;
@@ -108,6 +112,51 @@ try {
       assert.equal(result.status, 'approved');
       const session = f.store.find(result.lease.sessionToken);
       assert(session?.owner === 'charlie' && session.membership?.role === 'streaming');
+      reply({ ok: true }); continue;
+    }
+    // This final flow deliberately replaces only Alice's sender via browser
+    // CSRF forms. Parent commands never revoke a connection or select an ad.
+    if (command.op === 'conflict-start') {
+      assert(!conflicted && !replacement); conflicted = await f.start('streaming');
+      reply({ path: conflicted.verificationPath, connectionId: alice.lease.membership.connectionId }); continue;
+    }
+    if (command.op === 'conflict-cancelled') {
+      assert(conflicted);
+      const result = await f.native(`/display/login/${conflicted.id}`, 'ChatView-Login', conflicted.verifier);
+      assert.equal(result.status, 403); conflicted = undefined;
+      assert.equal(snapshot(), before, 'cancel preserves the existing sender and campaign');
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'conflict-released') {
+      assert(conflicted); assert.equal(f.app.login.view(conflicted.id).role, 'streaming');
+      assert.equal(f.store.find(alice.lease.sessionToken), undefined);
+      assert.equal(selection(), undefined); assert(f.store.find(bob.lease.sessionToken));
+      assert(peer);
+      if (peer.readyState !== WebSocket.CLOSED) await once(peer, 'close', { signal: AbortSignal.timeout(3000) });
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'conflict-collect') {
+      assert(conflicted && !replacement);
+      const response = await f.native(`/display/login/${conflicted.id}`, 'ChatView-Login', conflicted.verifier);
+      assert.equal(response.status, 200);
+      const result = await response.json() as { status: string; lease: typeof alice.lease };
+      assert.equal(result.status, 'approved'); replacement = result.lease; conflicted = undefined;
+      const session = f.store.find(replacement.sessionToken);
+      assert(session?.owner === 'alice' && session.membership?.role === 'streaming');
+      assert.notEqual(session.membership.connectionId, alice.lease.membership.connectionId);
+      assert.equal(session.membership.broadcastSessionId, alice.lease.membership.broadcastSessionId);
+      assert.equal(selection(), undefined, 'explicit role approval does not reselect the campaign');
+      assert(replacement.outputToken); outputToken = replacement.outputToken; reportSequence = 0;
+      await openSender(replacement.token);
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'conflict-selected') {
+      assert(replacement && peer?.readyState === WebSocket.OPEN);
+      assert.equal(selection()?.connection_id, replacement.membership.connectionId);
+      assert.equal(f.store.connections('alice').length, 1);
+      assert(f.store.find(bob.lease.sessionToken));
+      assert.equal(f.startedWith.filter(token => !token.includes(':charlie:')).length, starts);
+      assert.equal(f.refreshCalls, 0);
       reply({ ok: true }); continue;
     }
     assert.equal(command.op, 'check');

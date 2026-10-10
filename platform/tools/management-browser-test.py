@@ -370,6 +370,74 @@ def run() -> None:
                 finally:
                     flow.close()
 
+                flow = Flow(browser, f, 390)
+                try:
+                    flow.identity("/campaigns")
+                    flow.confirm("/campaigns")
+                    public_url = flow.page.locator("#source-url").input_value()
+                    public = flow.context.new_page()
+                    public.goto(public_url)
+                    banner = public.locator("#banner")
+                    expect(banner).to_be_visible()
+
+                    pending = f.command("conflict-start")
+                    flow.page.goto(f.origin + pending["path"])
+                    with flow.page.expect_response(lambda r: urlsplit(r.url).path == pending["path"] + "/approve") as denied:
+                        flow.page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True).click()
+                    assert denied.value.status == 409, "conflict remains an HTTP conflict, not a false success"
+                    expect(flow.page.locator("h1")).to_have_text("이미 승인된 송출 연결이 있습니다")
+                    expect(flow.page.get_by_role("region", name="기존 송출 승인")).to_contain_text(pending["connectionId"])
+                    flow.image("streaming-conflict-mobile")
+                    flow.page.get_by_role("button", name="새 송출 요청 취소", exact=True).click()
+                    assert f.command("conflict-cancelled")["ok"]
+                    flow.page.get_by_role("link", name="내 연결 관리", exact=True).click()
+                    expect(flow.page.locator("[data-streaming-request]")).to_have_count(0)
+                    assert f.command("check")["ok"]
+                    expect(banner).to_be_visible()
+                    results.append("cancelled conflicting sender request preserves existing approval and public banner")
+
+                    pending = f.command("conflict-start")
+                    flow.page.goto(f.origin + pending["path"])
+                    flow.page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True).click()
+                    expect(flow.page.locator("[data-streaming-conflict]")).to_have_count(1)
+                    flow.page.get_by_role("link", name="기존 송출 연결 확인·해제", exact=True).click()
+                    expect(flow.page).to_have_url(f.origin + "/account#approved-connections")
+                    notice = flow.page.get_by_role("region", name="돌아갈 송출 승인 요청")
+                    expect(notice).to_contain_text(pending["path"].rsplit("/", 1)[-1][-6:].upper())
+                    # Use the existing owner-scoped CSRF form, not a fixture
+                    # delete or a new automatic transfer endpoint.
+                    flow.page.locator(f'form[action="/connections/{pending["connectionId"]}/revoke"] button').click()
+                    expect(flow.page).to_have_url(f.origin + "/account")
+                    assert f.command("conflict-released")["ok"]
+                    expect(banner).to_be_hidden()
+                    sender = flow.page.locator('[data-pc-role="streaming"]')
+                    expect(sender.locator('[data-approved-count]')).to_have_attribute("data-approved-count", "0")
+                    flow.page.get_by_role("link", name="원래 송출 승인 요청으로 돌아가기", exact=True).click()
+                    expect(flow.page).to_have_url(f.origin + pending["path"])
+                    expect(flow.page.locator("h1")).to_have_text("챗뷰에 채팅 연결")
+                    flow.page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True).click()
+                    expect(flow.page.locator("h1")).to_have_text("연결 요청 처리됨")
+                    assert f.command("conflict-collect")["ok"]
+                    flow.page.get_by_role("link", name="내 연결 관리", exact=True).click()
+                    expect(flow.page.locator("[data-streaming-request]")).to_have_count(0)
+                    flow.page.get_by_role("link", name="시험 캠페인 선택 · OBS 공개 배너", exact=True).click()
+                    expect(flow.page.locator('[data-public-banner-state="not-selected"]')).to_have_count(1)
+                    assert f.command("sender-report")["ok"]
+                    flow.page.get_by_role("link", name="현재 상태 새로고침", exact=True).click()
+                    expect(flow.page.locator('[data-public-banner-state="not-selected"]')).to_have_count(1)
+                    expect(banner).to_be_hidden()
+                    assert flow.page.locator("#source-url").input_value() == public_url
+                    flow.page.get_by_role("button", name="이 시험 캠페인 선택", exact=True).click()
+                    expect(flow.page.locator('[data-public-banner-state="report-ready"]')).to_have_count(1)
+                    expect(banner).to_be_visible()
+                    expect(public).to_have_url(public_url)
+                    assert flow.page.locator("#source-url").input_value() == public_url
+                    assert f.command("conflict-selected")["ok"]
+                    flow.image("streaming-conflict-reselected-mobile")
+                    results.append("owner releases only the old sender, returns to original consent and explicitly reselects the same public source")
+                finally:
+                    flow.close()
+
                 metadata = f.command("metadata")["metadata"]
                 returns = [r for r in metadata if r["path"] in ("/callback", "/account/confirm", "/login/:id")
                            and r["site"] == "cross-site"]

@@ -15,7 +15,7 @@
 namespace chatview {
 namespace {
 constexpr int kVideoHotkey = 0x4356;
-constexpr int kSource = 201, kMonitor = 202, kRefresh = 203, kStart = 204, kStop = 205, kRelease = 206, kNotice = 207, kIdentify = 208, kChat = 209, kStep = 210, kChatHint = 211;
+constexpr int kSource = 201, kMonitor = 202, kRefresh = 203, kStart = 204, kStop = 205, kRelease = 206, kNotice = 207, kIdentify = 208, kChat = 209, kStep = 210, kChatHint = 211, kChatStatus = 212;
 constexpr UINT_PTR kPatternTimer = 0x435650;
 constexpr wchar_t kPanelClass[] = L"ChatView.VideoSelection";
 constexpr wchar_t kOutputClass[] = L"ChatView.WindowVideoOutput";
@@ -55,11 +55,19 @@ VideoOutputPanel::VideoOutputPanel(HudWindow &hud, bool companion) noexcept : hu
 {
     if (enabled_) {
         open_message_ = RegisterWindowMessageW(kOpenCompanionVideoMessageName);
+        chat_query_message_ = RegisterWindowMessageW(kQueryNativeChatMessageName);
         hotkey_ = RegisterHotKey(nullptr, kVideoHotkey, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'V') != FALSE;
     }
 }
 VideoOutputPanel::~VideoOutputPanel() { close(); }
-DWORD VideoOutputPanel::wait_timeout() const noexcept { return enabled_ && (output_ || capture_.running()) ? 50U : INFINITE; }
+DWORD VideoOutputPanel::wait_timeout() const noexcept
+{
+    if (!enabled_ || closing_) return INFINITE;
+    if (output_ || capture_.running()) return 50U;
+    // A stopped chat worker cannot wake this read-only status panel. Keep it
+    // current while visible, including before a video target has been selected.
+    return panel_ && IsWindowVisible(panel_) ? 100U : INFINITE;
+}
 bool VideoOutputPanel::permitted() const noexcept
 {
     DWORD affinity = 0;
@@ -94,6 +102,21 @@ bool VideoOutputPanel::dispatch(MSG &message) noexcept
 void VideoOutputPanel::notice(const wchar_t *message) noexcept
 {
     if (panel_) { SetDlgItemTextW(panel_, kNotice, message); show_step(); }
+}
+void VideoOutputPanel::show_chat_status() noexcept
+{
+    if (!panel_ || !IsWindowVisible(panel_)) return;
+    // Query the existing local owner only. Do not copy session/socket metadata,
+    // issue a login/return command, or derive chat state from the video worker.
+    const auto status = chat_query_message_ && hud_.window_
+        ? decode_native_chat_status(static_cast<std::uint64_t>(
+            SendMessageW(hud_.window_, chat_query_message_, 0, 0)))
+        : NativeChatStatus::Unavailable;
+    const wchar_t *label = native_chat_status_text_ko(status);
+    if (shown_chat_status_ == label) return;
+    if (SetDlgItemTextW(panel_, kChatStatus, label)) shown_chat_status_ = label;
+    SetDlgItemTextW(panel_, kChat, can_request_native_chat_return(status)
+        ? L"자체 채팅 복귀 · 연결창 열기" : L"자체 채팅 연결창 열기");
 }
 void VideoOutputPanel::show_step() noexcept
 {
@@ -139,7 +162,7 @@ void VideoOutputPanel::open() noexcept
 {
     try {
         if (!guard_protection()) return;
-        if (panel_) { ShowWindow(panel_, SW_SHOWNORMAL); SetForegroundWindow(panel_); return; }
+        if (panel_) { ShowWindow(panel_, SW_SHOWNORMAL); show_chat_status(); SetForegroundWindow(panel_); return; }
         WNDCLASSW klass{}; klass.hInstance = GetModuleHandleW(nullptr); klass.lpfnWndProc = procedure;
         klass.hCursor = LoadCursorW(nullptr, IDC_ARROW); klass.lpszClassName = kPanelClass;
         klass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
@@ -148,7 +171,7 @@ void VideoOutputPanel::open() noexcept
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
         panel_ = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_DLGMODALFRAME | WS_EX_LAYERED, kPanelClass,
             L"ChatView · 게임 창 별도 출력 (실험)", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-            CW_USEDEFAULT, CW_USEDEFAULT, 660, 620, nullptr, nullptr, klass.hInstance, this);
+            CW_USEDEFAULT, CW_USEDEFAULT, 660, 668, nullptr, nullptr, klass.hInstance, this);
         if (!panel_) return;
         // GetWindowDisplayAffinity requires a layered window. Keep this panel
         // opaque and verify protection before both first show and later reuse.
@@ -162,7 +185,7 @@ void VideoOutputPanel::open() noexcept
         if (!notifications_) { DestroyWindow(panel_); panel_ = nullptr; return; }
         const auto dpi = GetDpiForWindow(panel_);
         const auto scale = [dpi](int v) { return MulDiv(v, static_cast<int>(dpi), 96); };
-        SetWindowPos(panel_, nullptr, 0, 0, scale(660), scale(620), SWP_NOMOVE | SWP_NOZORDER);
+        SetWindowPos(panel_, nullptr, 0, 0, scale(660), scale(668), SWP_NOMOVE | SWP_NOZORDER);
         const auto add = [&](const wchar_t *kind, const wchar_t *caption, DWORD style, int id, int x, int y, int w, int h) {
             HWND item = CreateWindowExW(0, kind, caption, WS_CHILD | WS_VISIBLE | style,
                 scale(x), scale(y), scale(w), scale(h), panel_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), klass.hInstance, nullptr);
@@ -182,12 +205,14 @@ void VideoOutputPanel::open() noexcept
         // Chat-button feedback must not overwrite the video notice: while a
         // test pattern is displayed that notice holds its receiver check label.
         add(L"STATIC", L"기존 게임 PC HUD 연결창 · 영상 확인과 별개", 0, kChatHint, 286, 271, 344, 32);
-        add(L"STATIC", L"영상 출력 단계 · 실제 송출/수신 검증 아님", 0, 0, 20, 317, 610, 22);
-        add(L"STATIC", L"", 0, kStep, 20, 342, 610, 55);
-        add(L"STATIC", L"시험 패턴의 표시 번호·테두리·움직임을 수신 PC에서 직접 확인하세요.\n번호 입력/기기등록은 없습니다. 게임은 확인 후에만 캡처합니다.\n육안 확인은 HUD 제외나 수신 영상의 자동 검증이 아닙니다.\n영상만/SDR. 출력 창 해제·앱 종료 뒤에는 바탕화면이 보일 수 있습니다.", 0, 0, 20, 407, 610, 80);
-        add(L"STATIC", L"대기 중 · 투컴 영상 미검증", 0, kNotice, 20, 493, 610, 73);
+        add(L"STATIC", L"", 0, kChatStatus, 20, 313, 610, 40);
+        shown_chat_status_ = nullptr;
+        add(L"STATIC", L"영상 출력 단계 · 채팅 상태와 별개 / 실제 수신 검증 아님", 0, 0, 20, 365, 610, 22);
+        add(L"STATIC", L"", 0, kStep, 20, 390, 610, 55);
+        add(L"STATIC", L"시험 패턴의 표시 번호·테두리·움직임을 수신 PC에서 직접 확인하세요.\n번호 입력/기기등록은 없습니다. 게임은 확인 후에만 캡처합니다.\n육안 확인은 HUD 제외나 수신 영상의 자동 검증이 아닙니다.\n영상만/SDR. 출력 창 해제·앱 종료 뒤에는 바탕화면이 보일 수 있습니다.", 0, 0, 20, 455, 610, 80);
+        add(L"STATIC", L"대기 중 · 투컴 영상 미검증", 0, kNotice, 20, 541, 610, 73);
         EnableWindow(GetDlgItem(panel_, kStart), FALSE);
-        refresh(); ShowWindow(panel_, SW_SHOWNORMAL); SetForegroundWindow(panel_);
+        refresh(); ShowWindow(panel_, SW_SHOWNORMAL); show_chat_status(); SetForegroundWindow(panel_);
     } catch (...) { if (panel_) DestroyWindow(panel_);
     panel_ = nullptr; }
 }
@@ -469,6 +494,7 @@ void VideoOutputPanel::tick() noexcept
 {
     if (!enabled_ || closing_) return;
     if ((panel_ || output_ || capture_.running()) && !guard_protection()) return;
+    show_chat_status();
     const auto now = GetTickCount64();
     const bool inspect_paths = now >= next_path_check_;
     if (check_.active() && !check_.current(now, selection_epoch_))

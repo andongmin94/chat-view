@@ -103,4 +103,26 @@ if(BUILD_TESTING)
     add_test(NAME chat-view-companion-video-protection COMMAND chat-view-companion-video-protection-test
         "$<TARGET_FILE:chat-view-window-capture-test>")
     set_tests_properties(chat-view-companion-video-protection PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+
+    # Same approval across chat stop/return and video stop/reselection. Keep the
+    # Node driver in tests/ so driver-only edits also enter the native CI scope.
+    find_program(CHATVIEW_NODE_EXECUTABLE node REQUIRED)
+    add_executable(chat-view-companion-chat-video-test
+        tests/companion-chat-video-test.cpp src/hud/video-output-panel.cpp
+        src/hud/display-client.cpp src/hud/native-chat-connection.cpp src/hud/saved-connection.cpp
+        src/hud/native-chat-surface.cpp src/hud/webview-host.cpp
+        src/hud/hud-window.cpp src/hud/hud-placement.cpp
+        src/hud/host-state-message.cpp src/hud/page-health-message.cpp)
+    target_include_directories(chat-view-companion-chat-video-test PRIVATE
+        "${CHATVIEW_SOURCE_DIR}" "${WEBVIEW2_INCLUDE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(chat-view-companion-chat-video-test PRIVATE
+        chat-view-common chat-view-window-capture "${WEBVIEW2_LOADER_LIBRARY}"
+        bcrypt dcomp gdi32 shell32 wtsapi32 winhttp version crypt32 comctl32)
+    target_compile_definitions(chat-view-companion-chat-video-test PRIVATE WEBVIEW2_STATIC)
+    chatview_enable_win32(chat-view-companion-chat-video-test)
+    chatview_enable_warnings(chat-view-companion-chat-video-test)
+    add_test(NAME chat-view-companion-chat-video COMMAND "${CHATVIEW_NODE_EXECUTABLE}" --experimental-strip-types
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/companion-chat-video-test.mts"
+        "$<TARGET_FILE:chat-view-companion-chat-video-test>" "$<TARGET_FILE:chat-view-window-capture-test>")
+    set_tests_properties(chat-view-companion-chat-video PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 endif()

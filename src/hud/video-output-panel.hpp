@@ -42,8 +42,10 @@ private:
     bool topology(bool inspect_paths = false) const noexcept;
     void notice(const wchar_t *message) noexcept;
     void show_step() noexcept;
+    void show_chat_status() noexcept;
     HudWindow &hud_;
-    UINT open_message_ = 0U;
+    UINT open_message_ = 0U, chat_query_message_ = 0U;
+    const wchar_t *shown_chat_status_ = nullptr; // Static local-status label only.
     bool enabled_ = false, hotkey_ = false, requested_ = false, releasing_ = false;
     bool notifications_ = false, session_blocked_ = false, suspended_ = false;
     bool confirming_ = false, closing_ = false;

@@ -59,19 +59,37 @@ export function servePublicAd(request: IncomingMessage, response: ServerResponse
   response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(document);
 }
 
+// Read-only selection guidance, not a capability or an OBS/output assertion.
+export type CampaignSelectionState = 'provider-required' | 'streaming-required' | 'ready';
+
 export function campaignsPage(status: CampaignStatus, csrf: string, origin: string,
-  authorized: boolean, previewReady: boolean): string {
+  selectionState: CampaignSelectionState, previewReady: boolean): string {
   const form = (path: string, label: string) => `<form method="post" action="${path}"><input type="hidden" name="csrf" value="${csrf}"><button>${label}</button></form>`;
   const source = status.sourceId ? `${origin}/public/ads/${status.sourceId}` : undefined;
+  const selectionText = selectionState === 'provider-required'
+    ? '치지직 재승인 필요 · 이 계정의 치지직 승인이 유효하지 않습니다.'
+    : selectionState === 'streaming-required'
+      ? '송출 역할 준비 필요 · 이 계정의 유효한 송출 PC 승인이 없습니다.'
+      : '선택 가능 · 이 계정의 치지직 승인과 송출 역할 승인이 확인됐습니다.';
   const preview = !status.selected ? { state: 'not-selected', text: '캠페인이 선택되지 않아 공개 소스는 투명하게 대기합니다.' }
     : previewReady ? { state: 'report-ready', text: '캠페인 선택과 최근 송출 PC 출력 보고가 확인됐습니다. 공개 시험 배너를 표시할 조건은 충족됐지만 OBS나 시청자 화면에서 보였다는 뜻은 아닙니다.' }
     : { state: 'waiting-report', text: '캠페인은 선택됐지만 최근 송출 PC 출력 보고가 없어 공개 소스는 투명하게 대기합니다.' };
   return `<p><a href="/account">내 연결 관리</a> · <a href="/campaigns/activity">비지급 활동 기록 · 근거 구분 보기</a></p>
 <p><strong>시험 광고 · 지급 없음</strong> — 이 단계에서는 시청 실적, HP, 수익을 계산하지 않습니다.</p>
+<section aria-labelledby="campaign-selection-title">
+<h2 id="campaign-selection-title">시험 캠페인 선택 준비</h2>
+<p data-campaign-selection-state="${selectionState}">${selectionText}</p>
+${selectionState !== 'ready' ? `<ol>
+<li><strong>송출 PC의 OBS</strong>에서 ChatView 연결창을 엽니다. 게임 PC companion은 그대로 두며, 게임 PC에 OBS를 설치하거나 실행하지 않습니다.</li>
+<li><strong>로그인 / 연결</strong>에서 이 관리 화면과 같은 치지직 채널을 선택하고 <strong>송출 PC · OBS 역할</strong>을 승인하세요. 브라우저 관리 로그인이나 게임 역할 승인만으로는 송출 역할이 생기지 않습니다.</li>
+<li>아래 링크로 준비 상태를 다시 확인한 뒤 시험 캠페인을 직접 선택하세요.</li>
+</ol>` : '<p>아래에서 캠페인을 직접 선택하세요. 송출 역할 승인은 현재 열린 채팅 연결이나 최신 출력 보고, 실제 OBS 배너 표시를 뜻하지 않습니다.</p>'}
+<p><a href="/campaigns">선택 준비 상태 다시 확인</a> · <a href="/account">이 계정의 PC 역할 확인</a></p>
+${source && !status.selected ? '<p>기존 공개 URL은 그대로 사용할 수 있습니다. 송출 역할을 다시 승인해도 광고는 자동 선택되지 않습니다. 준비 상태 확인 후 캠페인을 다시 선택하세요.</p>' : ''}
+</section>
 <section><h2>${escape(TEST_CAMPAIGN.brand)} · ${escape(TEST_CAMPAIGN.title)}</h2>
 <p>${escape(TEST_CAMPAIGN.description)}</p><p>권장 브라우저 소스 크기: <strong>960 × 180</strong></p>
-${authorized ? form(`/campaigns/${TEST_CAMPAIGN.id}/select`, status.selected ? '이 시험 캠페인 다시 선택' : '이 시험 캠페인 선택')
-  : '<p>캠페인을 선택하려면 앱에서 치지직을 다시 승인하세요.</p>'}</section>
+${selectionState === 'ready' ? form(`/campaigns/${TEST_CAMPAIGN.id}/select`, status.selected ? '이 시험 캠페인 다시 선택' : '이 시험 캠페인 선택') : ''}</section>
 <p>현재 선택: <strong>${status.selected ? '시험 캠페인 선택됨' : '없음'}</strong></p>
 <section aria-labelledby="public-banner-status-title">
 <h3 id="public-banner-status-title">공개 배너 서버 준비 상태</h3>

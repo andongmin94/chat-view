@@ -322,6 +322,11 @@ ${this.#form(b, '/account/cancel', '취소')}
       if (request.method === 'GET' && url.pathname === '/campaigns') {
         if (!b?.owner) throw new DisplayAccessError(401);
         const status = this.#campaigns.status(b.owner);
+        const account = this.#creators.describe(b.owner);
+        // Match the existing POST prerequisites before offering selection.
+        // Approved roles are not open sockets or proof of public rendering.
+        const selectionState = !account.authorized ? 'provider-required'
+          : account.connections.some(connection => connection.role === 'streaming') ? 'ready' : 'streaming-required';
         // Derive this owner's current public TEST response from the SAME server
         // predicate as the OBS browser source; neither selection nor a report
         // proves actual rendering or audience exposure.
@@ -334,7 +339,7 @@ ${this.#form(b, '/account/cancel', '취소')}
             `${response.getHeader('Content-Security-Policy')}; script-src ${campaignSetupScriptHash}`);
         }
         this.#page(response, '시험 캠페인 · 공개 배너', this.#accountNotice(b) + campaignsPage(
-          status, b.csrf, this.#origin, this.#creators.describe(b.owner).authorized, previewReady)); return;
+          status, b.csrf, this.#origin, selectionState, previewReady)); return;
       }
       if (request.method === 'GET' && url.pathname === '/healthz') { response.writeHead(204); response.end(); return; }
       if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/account')) {

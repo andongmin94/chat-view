@@ -57,7 +57,7 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     assert.equal((await fetch(`${origin}/public/ads/${id}`, { method: 'POST' })).status, 405);
     assert.equal((await get('/public/ads/unlisted.js')).status, 404);
     const selected = ads.status('private-account');
-    const management = campaignsPage(selected, 'a'.repeat(64), origin, true, true);
+    const management = campaignsPage(selected, 'a'.repeat(64), origin, 'ready', true);
     assert.match(management, /시험 광고 · 지급 없음/u);
     assert.match(management, /method="post"/u);
     assert.match(management, /name="csrf"/u);
@@ -79,17 +79,17 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     assert(!inline.includes('fetch(') && !inline.includes('localStorage') && !inline.includes('sessionStorage'),
       'copy helper cannot fetch or persist private state');
     assert.match(management, /OBS나 시청자 화면에서 보였다는 뜻은 아닙니다/u);
-    const waiting = campaignsPage(selected, 'a'.repeat(64), origin, true, false);
+    const waiting = campaignsPage(selected, 'a'.repeat(64), origin, 'ready', false);
     assert.match(waiting, /data-public-banner-state="waiting-report"/u);
     assert.match(waiting, /투명하게 대기/u);
     assert.match(waiting, /data-obs-setup-readiness="waiting-report"/u);
     ads.stop('private-account');
-    const stopped = campaignsPage(ads.status('private-account'), 'a'.repeat(64), origin, true, false);
+    const stopped = campaignsPage(ads.status('private-account'), 'a'.repeat(64), origin, 'ready', false);
     assert.match(stopped, /data-public-banner-state="not-selected"/u);
     assert(!stopped.includes('data-public-banner-state="report-ready"'));
     assert.match(stopped, /id="source-url"/u, 'public URL persists after Stop');
     assert.match(stopped, /data-obs-setup-readiness="not-selected"/u);
-    const noSource = campaignsPage({ selected: false }, 'a'.repeat(64), origin, true, false);
+    const noSource = campaignsPage({ selected: false }, 'a'.repeat(64), origin, 'ready', false);
     assert.doesNotMatch(noSource, /id="copy-public-source"|<script|id="source-url"/u,
       'before the first selection there is no copy control or active management script');
     sessions.remove(stream.token);
@@ -99,3 +99,38 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     await new Promise<void>(resolve => server.close(() => resolve())); sessions.close();
   }
 });
+
+for (const selection of ['provider-required', 'streaming-required', 'ready'] as const) {
+  for (const sourceId of [undefined, '1'.repeat(32)]) {
+    test(`selection guidance ${selection}, existing source ${!!sourceId} keeps independent public setup`, () => {
+      const origin = 'https://service.invalid';
+      const html = campaignsPage({ selected: false, sourceId }, 'a'.repeat(64), origin, selection, false);
+      assert(html.includes(`data-campaign-selection-state="${selection}"`));
+      const selectionForm = `action="/campaigns/${TEST_CAMPAIGN.id}/select"`;
+      assert.equal(html.includes(selectionForm), selection === 'ready', 'only a ready account is offered selection');
+      assert.match(html, /data-public-banner-state="not-selected"/u, 'role approval does not select a banner');
+      assert.match(html, /action="\/campaigns\/stop"/u, 'stopping remains available independently');
+      assert.match(html, /href="\/campaigns">선택 준비 상태 다시 확인/u);
+      assert.match(html, /href="\/account">이 계정의 PC 역할 확인/u);
+      assert.match(html, /시험 광고 · 지급 없음/u);
+      if (selection !== 'ready') {
+        assert.match(html, /게임 PC에 OBS를 설치하거나 실행하지 않습니다/u);
+        assert.match(html, /이 관리 화면과 같은 치지직 채널/u);
+        assert.match(html, /송출 PC · OBS 역할/u);
+        assert.match(html, /브라우저 관리 로그인이나 게임 역할 승인만으로는/u);
+      }
+      if (sourceId) {
+        assert(html.includes(`value="${origin}/public/ads/${sourceId}"`));
+        assert.match(html, /기존 공개 URL은 그대로/u);
+        assert.match(html, /광고는 자동 선택되지 않습니다/u);
+        assert.match(html, /id="copy-public-source"/u);
+        assert.match(html, /data-obs-setup-readiness="not-selected"/u);
+        const inline = /<script>([\s\S]*?)<\/script>/u.exec(html)?.[1];
+        assert(inline);
+        assert.equal(campaignSetupScriptHash, `'sha256-${createHash('sha256').update(inline).digest('base64')}'`);
+      } else {
+        assert.doesNotMatch(html, /id="source-url"|id="copy-public-source"|<script/u);
+      }
+    });
+  }
+}

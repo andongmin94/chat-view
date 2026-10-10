@@ -208,6 +208,10 @@ void external(chatview::NativeChatConnection &chat, ICoreWebView2 *core)
     }, "external page loads after display stop");
     expect(evaluate(core, L"privateFrames === 0", chat) == L"true", "no private snapshot reaches the external document");
     expect_status(chat, Status::ExternalPageResumable);
+    expect(text(Access::dialog(chat), 110).find(L"같은 역할로 복귀 요청 가능") != std::wstring::npos,
+        "stopped native view explains retained approval without copying stale server socket counts");
+    expect(text(Access::dialog(chat), 110).find(L"현재 미확인") != std::wstring::npos,
+        "native display cannot call a retiring server socket online");
 }
 void run(const std::wstring &origin, const std::wstring &other, const std::string &mode,
          const std::filesystem::path &config_executable)
@@ -295,6 +299,8 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
             "failure directs the user to the existing explicit return button");
         expect(Access::client(chat).can_resume_current(), "first display failure retains the exact in-run approval");
         expect_status(chat, Status::IdleResumable);
+        expect(text(dialog, 110).find(L"같은 역할로 복귀 요청 가능") != std::wstring::npos,
+            "first-display failure keeps local approval but clears server socket summary");
         command(dialog, 104);
         expect(!Access::client(chat).running(), "new login does not replace a retained approval");
         command(dialog, 112);
@@ -323,6 +329,8 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
         throw;
     }
     expect_status(chat, Status::Receiving);
+    expect(text(dialog, 110).find(L"서버 채팅 연결: 게임 0 / 송출 1") != std::wstring::npos,
+        "native panel shows the same actual server socket counts as the creator account page");
     expect(Access::first_text_rendered(chat), "first local text render acknowledged");
     const auto initial = Access::membership(chat);
     expect(initial.has_value(), "initial approved membership");
@@ -386,6 +394,13 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
         expect_status(chat, Status::Receiving);
         expect(Access::first_text_rendered(chat), "new owned document acknowledges its first text");
         expect(Access::membership(chat)->membership == initial->membership, "exact role/session/connection survives return");
+        expect(text(dialog, 110).find(L"서버 채팅 연결: 게임 0 / 송출 1") != std::wstring::npos,
+            "return restores fresh per-role socket counts only after a new signed frame");
+        // Parent service now checks its authenticated creator account while
+        // the native peer stays connected, before this test stops it again.
+        std::cout << "native-returned\n" << std::flush;
+        std::string return_ack; std::getline(std::cin, return_ack);
+        expect(return_ack == "continue", "creator account observes native return without new approval");
         auto saved = chatview::load_connection();
         if (mode == "remembered") expect(saved.has_value(), "remembered connection preserved");
         else if (mode == "unrelated") expect(saved && saved->credential == other, "return preserves unrelated stored account");
@@ -395,6 +410,8 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
         await(chat, [&] { return !Access::client(chat).running(); }, "ordinary stop completes", 2000U);
         expect(!Access::first_text_rendered(chat), "stop retires first-text acknowledgement");
         expect_status(chat, Status::IdleResumable);
+        expect(text(dialog, 110).find(L"같은 역할로 복귀 요청 가능") != std::wstring::npos,
+            "ordinary stop cannot inherit old online counts");
         command(dialog, 112);
         await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "return after ordinary stop");
         expect_status(chat, Status::Receiving);

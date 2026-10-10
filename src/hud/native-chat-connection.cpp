@@ -14,6 +14,19 @@ constexpr int kOrigin = 101, kLocal = 103, kConnect = 104, kDisconnect = 105, kN
 constexpr int kRemember = 107, kForget = 108, kRole = 109, kSession = 110, kVideoScope = 111, kResume = 112, kDisplayStatus = 113;
 constexpr int kManage = 114, kManagementScope = 115;
 constexpr wchar_t kClass[] = L"ChatView.NativeConnection";
+// This UI does not keep the last server socket counts after a native stop.
+// Local resume eligibility is not a claim that the peer remains connected.
+constexpr const wchar_t *unavailable_connection_text(NativeChatStatus status) noexcept
+{
+    if (can_request_native_chat_return(status))
+        return L"서버 채팅 연결 수: 현재 미확인 (표시 중지)\n"
+            L"원래 승인: 같은 역할로 복귀 요청 가능\n영상 제외: 미검증";
+    if (status == NativeChatStatus::Stopping || status == NativeChatStatus::SigningOut)
+        return L"서버 채팅 연결 수: 종료 확인 중\n"
+            L"복귀: 작업 종료까지 대기\n영상 제외: 미검증";
+    return L"서버 채팅 연결 수: 현재 미확인\n"
+        L"현재 복귀 승인: 없음 또는 미확인\n영상 제외: 미검증";
+}
 std::wstring text(HWND parent, int id, int maximum)
 {
     const HWND control = GetDlgItem(parent, id);
@@ -94,7 +107,7 @@ void NativeChatConnection::show_connection_state() noexcept
     show_display_status();
     try {
         const auto summary = connection_state_ ? connection_summary(*connection_state_)
-            : std::wstring(L"공유 세션: 확인되지 않음\n표시 연결 수와 영상 제외 상태를 확인하지 못했습니다.");
+            : std::wstring(unavailable_connection_text(local_status()));
         SetDlgItemTextW(dialog_, kSession, summary.c_str());
     } catch (...) { SetDlgItemTextW(dialog_, kSession, L"세션 상태를 확인하지 못했습니다."); }
 }
@@ -112,6 +125,10 @@ void NativeChatConnection::show_display_status() noexcept
         : native_chat_status_text_ko(status);
     SetDlgItemTextW(dialog_, kDisplayStatus, label);
     EnableWindow(GetDlgItem(dialog_, kResume), can_request_native_chat_return(status));
+    // The WinHTTP worker may retire AFTER clear_display() painted "Stopping".
+    // Update the same session control on IdleResumable/ExternalPageResumable
+    // transition, without restoring any stale socket counts.
+    if (!connection_state_) SetDlgItemTextW(dialog_, kSession, unavailable_connection_text(status));
 }
 bool NativeChatConnection::open_dialog() noexcept
 {

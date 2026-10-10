@@ -40,6 +40,7 @@ private:
     bool permitted() const noexcept;
     bool topology(bool inspect_paths = false) const noexcept;
     void notice(const wchar_t *message) noexcept;
+    void show_step() noexcept;
     HudWindow &hud_;
     bool enabled_ = false, hotkey_ = false, requested_ = false, releasing_ = false;
     bool notifications_ = false, session_blocked_ = false, suspended_ = false;

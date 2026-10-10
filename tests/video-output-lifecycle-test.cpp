@@ -40,6 +40,11 @@ struct VideoOutputPanelTestAccess {
         p.monitor_ = MonitorFromWindow(p.output_, MONITOR_DEFAULTTONULL);
     }
     static auto &check(VideoOutputPanel &p) { return p.check_; }
+    static void receiver_prompt_step(VideoOutputPanel &p, bool visible) {
+        // The physical receiver topology is synthetic in this GPU fixture;
+        // test only the real panel's read-only confirmation-phase rendering.
+        p.confirming_ = visible; p.show_step();
+    }
     static void pattern(VideoOutputPanel &p, HWND source) {
         place(p, source);
         p.show_pattern();
@@ -72,6 +77,13 @@ struct VideoOutputPanelTestAccess {
 namespace {
 using Access = chatview::VideoOutputPanelTestAccess;
 void expect(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
+std::wstring stage(HWND controls)
+{
+    wchar_t value[512]{};
+    expect(GetDlgItem(controls, 210) != nullptr && GetDlgItemTextW(controls, 210, value, 512) > 0,
+        "video panel exposes an actual readable output progress control");
+    return value;
+}
 void pump()
 {
     MSG message{};
@@ -310,6 +322,9 @@ void resize_stop_restart(chatview::VideoOutputPanel &panel, HWND controls, HWND 
         "stop synchronously latches and covers without retiring a live target");
     late.content_at_ms = GetTickCount64(); Access::apply_snapshot(panel, late);
     expect(!Access::requested(panel) && IsWindowVisible(cover), "late resize status cannot uncover during cancellation");
+    expect(stage(controls).find(L"5/5") != std::wstring::npos &&
+        stage(controls).find(L"검정 덮개") != std::wstring::npos,
+        "actual stop advertises a black separate output and a new check to resume");
     stopped(panel, hud);
     await(covered, "stop masks nine actual output pixels", 2000);
     const auto stopped_frames = Access::capture(panel).snapshot().frames;
@@ -492,6 +507,15 @@ void exercise(const wchar_t *source_executable)
     expect(controls && Access::registered(panel), "real controls register session notifications");
     SetWindowPos(controls, nullptr, 20, 350, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     expect(!IsWindowEnabled(GetDlgItem(controls, 204)), "game conversion is disabled before a pattern is painted");
+    expect(stage(controls).find(L"1/5") != std::wstring::npos,
+        "initial progress requires game source and separate SDR output selection");
+    const HWND step = GetDlgItem(controls, 210);
+    RECT step_box{}, control_bounds{};
+    expect(GetWindowRect(step, &step_box) && GetClientRect(controls, &control_bounds),
+        "video step and owner window geometry");
+    MapWindowPoints(nullptr, controls, reinterpret_cast<POINT *>(&step_box), 2);
+    expect(step_box.left >= 0 && step_box.top >= 0 && step_box.right <= control_bounds.right &&
+        step_box.bottom <= control_bounds.bottom, "video progress text remains inside the native panel");
     expect(GetDlgItem(controls, 209), "companion exposes a direct existing native chat entry");
     // No NativeChatConnection is attached to this standalone capture fixture.
     // The new button must fail closed and leave all video choices unchanged.
@@ -506,8 +530,22 @@ void exercise(const wchar_t *source_executable)
     SendMessageW(controls, WM_COMMAND, 208, 0);
     expect(!Access::capture(panel).running() && !Access::output(panel), "neither command can bypass explicit selections");
     Access::pattern(panel, game);
+    expect(stage(controls).find(L"2/5") != std::wstring::npos &&
+        stage(controls).find(L"게임 화면 아님") != std::wstring::npos,
+        "real pattern is labelled as identification rather than captured game output");
     expect(!Access::capture(panel).running() && Access::capture(panel).snapshot().frames == 0,
         "pattern preparation does not start WGC or read a game frame");
+    const auto pattern_step = stage(controls);
+    Access::receiver_prompt_step(panel, true);
+    expect(stage(controls).find(L"3/5") != std::wstring::npos &&
+        stage(controls).find(L"기본값 '아니요'") != std::wstring::npos &&
+        Access::check(panel).active() && !Access::capture(panel).running(),
+        "receiver confirmation is a distinct explicit default-No phase, not capture consent");
+    Access::receiver_prompt_step(panel, false);
+    expect(stage(controls) == pattern_step, "modal status returns to actual painted pattern state");
+    SendMessageW(controls, WM_COMMAND, 209, 0); // No native chat handler in this GPU-only fixture.
+    expect(stage(controls) == pattern_step && Access::check(panel).active() && !Access::requested(panel),
+        "chat entry cannot consume the painted pattern or launch video capture");
     await(cyan_bar, "synthetic pattern pixels on the actual independent cover");
     const auto label = chatview::video_check_label(Access::check(panel).identifier());
     wchar_t notice[512]{}; GetDlgItemTextW(controls, 207, notice, 512);
@@ -520,12 +558,22 @@ void exercise(const wchar_t *source_executable)
         Access::output(panel) == checked_output && Access::cover(panel) == checked_cover,
         "transition consumes check and preserves both HWNDs");
     expect(IsWindowVisible(checked_cover), "transition keeps a black cover until fresh WGC frames");
+    expect(stage(controls).find(L"4/5") != std::wstring::npos,
+        "game capture starts in the waiting stage under a black cover");
     await([&] { return Access::capture(panel).snapshot().frames >= 2; }, "WGC begins only after confirmation", 10000);
     await([&] {
         Access::apply_snapshot(panel, Access::capture(panel).snapshot());
         return !IsWindowVisible(checked_cover) && video();
     }, "pattern converts to selected game pixels through the owner");
     expect(IsWindowVisible(hud_window), "visual check and game conversion preserve private HUD");
+    expect(stage(controls).find(L"4/5") != std::wstring::npos &&
+        stage(controls).find(L"별도 출력 중") != std::wstring::npos,
+        "real WGC frames advance the visual stage to separate game output");
+    const auto active_step = stage(controls);
+    SendMessageW(controls, WM_COMMAND, 209, 0);
+    expect(stage(controls) == active_step && Access::requested(panel) &&
+        Access::capture(panel).running() && !IsWindowVisible(checked_cover),
+        "chat entry during capture cannot stop or restart video/cover");
     stale_frame_cover(panel, hud_window);
     resize_stop_restart(panel, controls, game, hud_window);
     auto late = Access::capture(panel).snapshot();

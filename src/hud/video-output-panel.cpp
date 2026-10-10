@@ -15,7 +15,7 @@
 namespace chatview {
 namespace {
 constexpr int kVideoHotkey = 0x4356;
-constexpr int kSource = 201, kMonitor = 202, kRefresh = 203, kStart = 204, kStop = 205, kRelease = 206, kNotice = 207, kIdentify = 208, kChat = 209;
+constexpr int kSource = 201, kMonitor = 202, kRefresh = 203, kStart = 204, kStop = 205, kRelease = 206, kNotice = 207, kIdentify = 208, kChat = 209, kStep = 210;
 constexpr UINT_PTR kPatternTimer = 0x435650;
 constexpr wchar_t kPanelClass[] = L"ChatView.VideoSelection";
 constexpr wchar_t kOutputClass[] = L"ChatView.WindowVideoOutput";
@@ -67,7 +67,50 @@ bool VideoOutputPanel::dispatch(MSG &message) noexcept
     if (enabled_ && !message.hwnd && message.message == WM_HOTKEY && message.wParam == kVideoHotkey) { open(); return true; }
     return panel_ && IsWindowVisible(panel_) && IsDialogMessageW(panel_, &message);
 }
-void VideoOutputPanel::notice(const wchar_t *message) noexcept { if (panel_) SetDlgItemTextW(panel_, kNotice, message); }
+void VideoOutputPanel::notice(const wchar_t *message) noexcept
+{
+    if (panel_) { SetDlgItemTextW(panel_, kNotice, message); show_step(); }
+}
+void VideoOutputPanel::show_step() noexcept
+{
+    if (!panel_) return;
+    // Explain only locally observed capture/pattern state, never a physical
+    // receiver acknowledgement. This must not select a target, hide a cover,
+    // consume consent, start a worker, or touch the native chat connection.
+    const wchar_t *step = nullptr;
+    if (releasing_) {
+        step = L"5/5 · 검정 출력창 해제 처리 중\n"
+            L"출력창을 닫으면 수신 PC에 바탕화면이 보일 수 있습니다.";
+    } else if (requested_) {
+        step = capture_.running() && cover_ && !IsWindowVisible(cover_)
+            ? L"4/5 · 신선한 게임 창 프레임을 별도 출력 중\n"
+              L"다음: 중지 · 검은 화면 (실제 수신 영상은 별도 확인)"
+            : L"4/5 · 새 게임 프레임 대기 / 검정 덮개 유지\n"
+              L"다음: 신선한 영상 확인 또는 중지 · 검은 화면";
+    } else if (confirming_ && check_.ready(GetTickCount64(), selection_epoch_)) {
+        step = L"3/5 · 수신 PC의 시험 패턴 육안 확인 요청 중\n"
+            L"기본값 '아니요' · 동의 전에는 게임 창 영상 출력 불가";
+    } else if (check_.active()) {
+        step = check_.ready(GetTickCount64(), selection_epoch_) && cover_ && IsWindowVisible(cover_)
+            ? L"2/5 · 식별 시험 패턴 표시 중 (게임 화면 아님)\n"
+              L"다음: 수신 PC에서 번호·테두리·움직임 확인 → 3. 수신 확인"
+            : L"2/5 · 시험 패턴 준비 중 · 게임 출력 불가\n"
+              L"다음: 새 식별 패턴을 확인한 뒤 수신 확인";
+    } else if (output_) {
+        step = !output_intact() || !IsWindowVisible(cover_)
+            ? L"출력 검정 보호 미확인 · 수신 PC의 방송 장면을 중지하세요.\n"
+              L"게임 화면으로 자동 복구하지 않습니다."
+            : source_
+                ? L"5/5 · 게임 출력 중지 / 독립 검정 덮개 유지\n"
+                  L"다음: 새 시험 패턴 → 수신 확인 → 재개, 또는 출력 창 닫기"
+                : L"5/5 · 검정 출력 유지 / 이전 대상 선택 무효\n"
+                  L"다음: 목록 새로고침 → 새 대상 선택 → 시험 패턴";
+    } else {
+        step = L"1/5 · 게임 창과 별도 확장 SDR 출력 화면 선택\n"
+            L"다음: 1. 시험 패턴 표시 → 2. 수신 확인 · 게임 출력";
+    }
+    SetDlgItemTextW(panel_, kStep, step);
+}
 void VideoOutputPanel::open() noexcept
 {
     try {
@@ -81,14 +124,14 @@ void VideoOutputPanel::open() noexcept
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
         panel_ = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_DLGMODALFRAME, kPanelClass,
             L"ChatView · 게임 창 별도 출력 (실험)", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-            CW_USEDEFAULT, CW_USEDEFAULT, 660, 550, nullptr, nullptr, klass.hInstance, this);
+            CW_USEDEFAULT, CW_USEDEFAULT, 660, 620, nullptr, nullptr, klass.hInstance, this);
         if (!panel_) return;
         if (!SetWindowDisplayAffinity(panel_, WDA_EXCLUDEFROMCAPTURE)) { DestroyWindow(panel_); panel_ = nullptr; return; }
         notifications_ = WTSRegisterSessionNotification(panel_, NOTIFY_FOR_THIS_SESSION) != FALSE;
         if (!notifications_) { DestroyWindow(panel_); panel_ = nullptr; return; }
         const auto dpi = GetDpiForWindow(panel_);
         const auto scale = [dpi](int v) { return MulDiv(v, static_cast<int>(dpi), 96); };
-        SetWindowPos(panel_, nullptr, 0, 0, scale(660), scale(550), SWP_NOMOVE | SWP_NOZORDER);
+        SetWindowPos(panel_, nullptr, 0, 0, scale(660), scale(620), SWP_NOMOVE | SWP_NOZORDER);
         const auto add = [&](const wchar_t *kind, const wchar_t *caption, DWORD style, int id, int x, int y, int w, int h) {
             HWND item = CreateWindowExW(0, kind, caption, WS_CHILD | WS_VISIBLE | style,
                 scale(x), scale(y), scale(w), scale(h), panel_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), klass.hInstance, nullptr);
@@ -106,8 +149,10 @@ void VideoOutputPanel::open() noexcept
         add(L"BUTTON", L"출력 창 닫기", BS_PUSHBUTTON | WS_TABSTOP, kRelease, 435, 223, 195, 32);
         add(L"BUTTON", L"자체 채팅 연결창 열기", BS_PUSHBUTTON | WS_TABSTOP, kChat, 20, 270, 250, 34);
         add(L"STATIC", L"채팅 연결은 기존 게임 PC HUD에서 진행합니다. 영상 출력 선택·재개와는 별개입니다.", 0, 0, 286, 271, 344, 32);
-        add(L"STATIC", L"시험 패턴의 표시 번호·테두리·움직임을 수신 PC에서 직접 확인하세요.\n번호 입력/기기등록은 없습니다. 게임은 확인 후에만 캡처합니다.\n육안 확인은 HUD 제외나 수신 영상의 자동 검증이 아닙니다.\n영상만/SDR. 출력 창 해제·앱 종료 뒤에는 바탕화면이 보일 수 있습니다.", 0, 0, 20, 318, 610, 90);
-        add(L"STATIC", L"대기 중 · 투컴 영상 미검증", 0, kNotice, 20, 416, 610, 74);
+        add(L"STATIC", L"영상 출력 단계 · 실제 송출/수신 검증 아님", 0, 0, 20, 317, 610, 22);
+        add(L"STATIC", L"", 0, kStep, 20, 342, 610, 55);
+        add(L"STATIC", L"시험 패턴의 표시 번호·테두리·움직임을 수신 PC에서 직접 확인하세요.\n번호 입력/기기등록은 없습니다. 게임은 확인 후에만 캡처합니다.\n육안 확인은 HUD 제외나 수신 영상의 자동 검증이 아닙니다.\n영상만/SDR. 출력 창 해제·앱 종료 뒤에는 바탕화면이 보일 수 있습니다.", 0, 0, 20, 407, 610, 80);
+        add(L"STATIC", L"대기 중 · 투컴 영상 미검증", 0, kNotice, 20, 493, 610, 73);
         EnableWindow(GetDlgItem(panel_, kStart), FALSE);
         refresh(); ShowWindow(panel_, SW_SHOWNORMAL); SetForegroundWindow(panel_);
     } catch (...) { if (panel_) DestroyWindow(panel_);
@@ -274,8 +319,10 @@ void VideoOutputPanel::start()
         L"'예'를 누르면 선택한 게임 창 캡처를 시작합니다. 로컬 HUD는 유지합니다.\n"
         L"이 확인은 배선·HUD 제외·실제 수신 영상의 자동 검증이 아닙니다.\n\n선택한 게임 영상으로 전환할까요?";
     confirming_ = true;
+    show_step();
     const int answer = MessageBoxW(panel_, prompt.c_str(), L"ChatView · 수신 화면 직접 확인", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
     confirming_ = false;
+    show_step();
     if (answer != IDYES || epoch != selection_epoch_ || !output_intact() || !IsWindowVisible(cover_) ||
         !topology(true)) {
         stop(L"게임 전환을 취소했거나 확인 상태가 바뀌었습니다. 새 시험 패턴부터 다시 확인하세요."); return;

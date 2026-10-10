@@ -146,8 +146,13 @@ int wmain(int argc, wchar_t **argv)
             MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'V')) != FALSE, "open companion video controls");
         const HWND video = await_window(child, L"ChatView · 게임 창 별도 출력 (실험)");
         expect(GetDlgItem(video, 201) && GetDlgItem(video, 202) && GetDlgItem(video, 204) &&
-            GetDlgItem(video, 205) && GetDlgItem(video, 209),
-            "window/video controls and the native chat entry share the OBS-free companion");
+            GetDlgItem(video, 205) && GetDlgItem(video, 209) && GetDlgItem(video, 210),
+            "window/video controls, explicit progress and native chat entry share the OBS-free companion");
+        wchar_t step[512]{};
+        GetDlgItemTextW(video, 210, step, 512);
+        expect(std::wstring_view(step).find(L"1/5") != std::wstring_view::npos &&
+            std::wstring_view(step).find(L"확장 SDR") != std::wstring_view::npos,
+            "initial progress explicitly requires target selection and separate SDR output");
         // The entry must reuse the existing protected native panel without
         // switching roles, starting login, selecting a screen, or starting WGC.
         DWORD initial_affinity = 0;
@@ -167,6 +172,9 @@ int wmain(int argc, wchar_t **argv)
         expect(std::wstring_view(role).find(L"게임 PC") != std::wstring_view::npos,
             "companion chat keeps the gaming role and never starts OBS");
         expect_video_scope(panel);
+        GetDlgItemTextW(video, 210, step, 512);
+        expect(std::wstring_view(step).find(L"1/5") != std::wstring_view::npos,
+            "opening the protected chat does not advance video selection/consent");
         expect(SendDlgItemMessageW(video, 201, CB_GETCURSEL, 0, 0) == CB_ERR &&
             SendDlgItemMessageW(video, 202, CB_GETCURSEL, 0, 0) == CB_ERR, "capture targets are never preselected");
         choose(video, 204);
@@ -176,6 +184,9 @@ int wmain(int argc, wchar_t **argv)
         choose(video, 205);
         expect(IsWindowVisible(hud) != FALSE && IsWindowVisible(panel) != FALSE,
             "video stop preserves visible local HUD and existing native chat panel");
+        GetDlgItemTextW(video, 210, step, 512);
+        expect(std::wstring_view(step).find(L"1/5") != std::wstring_view::npos,
+            "stop without selected output does not falsely claim covered game capture");
         expect_video_scope(panel);
         expect_no_obs_module(child.pid);
         {

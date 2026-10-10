@@ -19,12 +19,12 @@ constexpr wchar_t kClass[] = L"ChatView.NativeConnection";
 constexpr const wchar_t *unavailable_connection_text(NativeChatStatus status) noexcept
 {
     if (can_request_native_chat_return(status))
-        return L"서버 채팅 연결 수: 현재 미확인 (표시 중지)\n"
+        return L"서버 채팅 연결 수: 현재 확인되지 않음 (표시 중지)\n"
             L"원래 승인: 같은 역할로 복귀 요청 가능\n영상 제외: 미검증";
     if (status == NativeChatStatus::Stopping || status == NativeChatStatus::SigningOut)
-        return L"서버 채팅 연결 수: 종료 확인 중\n"
+        return L"서버 채팅 연결 수: 확인되지 않음 (종료 처리 중)\n"
             L"복귀: 작업 종료까지 대기\n영상 제외: 미검증";
-    return L"서버 채팅 연결 수: 현재 미확인\n"
+    return L"서버 채팅 연결 수: 현재 확인되지 않음\n"
         L"현재 복귀 승인: 없음 또는 미확인\n영상 제외: 미검증";
 }
 std::wstring text(HWND parent, int id, int maximum)

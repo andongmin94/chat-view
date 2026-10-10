@@ -210,7 +210,7 @@ void external(chatview::NativeChatConnection &chat, ICoreWebView2 *core)
     expect_status(chat, Status::ExternalPageResumable);
     expect(text(Access::dialog(chat), 110).find(L"같은 역할로 복귀 요청 가능") != std::wstring::npos,
         "stopped native view explains retained approval without copying stale server socket counts");
-    expect(text(Access::dialog(chat), 110).find(L"현재 미확인") != std::wstring::npos,
+    expect(text(Access::dialog(chat), 110).find(L"현재 확인되지 않음") != std::wstring::npos,
         "native display cannot call a retiring server socket online");
 }
 void run(const std::wstring &origin, const std::wstring &other, const std::string &mode,

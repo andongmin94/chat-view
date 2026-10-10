@@ -492,6 +492,16 @@ void exercise(const wchar_t *source_executable)
     expect(controls && Access::registered(panel), "real controls register session notifications");
     SetWindowPos(controls, nullptr, 20, 350, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     expect(!IsWindowEnabled(GetDlgItem(controls, 204)), "game conversion is disabled before a pattern is painted");
+    expect(GetDlgItem(controls, 209), "companion exposes a direct existing native chat entry");
+    // No NativeChatConnection is attached to this standalone capture fixture.
+    // The new button must fail closed and leave all video choices unchanged.
+    SendMessageW(controls, WM_COMMAND, 209, 0);
+    wchar_t chat_notice[512]{};
+    GetDlgItemTextW(controls, 207, chat_notice, 512);
+    expect(std::wstring_view(chat_notice).find(L"채팅 연결창을 열지 못했습니다") != std::wstring_view::npos,
+        "unavailable protected chat handler does not pretend to open a panel");
+    expect(!Access::capture(panel).running() && !Access::requested(panel) && !Access::output(panel) &&
+        !Access::check(panel).active(), "chat entry cannot select or start video");
     SendMessageW(controls, WM_COMMAND, 204, 0);
     SendMessageW(controls, WM_COMMAND, 208, 0);
     expect(!Access::capture(panel).running() && !Access::output(panel), "neither command can bypass explicit selections");

@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace {
 constexpr wchar_t kConsentTitle[] = L"ChatView · 독립 HUD (개발 검증)";
@@ -144,8 +145,28 @@ int wmain(int argc, wchar_t **argv)
         expect(PostThreadMessageW(child.thread_id, WM_HOTKEY, 0x4356U,
             MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'V')) != FALSE, "open companion video controls");
         const HWND video = await_window(child, L"ChatView · 게임 창 별도 출력 (실험)");
-        expect(GetDlgItem(video, 201) && GetDlgItem(video, 202) && GetDlgItem(video, 204) && GetDlgItem(video, 205),
-            "window and separate-output controls are integrated in companion");
+        expect(GetDlgItem(video, 201) && GetDlgItem(video, 202) && GetDlgItem(video, 204) &&
+            GetDlgItem(video, 205) && GetDlgItem(video, 209),
+            "window/video controls and the native chat entry share the OBS-free companion");
+        // The entry must reuse the existing protected native panel without
+        // switching roles, starting login, selecting a screen, or starting WGC.
+        DWORD initial_affinity = 0;
+        expect(GetWindowDisplayAffinity(panel, &initial_affinity) &&
+            initial_affinity == WDA_EXCLUDEFROMCAPTURE, "native chat panel starts protected");
+        DWORD_PTR ignored = 0;
+        expect(SendMessageTimeoutW(panel, WM_CLOSE, 0, 0, SMTO_ABORTIFHUNG, 2000U, &ignored) != 0 &&
+            !IsWindowVisible(panel), "hide the existing native chat panel without logging out");
+        choose(video, 209);
+        expect(await_window(child, kPanelTitle) == panel,
+            "video panel opens the same protected native chat window without new enrollment");
+        DWORD reopened_affinity = 0;
+        expect(GetWindowDisplayAffinity(panel, &reopened_affinity) &&
+            reopened_affinity == WDA_EXCLUDEFROMCAPTURE, "video-to-chat action preserves capture exclusion");
+        wchar_t role[256]{};
+        GetDlgItemTextW(panel, 109, role, 256);
+        expect(std::wstring_view(role).find(L"게임 PC") != std::wstring_view::npos,
+            "companion chat keeps the gaming role and never starts OBS");
+        expect_video_scope(panel);
         expect(SendDlgItemMessageW(video, 201, CB_GETCURSEL, 0, 0) == CB_ERR &&
             SendDlgItemMessageW(video, 202, CB_GETCURSEL, 0, 0) == CB_ERR, "capture targets are never preselected");
         choose(video, 204);
@@ -153,7 +174,8 @@ int wmain(int argc, wchar_t **argv)
         EnumWindows(find_window, reinterpret_cast<LPARAM>(&unexpected));
         expect(!unexpected.found, "missing selection does not open an output or capture desktop");
         choose(video, 205);
-        expect(IsWindowVisible(hud) != FALSE, "video stop preserves visible local HUD");
+        expect(IsWindowVisible(hud) != FALSE && IsWindowVisible(panel) != FALSE,
+            "video stop preserves visible local HUD and existing native chat panel");
         expect_video_scope(panel);
         expect_no_obs_module(child.pid);
         {

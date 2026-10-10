@@ -4,6 +4,7 @@
 #include "hud/video-layout.hpp"
 #include "hud/video-output-pattern.hpp"
 #include "hud/video-frame-time.hpp"
+#include "common/native-chat-control.hpp"
 #include <dwmapi.h>
 #include <wtsapi32.h>
 #include <dbt.h>
@@ -14,7 +15,7 @@
 namespace chatview {
 namespace {
 constexpr int kVideoHotkey = 0x4356;
-constexpr int kSource = 201, kMonitor = 202, kRefresh = 203, kStart = 204, kStop = 205, kRelease = 206, kNotice = 207, kIdentify = 208;
+constexpr int kSource = 201, kMonitor = 202, kRefresh = 203, kStart = 204, kStop = 205, kRelease = 206, kNotice = 207, kIdentify = 208, kChat = 209;
 constexpr UINT_PTR kPatternTimer = 0x435650;
 constexpr wchar_t kPanelClass[] = L"ChatView.VideoSelection";
 constexpr wchar_t kOutputClass[] = L"ChatView.WindowVideoOutput";
@@ -80,14 +81,14 @@ void VideoOutputPanel::open() noexcept
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
         panel_ = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_DLGMODALFRAME, kPanelClass,
             L"ChatView · 게임 창 별도 출력 (실험)", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-            CW_USEDEFAULT, CW_USEDEFAULT, 660, 490, nullptr, nullptr, klass.hInstance, this);
+            CW_USEDEFAULT, CW_USEDEFAULT, 660, 550, nullptr, nullptr, klass.hInstance, this);
         if (!panel_) return;
         if (!SetWindowDisplayAffinity(panel_, WDA_EXCLUDEFROMCAPTURE)) { DestroyWindow(panel_); panel_ = nullptr; return; }
         notifications_ = WTSRegisterSessionNotification(panel_, NOTIFY_FOR_THIS_SESSION) != FALSE;
         if (!notifications_) { DestroyWindow(panel_); panel_ = nullptr; return; }
         const auto dpi = GetDpiForWindow(panel_);
         const auto scale = [dpi](int v) { return MulDiv(v, static_cast<int>(dpi), 96); };
-        SetWindowPos(panel_, nullptr, 0, 0, scale(660), scale(490), SWP_NOMOVE | SWP_NOZORDER);
+        SetWindowPos(panel_, nullptr, 0, 0, scale(660), scale(550), SWP_NOMOVE | SWP_NOZORDER);
         const auto add = [&](const wchar_t *kind, const wchar_t *caption, DWORD style, int id, int x, int y, int w, int h) {
             HWND item = CreateWindowExW(0, kind, caption, WS_CHILD | WS_VISIBLE | style,
                 scale(x), scale(y), scale(w), scale(h), panel_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), klass.hInstance, nullptr);
@@ -103,8 +104,10 @@ void VideoOutputPanel::open() noexcept
         add(L"BUTTON", L"목록 새로고침", BS_PUSHBUTTON | WS_TABSTOP, kRefresh, 20, 223, 190, 32);
         add(L"BUTTON", L"중지 · 검은 화면", BS_PUSHBUTTON | WS_TABSTOP, kStop, 225, 223, 195, 32);
         add(L"BUTTON", L"출력 창 닫기", BS_PUSHBUTTON | WS_TABSTOP, kRelease, 435, 223, 195, 32);
-        add(L"STATIC", L"시험 패턴의 표시 번호·테두리·움직임을 수신 PC에서 직접 확인하세요.\n번호 입력/기기등록은 없습니다. 게임은 확인 후에만 캡처합니다.\n육안 확인은 HUD 제외나 수신 영상의 자동 검증이 아닙니다.\n영상만/SDR. 출력 창 해제·앱 종료 뒤에는 바탕화면이 보일 수 있습니다.", 0, 0, 20, 276, 610, 90);
-        add(L"STATIC", L"대기 중 · 투컴 영상 미검증", 0, kNotice, 20, 377, 610, 72);
+        add(L"BUTTON", L"자체 채팅 연결창 열기", BS_PUSHBUTTON | WS_TABSTOP, kChat, 20, 270, 250, 34);
+        add(L"STATIC", L"채팅 연결은 기존 게임 PC HUD에서 진행합니다. 영상 출력 선택·재개와는 별개입니다.", 0, 0, 286, 271, 344, 32);
+        add(L"STATIC", L"시험 패턴의 표시 번호·테두리·움직임을 수신 PC에서 직접 확인하세요.\n번호 입력/기기등록은 없습니다. 게임은 확인 후에만 캡처합니다.\n육안 확인은 HUD 제외나 수신 영상의 자동 검증이 아닙니다.\n영상만/SDR. 출력 창 해제·앱 종료 뒤에는 바탕화면이 보일 수 있습니다.", 0, 0, 20, 318, 610, 90);
+        add(L"STATIC", L"대기 중 · 투컴 영상 미검증", 0, kNotice, 20, 416, 610, 74);
         EnableWindow(GetDlgItem(panel_, kStart), FALSE);
         refresh(); ShowWindow(panel_, SW_SHOWNORMAL); SetForegroundWindow(panel_);
     } catch (...) { if (panel_) DestroyWindow(panel_);
@@ -472,6 +475,22 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
                     : L"출력 중지 · 검은 화면 유지 · 새 시험 패턴을 확인한 뒤 같은 출력창으로 재개하세요.\n로컬 채팅은 계속 사용할 수 있습니다.");
                 return 0;
             case kRelease: self->release(); return 0;
+            case kChat: {
+                // User-driven link to the *existing* native connection panel.
+                // Its HUD handler rechecks capture exclusion and UI protection.
+                // Do not change capture target, pattern consent, output mask,
+                // login authority or a sender on this route.
+                if (!self->permitted() || !self->hud_.capture_exclusion_intact()) {
+                    self->notice(L"개인 HUD 보호 상태를 확인하지 못해 채팅 연결창을 열지 않았습니다.");
+                    return 0;
+                }
+                const UINT open = RegisterWindowMessageW(kOpenNativeChatMessageName);
+                if (!open || SendMessageW(self->hud_.window_, open, 0, 0) != 1)
+                    self->notice(L"자체 채팅 연결창을 열지 못했습니다. 기존 HUD 보호 상태를 확인하세요.");
+                else
+                    self->notice(L"기존 보호된 채팅 연결창을 열었습니다. 영상 출력·시험 패턴은 변경하지 않았습니다.");
+                return 0;
+            }
             case IDCANCEL: SendMessageW(window, WM_CLOSE, 0, 0); return 0;
             }
         }

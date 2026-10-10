@@ -4,7 +4,7 @@ The experimental G3-03 path extends the existing companion, not a qualified capt
 
 ## Select, identify, then start the game
 
-Run the HUD with `--companion`. Its privacy warning remains. **Ctrl+Alt+Shift+C** opens chat; **Ctrl+Alt+Shift+V** opens **게임 창 별도 출력 (실험)**. Video controls require the existing HUD to be ready, visible and not protection-suppressed. No account, enrollment, display credential or gaming-PC OBS is added.
+Run the HUD with `--companion`. Its privacy warning remains. **Ctrl+Alt+Shift+C** opens chat; **Ctrl+Alt+Shift+V** opens **게임 창 별도 출력 (실험)**. The output panel also has **자체 채팅 연결창 열기**. It opens the *same* protected native chat connection panel and fixes the existing gaming role; it cannot enroll a device, create a new video target, authorize a login, or use OBS on the gaming PC. If the original HUD/capture exclusion is unavailable it refuses to open that panel, leaving current output/pattern state unchanged. Video controls require the existing HUD to be ready, visible and not protection-suppressed. No account, enrollment, display credential or gaming-PC OBS is added.
 
 Select a visible external top-level game window and a separate non-primary SDR extended display. Neither choice is preselected or saved. The list excludes this process's windows, desktop/shell and hidden/minimized/cloaked windows. Source process/thread and visibility are rechecked before either the pattern or capture can begin.
 

@@ -315,6 +315,61 @@ def run() -> None:
                 finally:
                     flow.close()
 
+                flow = Flow(browser, f, 390)
+                try:
+                    flow.identity("/campaigns")
+                    flow.confirm("/campaigns")
+                    public_url = flow.page.locator("#source-url").input_value()
+                    public = flow.context.new_page()
+                    public.goto(public_url)
+                    banner = public.locator("#banner")
+                    expect(banner).to_be_hidden()
+                    recovery = flow.page.locator("[data-banner-recovery-state]")
+                    expect(recovery).to_have_attribute("data-banner-recovery-state", "waiting-report")
+
+                    assert f.command("sender-disconnect")["ok"]
+                    flow.page.get_by_role("link", name="현재 상태 새로고침", exact=True).click()
+                    expect(recovery).to_have_attribute("data-banner-recovery-state", "streaming-disconnected")
+                    expect(recovery).to_contain_text("현재 승인으로 자체 채팅 복귀")
+                    flow.page.get_by_role("link", name="송출 승인·현재 연결 확인", exact=True).click()
+                    sender = flow.page.locator('[data-pc-role="streaming"]')
+                    expect(sender.locator('[data-approved-count]')).to_have_attribute("data-approved-count", "1")
+                    expect(sender.locator('[data-online-count]')).to_have_attribute("data-online-count", "0")
+                    flow.page.get_by_role("link", name="시험 캠페인 선택 · OBS 공개 배너", exact=True).click()
+                    expect(recovery).to_have_attribute("data-banner-recovery-state", "streaming-disconnected")
+                    flow.image("banner-recovery-disconnected-mobile")
+
+                    # Only parent-controlled native HTTP renews the same approval.
+                    # Browser navigation has no login/output/select capability.
+                    assert f.command("sender-return")["ok"]
+                    flow.page.get_by_role("link", name="현재 상태 새로고침", exact=True).click()
+                    expect(recovery).to_have_attribute("data-banner-recovery-state", "waiting-report")
+                    expect(recovery).to_contain_text("방송·녹화를 시작할 필요는 없습니다")
+                    expect(banner).to_be_hidden()
+                    assert f.command("sender-report")["ok"]
+                    flow.page.get_by_role("link", name="현재 상태 새로고침", exact=True).click()
+                    expect(recovery).to_have_attribute("data-banner-recovery-state", "report-ready")
+                    expect(banner).to_be_visible()
+                    expect(public.locator("#title")).to_have_text("방송과 함께하는 챗뷰")
+
+                    assert f.command("expire-output-report")["ok"]
+                    flow.page.get_by_role("link", name="현재 상태 새로고침", exact=True).click()
+                    expect(recovery).to_have_attribute("data-banner-recovery-state", "waiting-report")
+                    expect(banner).to_be_hidden()
+                    assert f.command("sender-report")["ok"]
+                    flow.page.get_by_role("link", name="현재 상태 새로고침", exact=True).click()
+                    expect(recovery).to_have_attribute("data-banner-recovery-state", "report-ready")
+                    expect(banner).to_be_visible()
+                    assert flow.page.locator("#source-url").input_value() == public_url
+                    expect(public).to_have_url(public_url)
+                    flow.page.get_by_role("link", name="기존 공개 소스 설정 보기", exact=True).click()
+                    assert flow.page.evaluate("location.hash") == "#obs-source-setup"
+                    flow.image("banner-recovery-ready-mobile")
+                    assert f.command("check")["ok"]
+                    results.append("same-approval sender recovery and report expiry restore the same public document without reselection")
+                finally:
+                    flow.close()
+
                 metadata = f.command("metadata")["metadata"]
                 returns = [r for r in metadata if r["path"] in ("/callback", "/account/confirm", "/login/:id")
                            and r["site"] == "cross-site"]

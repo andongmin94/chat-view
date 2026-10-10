@@ -6,14 +6,15 @@ import { once } from 'node:events';
 import { createInterface } from 'node:readline';
 import { WebSocket } from 'ws';
 import { fixture } from '../tests/fixtures/service.mts';
+import { BroadcastOutput } from '../server/chat/broadcast-output.mts';
 import { DisplayGateway } from '../server/chat/display-gateway.mts';
 import { TEST_CAMPAIGN } from '../server/ads/campaigns.mts';
 
 const realNow = Date.now.bind(Date);
-let offset = 0;
+let offset = 0, outputNow = 1000;
 Date.now = () => realNow() + offset; // Expire browser state, not native/provider grants.
 const f = await fixture({ now: realNow,
-  createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot) });
+  createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot, new BroadcastOutput(() => outputNow)) });
 let peer: WebSocket | undefined;
 let pending: Awaited<ReturnType<typeof f.start>> | undefined;
 const metadata: { path: string; method: string; site: string; mode: string; dest: string;
@@ -46,9 +47,13 @@ try {
     aliceGrant: f.grants.load('alice'), bobGrant: f.grants.load('bob'),
   });
   const before = snapshot(), starts = f.startedWith.length;
-  peer = new WebSocket(f.origin.replace('http:', 'ws:') + '/display/events',
-    { headers: { Authorization: `Bearer ${alice.lease.token}` } });
-  peer.on('error', () => {}); await once(peer, 'message', { signal: AbortSignal.timeout(3000) });
+  const openSender = async (token: string) => {
+    peer = new WebSocket(f.origin.replace('http:', 'ws:') + '/display/events',
+      { headers: { Authorization: `Bearer ${token}` }, handshakeTimeout: 3000 });
+    peer.on('error', () => {}); await once(peer, 'message', { signal: AbortSignal.timeout(3000) });
+  };
+  await openSender(alice.lease.token);
+  let outputToken = alice.lease.outputToken!, reportSequence = 0;
   reply({ ready: true, origin: f.origin });
   const input = createInterface({ input: process.stdin });
   let sequence = 0;
@@ -59,6 +64,38 @@ try {
     if (command.op === 'expire-browser') { offset += 3_600_001; reply({ ok: true }); continue; }
     if (command.op === 'expire-confirmation') { offset += 300_001; reply({ ok: true }); continue; }
     if (command.op === 'metadata') { reply({ metadata }); continue; }
+    // Explicit parent actions stand in for the sender, never for browser JS.
+    // The production management GET cannot invoke any of these operations.
+    if (command.op === 'sender-disconnect') {
+      assert(peer?.readyState === WebSocket.OPEN);
+      const closed = once(peer, 'close', { signal: AbortSignal.timeout(3000) });
+      peer.close(); await closed;
+      const due = realNow() + 2000;
+      while (f.creators.describe('alice').presence.streamingConnections !== 0) {
+        assert(realNow() < due, 'server observes sender socket close');
+        await new Promise<void>(resolve => setTimeout(resolve, 25));
+      }
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'sender-return') {
+      assert(peer?.readyState === WebSocket.CLOSED);
+      const response = await f.native('/display/refresh', 'ChatView-Session', alice.lease.sessionToken, 'streaming');
+      assert.equal(response.status, 200);
+      const lease = await response.json() as typeof alice.lease;
+      assert.deepEqual(lease.membership, alice.lease.membership);
+      assert(lease.outputToken); outputToken = lease.outputToken; reportSequence = 0;
+      await openSender(lease.token);
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'sender-report') {
+      assert(peer?.readyState === WebSocket.OPEN);
+      const response = await f.request('/broadcast/output', { method: 'POST', headers: {
+        Authorization: `ChatView-Output ${outputToken}`, 'Content-Type': 'application/json',
+      }, body: JSON.stringify({ sequence: ++reportSequence, streaming: false, recording: false, sampleAgeMs: 0 }) });
+      assert.equal(response.status, 200);
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'expire-output-report') { outputNow += 15000; reply({ ok: true }); continue; }
     if (command.op === 'native-start') {
       assert(!pending); pending = await f.start('streaming');
       reply({ path: pending.verificationPath }); continue;
@@ -77,7 +114,7 @@ try {
     assert(snapshot() === before, 'browser actions must preserve native approvals, grants and selection');
     assert.equal(f.startedWith.filter(token => !token.includes(':charlie:')).length, starts);
     assert.equal(f.refreshCalls, 0);
-    assert.equal(peer.readyState, WebSocket.OPEN);
+    assert(peer && peer.readyState === WebSocket.OPEN);
     const marker = `browser-fixture-${++sequence}`;
     f.chats.get('alice')!.publish(marker);
     for (;;) {

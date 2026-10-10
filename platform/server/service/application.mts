@@ -339,7 +339,8 @@ ${this.#form(b, '/account/cancel', '취소')}
             `${response.getHeader('Content-Security-Policy')}; script-src ${campaignSetupScriptHash}`);
         }
         this.#page(response, '시험 캠페인 · 공개 배너', this.#accountNotice(b) + campaignsPage(
-          status, b.csrf, this.#origin, selectionState, previewReady)); return;
+          status, b.csrf, this.#origin, { selectionState, previewReady,
+            streamingConnected: account.presence.streamingConnections > 0 })); return;
       }
       if (request.method === 'GET' && url.pathname === '/healthz') { response.writeHead(204); response.end(); return; }
       if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/account')) {

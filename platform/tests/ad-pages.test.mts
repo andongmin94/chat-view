@@ -57,7 +57,7 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     assert.equal((await fetch(`${origin}/public/ads/${id}`, { method: 'POST' })).status, 405);
     assert.equal((await get('/public/ads/unlisted.js')).status, 404);
     const selected = ads.status('private-account');
-    const management = campaignsPage(selected, 'a'.repeat(64), origin, 'ready', true);
+    const management = campaignsPage(selected, 'a'.repeat(64), origin, { selectionState: 'ready', streamingConnected: true, previewReady: true });
     assert.match(management, /시험 광고 · 지급 없음/u);
     assert.match(management, /method="post"/u);
     assert.match(management, /name="csrf"/u);
@@ -79,17 +79,17 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     assert(!inline.includes('fetch(') && !inline.includes('localStorage') && !inline.includes('sessionStorage'),
       'copy helper cannot fetch or persist private state');
     assert.match(management, /OBS나 시청자 화면에서 보였다는 뜻은 아닙니다/u);
-    const waiting = campaignsPage(selected, 'a'.repeat(64), origin, 'ready', false);
+    const waiting = campaignsPage(selected, 'a'.repeat(64), origin, { selectionState: 'ready', streamingConnected: true, previewReady: false });
     assert.match(waiting, /data-public-banner-state="waiting-report"/u);
     assert.match(waiting, /투명하게 대기/u);
     assert.match(waiting, /data-obs-setup-readiness="waiting-report"/u);
     ads.stop('private-account');
-    const stopped = campaignsPage(ads.status('private-account'), 'a'.repeat(64), origin, 'ready', false);
+    const stopped = campaignsPage(ads.status('private-account'), 'a'.repeat(64), origin, { selectionState: 'ready', streamingConnected: true, previewReady: false });
     assert.match(stopped, /data-public-banner-state="not-selected"/u);
     assert(!stopped.includes('data-public-banner-state="report-ready"'));
     assert.match(stopped, /id="source-url"/u, 'public URL persists after Stop');
     assert.match(stopped, /data-obs-setup-readiness="not-selected"/u);
-    const noSource = campaignsPage({ selected: false }, 'a'.repeat(64), origin, 'ready', false);
+    const noSource = campaignsPage({ selected: false }, 'a'.repeat(64), origin, { selectionState: 'ready', streamingConnected: true, previewReady: false });
     assert.doesNotMatch(noSource, /id="copy-public-source"|<script|id="source-url"/u,
       'before the first selection there is no copy control or active management script');
     sessions.remove(stream.token);
@@ -104,7 +104,7 @@ for (const selection of ['provider-required', 'streaming-required', 'ready'] as 
   for (const sourceId of [undefined, '1'.repeat(32)]) {
     test(`selection guidance ${selection}, existing source ${!!sourceId} keeps independent public setup`, () => {
       const origin = 'https://service.invalid';
-      const html = campaignsPage({ selected: false, sourceId }, 'a'.repeat(64), origin, selection, false);
+      const html = campaignsPage({ selected: false, sourceId }, 'a'.repeat(64), origin, { selectionState: selection, streamingConnected: false, previewReady: false });
       assert(html.includes(`data-campaign-selection-state="${selection}"`));
       const selectionForm = `action="/campaigns/${TEST_CAMPAIGN.id}/select"`;
       assert.equal(html.includes(selectionForm), selection === 'ready', 'only a ready account is offered selection');

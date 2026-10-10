@@ -63,7 +63,9 @@ export function servePublicAd(request: IncomingMessage, response: ServerResponse
 export type CampaignSelectionState = 'provider-required' | 'streaming-required' | 'ready';
 
 export function campaignsPage(status: CampaignStatus, csrf: string, origin: string,
-  selectionState: CampaignSelectionState, previewReady: boolean): string {
+  { selectionState, streamingConnected, previewReady }: {
+    selectionState: CampaignSelectionState; streamingConnected: boolean; previewReady: boolean;
+  }): string {
   const form = (path: string, label: string) => `<form method="post" action="${path}"><input type="hidden" name="csrf" value="${csrf}"><button>${label}</button></form>`;
   const source = status.sourceId ? `${origin}/public/ads/${status.sourceId}` : undefined;
   const selectionText = selectionState === 'provider-required'
@@ -72,8 +74,29 @@ export function campaignsPage(status: CampaignStatus, csrf: string, origin: stri
       ? '송출 역할 준비 필요 · 이 계정의 유효한 송출 PC 승인이 없습니다.'
       : '선택 가능 · 이 계정의 치지직 승인과 송출 역할 승인이 확인됐습니다.';
   const preview = !status.selected ? { state: 'not-selected', text: '캠페인이 선택되지 않아 공개 소스는 투명하게 대기합니다.' }
-    : previewReady ? { state: 'report-ready', text: '캠페인 선택과 최근 송출 PC 출력 보고가 확인됐습니다. 공개 시험 배너를 표시할 조건은 충족됐지만 OBS나 시청자 화면에서 보였다는 뜻은 아닙니다.' }
+    : selectionState === 'ready' && streamingConnected && previewReady ? { state: 'report-ready', text: '캠페인 선택과 최근 송출 PC 출력 보고가 확인됐습니다. 공개 시험 배너를 표시할 조건은 충족됐지만 OBS나 시청자 화면에서 보였다는 뜻은 아닙니다.' }
     : { state: 'waiting-report', text: '캠페인은 선택됐지만 최근 송출 PC 출력 보고가 없어 공개 소스는 투명하게 대기합니다.' };
+  // Explain the next action using this owner's existing approval/presence and
+  // the public snapshot predicate. No management read reconnects or reselects.
+  const recovery = selectionState === 'provider-required' ? {
+    state: 'provider-required', title: '치지직 재승인이 필요합니다.',
+    help: '<p>위의 승인 준비 안내에서 같은 채널·송출 역할을 확인하세요. 브라우저 관리 로그인만으로 앱 승인이 복구되지는 않습니다.</p><p><a href="#campaign-selection-title">승인 준비 안내 보기</a></p>',
+  } : selectionState === 'streaming-required' ? {
+    state: 'streaming-required', title: '이 계정의 송출 PC 승인이 없습니다.',
+    help: '<p>게임 PC companion은 그대로 두고 송출 PC에서 역할을 승인하세요. 새 승인만으로 광고가 선택되지는 않습니다.</p><p><a href="#campaign-selection-title">승인 준비 안내 보기</a></p>',
+  } : !status.selected ? {
+    state: 'not-selected', title: '시험 캠페인을 직접 선택하세요.',
+    help: `<p>연결과 출력 보고가 있어도 선택하지 않은 광고는 표시하지 않습니다. ${source ? '기존 공개 URL은 그대로 사용합니다.' : '처음 선택하면 공개 URL이 생성됩니다.'}</p><p><a href="#campaign-selection-title">캠페인 선택으로 이동</a></p>`,
+  } : !streamingConnected ? {
+    state: 'streaming-disconnected', title: '송출 승인은 있지만 열린 채팅 연결이 없습니다.',
+    help: '<p>송출 PC의 OBS 관리 런타임에서 ChatView 연결창을 열고 <strong>현재 승인으로 자체 채팅 복귀</strong>를 직접 선택하세요. 복귀할 승인이 없거나 만료·철회 안내가 나오면 내 연결 관리에서 기존 송출 승인을 먼저 확인하세요.</p><p>선택은 유지돼 있습니다. 같은 승인으로 연결을 복구하고 새 보고를 받으면 같은 공개 URL로 돌아옵니다. 캠페인 재선택이나 URL 교체는 필요하지 않습니다.</p>',
+  } : !previewReady ? {
+    state: 'waiting-report', title: '송출 채팅 연결은 열려 있지만 유효한 출력 보고가 없습니다.',
+    help: '<p>송출 PC의 OBS와 ChatView 런타임·서비스 연결 상태를 확인한 뒤 현재 상태를 새로고침하세요. 게임 PC companion이나 브라우저 새로고침은 출력 보고를 만들지 않습니다.</p><p>선택과 공개 URL은 유지됩니다. 캠페인 재선택이나 URL 교체는 필요하지 않습니다. 배너 확인을 위해 방송·녹화를 시작할 필요는 없습니다.</p>',
+  } : {
+    state: 'report-ready', title: '서버 표시 조건이 충족됐습니다. OBS에서 직접 확인하세요.',
+    help: '<p>같은 공개 URL의 시험 배너를 OBS 미리보기에서 확인하세요. 실제 배너 표시·송출·시청자 노출은 아직 확인된 것이 아닙니다.</p><p><a href="#obs-source-setup">기존 공개 소스 설정 보기</a></p>',
+  };
   return `<p><a href="/account">내 연결 관리</a> · <a href="/campaigns/activity">비지급 활동 기록 · 근거 구분 보기</a></p>
 <p><strong>시험 광고 · 지급 없음</strong> — 이 단계에서는 시청 실적, HP, 수익을 계산하지 않습니다.</p>
 <section aria-labelledby="campaign-selection-title">
@@ -91,10 +114,14 @@ ${source && !status.selected ? '<p>기존 공개 URL은 그대로 사용할 수 
 <p>${escape(TEST_CAMPAIGN.description)}</p><p>권장 브라우저 소스 크기: <strong>960 × 180</strong></p>
 ${selectionState === 'ready' ? form(`/campaigns/${TEST_CAMPAIGN.id}/select`, status.selected ? '이 시험 캠페인 다시 선택' : '이 시험 캠페인 선택') : ''}</section>
 <p>현재 선택: <strong>${status.selected ? '시험 캠페인 선택됨' : '없음'}</strong></p>
-<section aria-labelledby="public-banner-status-title">
+<section id="public-banner-status" aria-labelledby="public-banner-status-title">
 <h3 id="public-banner-status-title">공개 배너 서버 준비 상태</h3>
 <p data-public-banner-state="${preview.state}">${preview.text}</p>
-<p>최근 출력 보고에는 녹화·미리보기 상태도 포함될 수 있습니다. 이 상태는 실제 OBS 브라우저 화면, 방송 송출 또는 시청자 광고 노출을 측정하지 않습니다.
+<div data-banner-recovery-state="${recovery.state}">
+<p><strong>${recovery.title}</strong></p>${recovery.help}
+</div>
+<p><a href="/account#two-pc-status">송출 승인·현재 연결 확인</a></p>
+<p>최근 출력 보고에는 녹화·미리보기 상태도 포함될 수 있습니다. 열린 연결은 서버의 채팅 WebSocket이며 PC 실행·채팅 글자 표시의 증거가 아닙니다. 이 상태는 실제 OBS 브라우저 화면, 방송 송출 또는 시청자 광고 노출을 측정하지 않습니다.
 <a href="/campaigns">현재 상태 새로고침</a></p>
 </section>
 ${form('/campaigns/stop', '공개 배너 중지')}
@@ -128,7 +155,7 @@ ${source ? `<section id="obs-source-setup" aria-labelledby="obs-source-title">
 <li>캠페인이 선택됐는지, 위 서버 준비 상태가 최신 출력 보고를 기다리는지 확인하고 관리 페이지를 새로고침하세요.</li>
 <li>OBS 브라우저 소스의 로컬 파일 사용이 꺼져 있고 URL·너비 960·높이 180이 맞는지 확인하세요.</li>
 <li>송출 역할로 승인한 PC가 실행 중이며 최신 출력 보고를 보내는지 확인하세요. 실제 방송을 시작하지 않아도 미리보기에서 보일 수 있습니다.</li>
-<li>중지·로그아웃·보고 만료 상태라면 공개 소스가 투명한 것이 정상입니다. 같은 URL을 다시 사용하려면 캠페인을 명시적으로 재선택하세요.</li>
+<li>보고 만료·연결 단절만으로 캠페인 선택이 해제되지는 않습니다. 같은 승인으로 연결을 복원하고 새 보고를 받으면 같은 URL로 돌아옵니다. 중지·로그아웃·철회로 선택이 해제된 경우에만 직접 다시 선택하세요.</li>
 </ul></details>
 <p><a href="${escape(source)}" target="_blank" rel="noopener noreferrer">공개 시험 배너 별도 미리보기</a> ·
 <a href="https://obsproject.com/kb/browser-source" target="_blank" rel="noopener noreferrer">OBS 브라우저 소스 공식 안내</a></p>

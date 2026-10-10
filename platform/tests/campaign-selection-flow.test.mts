@@ -129,14 +129,15 @@ test('gaming-only account prepares a streaming role, selects explicitly and reus
     assert.equal(source(await screen(f, game.b, 'ready', 'not-selected')).href, url.href);
     assert.deepEqual(await snapshot(f, url), HIDDEN_AD);
 
-    const frames = on(gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
-    f.chats.get('alice')!.publish('game-chat-after-campaign-stop');
+    const delivery = new AbortController();
+    const frames = on(gamePeer, 'message', { signal: AbortSignal.any([delivery.signal, AbortSignal.timeout(3000)]) });
     try {
+      f.chats.get('alice')!.publish('game-chat-after-campaign-stop');
       for await (const [data] of frames) {
         assert.doesNotMatch(String(data), /ad-snapshot|chatview-test/u);
         if (String(data).includes('game-chat-after-campaign-stop')) break;
       }
-    } finally { await frames.return(); }
+    } finally { delivery.abort(); }
     assert.equal(gamePeer.readyState, WebSocket.OPEN, 'game chat remains connected across the full ad flow');
     assert.equal(f.exchangeCalls, exchanges, 'role selection never silently reauthenticates the provider');
     assert(f.store.find(other.lease.sessionToken));

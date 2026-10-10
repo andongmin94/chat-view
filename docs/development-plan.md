@@ -23,7 +23,7 @@
 
 - **로컬 Node22.16.0:** 원격 blob과 동일한 SessionStore/Campaigns/공개 자산을 사용한 기존 실제 HTTP·SQLite 페이지 검사와 새 상태/주소 유무6개, **총7/7 통과**. 새6개는 원본 `pages.mts`에서 모두 실패한다. 변경 `.mts` 문법과 diff 공백을 검사했다. 전체 서비스·실제 Chromium·Windows 네이티브를 로컬에서 실행한 결과는 아니다.
 - 새 `campaign-selection-flow.test.mts`는 실제 HTTP/SQLite/WebSocket을 사용해 gaming-only·다른 계정·승인 대기 → streaming 승인 → 명시적 선택/출력 보고 → 브라우저의 해당 연결 철회 → 새 승인/보고만으로 비선택 유지 → 같은 URL 재선택·중지와 게임 채팅 수신을 검사한다. 별도 제공자 철회는 재승인 필요 표시 및 POST401을 요구한다. 제공자/OBS 보고는 합성이며 실제 방송 검증이 아니다.
-- 이번 코드의 **원격 CHZZK contract·Chromium 결과는 아직 미확정**이다. 기존 Windows44개·시간/픽셀 조건·workflow는 변경하지 않는다. 서버 화면·platform 검사만 바꿨으므로 기존 scope 규칙의 Windows native job 제외는 통과가 아니라 미실행이다. 후속 조회에서 정확한 코드 SHA와 결과를 기록한다.
+- 최초 구현 **`4c05546f47f5f34f787cb5a8c9f4644609d129e4` / CHZZK #64 / run `38065781782`**의 Ubuntu24 job `114253018343`에서 테스트279/279는 통과했지만 엄격 타입 검사가 새 검사139행의 TS2722(선택적인 iterator.return 호출)로 실패했다. 이벤트 구독을 `AbortController`로 명시적으로 정리하도록 수정하며 흐름/시간 제한은 유지한다. 수정 코드의 **원격 CHZZK contract·Chromium 결과는 아직 미확정**이다. 기존 Windows44개·시간/픽셀 조건·workflow는 변경하지 않는다. 서버 화면·platform 검사만 바꿨으므로 기존 scope 규칙의 Windows native job 제외는 통과가 아니라 미실행이다. 후속 조회에서 정확한 코드 SHA와 결과를 기록한다.
 
 ## G1. 한 화면의 작업과 개인 채팅
 

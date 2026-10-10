@@ -15,7 +15,7 @@
 namespace chatview {
 namespace {
 constexpr int kVideoHotkey = 0x4356;
-constexpr int kSource = 201, kMonitor = 202, kRefresh = 203, kStart = 204, kStop = 205, kRelease = 206, kNotice = 207, kIdentify = 208, kChat = 209, kStep = 210;
+constexpr int kSource = 201, kMonitor = 202, kRefresh = 203, kStart = 204, kStop = 205, kRelease = 206, kNotice = 207, kIdentify = 208, kChat = 209, kStep = 210, kChatHint = 211;
 constexpr UINT_PTR kPatternTimer = 0x435650;
 constexpr wchar_t kPanelClass[] = L"ChatView.VideoSelection";
 constexpr wchar_t kOutputClass[] = L"ChatView.WindowVideoOutput";
@@ -148,7 +148,9 @@ void VideoOutputPanel::open() noexcept
         add(L"BUTTON", L"중지 · 검은 화면", BS_PUSHBUTTON | WS_TABSTOP, kStop, 225, 223, 195, 32);
         add(L"BUTTON", L"출력 창 닫기", BS_PUSHBUTTON | WS_TABSTOP, kRelease, 435, 223, 195, 32);
         add(L"BUTTON", L"자체 채팅 연결창 열기", BS_PUSHBUTTON | WS_TABSTOP, kChat, 20, 270, 250, 34);
-        add(L"STATIC", L"채팅 연결은 기존 게임 PC HUD에서 진행합니다. 영상 출력 선택·재개와는 별개입니다.", 0, 0, 286, 271, 344, 32);
+        // Chat-button feedback must not overwrite the video notice: while a
+        // test pattern is displayed that notice holds its receiver check label.
+        add(L"STATIC", L"기존 게임 PC HUD 연결창 · 영상 확인과 별개", 0, kChatHint, 286, 271, 344, 32);
         add(L"STATIC", L"영상 출력 단계 · 실제 송출/수신 검증 아님", 0, 0, 20, 317, 610, 22);
         add(L"STATIC", L"", 0, kStep, 20, 342, 610, 55);
         add(L"STATIC", L"시험 패턴의 표시 번호·테두리·움직임을 수신 PC에서 직접 확인하세요.\n번호 입력/기기등록은 없습니다. 게임은 확인 후에만 캡처합니다.\n육안 확인은 HUD 제외나 수신 영상의 자동 검증이 아닙니다.\n영상만/SDR. 출력 창 해제·앱 종료 뒤에는 바탕화면이 보일 수 있습니다.", 0, 0, 20, 407, 610, 80);
@@ -528,14 +530,15 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
                 // Do not change capture target, pattern consent, output mask,
                 // login authority or a sender on this route.
                 if (!self->permitted() || !self->hud_.capture_exclusion_intact()) {
-                    self->notice(L"개인 HUD 보호 상태를 확인하지 못해 채팅 연결창을 열지 않았습니다.");
+                    SetDlgItemTextW(self->panel_, kChatHint,
+                        L"채팅 연결 거부 · 개인 HUD 보호 상태 미확인");
                     return 0;
                 }
                 const UINT open = RegisterWindowMessageW(kOpenNativeChatMessageName);
-                if (!open || SendMessageW(self->hud_.window_, open, 0, 0) != 1)
-                    self->notice(L"자체 채팅 연결창을 열지 못했습니다. 기존 HUD 보호 상태를 확인하세요.");
-                else
-                    self->notice(L"기존 보호된 채팅 연결창을 열었습니다. 영상 출력·시험 패턴은 변경하지 않았습니다.");
+                SetDlgItemTextW(self->panel_, kChatHint, !open ||
+                    SendMessageW(self->hud_.window_, open, 0, 0) != 1
+                    ? L"채팅 연결창 열기 실패 · HUD 보호 상태 확인"
+                    : L"보호된 채팅 연결창 열림 · 영상 출력은 유지");
                 return 0;
             }
             case IDCANCEL: SendMessageW(window, WM_CLOSE, 0, 0); return 0;

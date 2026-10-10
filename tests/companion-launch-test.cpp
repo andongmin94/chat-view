@@ -146,7 +146,8 @@ int wmain(int argc, wchar_t **argv)
             MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'V')) != FALSE, "open companion video controls");
         const HWND video = await_window(child, L"ChatView · 게임 창 별도 출력 (실험)");
         expect(GetDlgItem(video, 201) && GetDlgItem(video, 202) && GetDlgItem(video, 204) &&
-            GetDlgItem(video, 205) && GetDlgItem(video, 209) && GetDlgItem(video, 210),
+            GetDlgItem(video, 205) && GetDlgItem(video, 209) && GetDlgItem(video, 210) &&
+            GetDlgItem(video, 211),
             "window/video controls, explicit progress and native chat entry share the OBS-free companion");
         wchar_t step[512]{};
         GetDlgItemTextW(video, 210, step, 512);
@@ -162,6 +163,10 @@ int wmain(int argc, wchar_t **argv)
         expect(SendMessageTimeoutW(panel, WM_CLOSE, 0, 0, SMTO_ABORTIFHUNG, 2000U, &ignored) != 0 &&
             !IsWindowVisible(panel), "hide the existing native chat panel without logging out");
         choose(video, 209);
+        wchar_t chat_hint[256]{};
+        GetDlgItemTextW(video, 211, chat_hint, 256);
+        expect(std::wstring_view(chat_hint).find(L"보호된 채팅 연결창 열림") != std::wstring_view::npos,
+            "chat button reports success without replacing the video-stage notice");
         expect(await_window(child, kPanelTitle) == panel,
             "video panel opens the same protected native chat window without new enrollment");
         DWORD reopened_affinity = 0;

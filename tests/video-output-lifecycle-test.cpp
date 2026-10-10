@@ -521,9 +521,9 @@ void exercise(const wchar_t *source_executable)
     // The new button must fail closed and leave all video choices unchanged.
     SendMessageW(controls, WM_COMMAND, 209, 0);
     wchar_t chat_notice[512]{};
-    GetDlgItemTextW(controls, 207, chat_notice, 512);
-    expect(std::wstring_view(chat_notice).find(L"채팅 연결창을 열지 못했습니다") != std::wstring_view::npos,
-        "unavailable protected chat handler does not pretend to open a panel");
+    GetDlgItemTextW(controls, 211, chat_notice, 512);
+    expect(std::wstring_view(chat_notice).find(L"채팅 연결창 열기 실패") != std::wstring_view::npos,
+        "unavailable protected chat handler reports failure only in its own hint");
     expect(!Access::capture(panel).running() && !Access::requested(panel) && !Access::output(panel) &&
         !Access::check(panel).active(), "chat entry cannot select or start video");
     SendMessageW(controls, WM_COMMAND, 204, 0);
@@ -546,6 +546,8 @@ void exercise(const wchar_t *source_executable)
     SendMessageW(controls, WM_COMMAND, 209, 0); // No native chat handler in this GPU-only fixture.
     expect(stage(controls) == pattern_step && Access::check(panel).active() && !Access::requested(panel),
         "chat entry cannot consume the painted pattern or launch video capture");
+    expect(IsWindowEnabled(GetDlgItem(controls, 204)) != FALSE,
+        "opening chat cannot disable a painted receiver check");
     await(cyan_bar, "synthetic pattern pixels on the actual independent cover");
     const auto label = chatview::video_check_label(Access::check(panel).identifier());
     wchar_t notice[512]{}; GetDlgItemTextW(controls, 207, notice, 512);
@@ -570,7 +572,13 @@ void exercise(const wchar_t *source_executable)
         stage(controls).find(L"별도 출력 중") != std::wstring::npos,
         "real WGC frames advance the visual stage to separate game output");
     const auto active_step = stage(controls);
+    wchar_t running_notice[512]{};
+    GetDlgItemTextW(controls, 207, running_notice, 512);
     SendMessageW(controls, WM_COMMAND, 209, 0);
+    wchar_t after_chat_notice[512]{};
+    GetDlgItemTextW(controls, 207, after_chat_notice, 512);
+    expect(std::wstring_view(after_chat_notice) == std::wstring_view(running_notice),
+        "opening chat never overwrites video/cover status");
     expect(stage(controls) == active_step && Access::requested(panel) &&
         Access::capture(panel).running() && !IsWindowVisible(checked_cover),
         "chat entry during capture cannot stop or restart video/cover");

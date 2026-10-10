@@ -145,17 +145,30 @@ struct Flow {
     void received(const wchar_t *marker, unsigned long long after = 0) {
         wait([&] { return Chat::first_text(chat) && Chat::surface(chat).rendered_frames() > after &&
             Chat::surface(chat).rendered_messages() == 1; }, "fresh first text acknowledgement");
-        struct Result { bool done = false; HRESULT status = E_FAIL; std::wstring value; };
+        struct Result { bool pending = false, done = false; HRESULT status = E_FAIL; std::wstring value; };
         auto result = std::make_shared<Result>();
         const std::wstring script = L"document.getElementById('messages').textContent.includes('" + std::wstring(marker) + L"')";
-        auto *core = chatview::NativeChatSurfaceTestAccess::core(Chat::surface(chat));
-        expect(core && SUCCEEDED(core->ExecuteScript(script.c_str(),
-            Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
-                [result](HRESULT status, LPCWSTR value) -> HRESULT {
-                    result->status = status; if (value) result->value = value; result->done = true; return S_OK;
-                }).Get())), "inspect real owned chat DOM");
-        wait([&] { return result->done; }, "owned DOM inspection completes");
-        expect(SUCCEEDED(result->status) && result->value == L"true", "current fixture text, not old DOM content");
+        Microsoft::WRL::ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(Chat::surface(chat));
+        expect(core.Get() != nullptr, "owned chat DOM exists");
+        // A heartbeat may advance rendered_frames before the newly published
+        // text arrives. Wait for the actual marker, not just a frame counter;
+        // keep one in-flight DOM query and the existing 15-second wait budget.
+        wait([&] {
+            if (result->done) {
+                expect(SUCCEEDED(result->status), "owned DOM inspection succeeds");
+                if (result->value == L"true") return true;
+                result->pending = false; result->done = false; result->value.clear();
+            }
+            if (!result->pending) {
+                result->pending = true;
+                expect(SUCCEEDED(core->ExecuteScript(script.c_str(),
+                    Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+                        [result](HRESULT status, LPCWSTR value) -> HRESULT {
+                            result->status = status; if (value) result->value = value; result->done = true; return S_OK;
+                        }).Get())), "inspect real owned chat DOM");
+            }
+            return false;
+        }, "current fixture text appears in the actual owned DOM");
         expect(text(Chat::dialog(chat), 113).find(L"첫 텍스트 렌더링 확인") != std::wstring::npos &&
             text(Chat::dialog(chat), 110).find(L"서버 채팅 연결: 게임 1 / 송출 0") != std::wstring::npos,
             "first text and current server socket count shown in native connection panel");

@@ -292,6 +292,12 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
     flow.wait([&] { return Chat::surface(chat).rendered_frames() >= 1 && Chat::membership(chat).has_value(); }, "subscribed empty own DOM");
     expect(Chat::surface(chat).rendered_messages() == 0 && !Chat::first_text(chat), "empty subscription is not first text");
     flow.state(Status::Receiving, controls);
+    // Model a retry notification already dequeued before the native owner
+    // cancelled legacy page recovery. The real HUD procedure must not reload
+    // its setup page over this owned document, even before the first text.
+    SendMessageW(hud_window, WM_TIMER, 2U, 0);
+    expect(Chat::surface(chat).ready() && Chat::membership(chat),
+        "cancelled navigation retry preserves the first owned chat document");
     const auto empty_frames = Chat::surface(chat).rendered_frames();
     std::cout << "chat-empty-ready\n" << std::flush; flow.received(L"initial-chat", empty_frames);
     const auto approved = Chat::membership(chat)->membership;

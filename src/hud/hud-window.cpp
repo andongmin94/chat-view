@@ -447,7 +447,9 @@ LRESULT HudWindow::handle_message(
         }
         if (wparam == kNavigationRetryTimerId) {
             KillTimer(window_, kNavigationRetryTimerId);
-            if (system_suppressed()) {
+            // KillTimer does not remove an already queued WM_TIMER. Respect
+            // cancellation before a late retry can replace a new chat document.
+            if (navigation_retry_attempt_ == 0U || system_suppressed()) {
                 return 0L;
             }
             page_connection_recovery_.reset();

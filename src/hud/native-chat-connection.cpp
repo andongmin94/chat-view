@@ -239,6 +239,12 @@ LRESULT CALLBACK NativeChatConnection::procedure(HWND window, UINT message, WPAR
             // The streaming/OBS role can never request the gaming-PC output UI.
             // This is only a queued same-thread UI request; the video panel
             // rechecks HUD exclusion/topology and requires new visual consent.
+            DWORD affinity = 0;
+            if (!IsWindowVisible(window) || !GetWindowDisplayAffinity(window, &affinity) ||
+                affinity != WDA_EXCLUDEFROMCAPTURE) {
+                self->notice(L"채팅 연결창 보호를 확인하지 못해 영상 설정 이동을 거부했습니다. 영상 출력/승인은 변경하지 않았습니다.");
+                ShowWindow(window, SW_HIDE); return 0;
+            }
             if (self->role_ != DisplayRole::Gaming || self->closed_ || !self->host_ ||
                 self->hud_.shutting_down_ || self->hud_.system_suppressed() ||
                 self->hud_.capture_risk_ || self->hud_.capture_exclusion_failed_ ||

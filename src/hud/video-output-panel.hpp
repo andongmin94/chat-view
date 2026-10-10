@@ -38,6 +38,7 @@ private:
     bool output_intact() const noexcept;
     bool mask() noexcept;
     bool permitted() const noexcept;
+    bool guard_protection() noexcept;
     bool topology(bool inspect_paths = false) const noexcept;
     void notice(const wchar_t *message) noexcept;
     void show_step() noexcept;

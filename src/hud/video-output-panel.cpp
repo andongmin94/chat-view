@@ -62,8 +62,22 @@ VideoOutputPanel::~VideoOutputPanel() { close(); }
 DWORD VideoOutputPanel::wait_timeout() const noexcept { return enabled_ && (output_ || capture_.running()) ? 50U : INFINITE; }
 bool VideoOutputPanel::permitted() const noexcept
 {
+    DWORD affinity = 0;
     return enabled_ && !closing_ && !session_blocked_ && !suspended_ && hud_.webview_ready_ && !hud_.shutting_down_ && !hud_.system_suppressed() &&
-        !hud_.capture_exclusion_failed_ && hud_.window_ && IsWindowVisible(hud_.window_);
+        !hud_.capture_risk_ && !hud_.capture_exclusion_failed_ && hud_.window_ && IsWindowVisible(hud_.window_) &&
+        hud_.capture_exclusion_intact() && (!panel_ ||
+            (GetWindowDisplayAffinity(panel_, &affinity) && affinity == WDA_EXCLUDEFROMCAPTURE));
+}
+bool VideoOutputPanel::guard_protection() noexcept
+{
+    if (permitted()) return true;
+    // Re-read OS protection, not just a cached HUD flag. Retire consent before
+    // any queued panel request, synchronous paint or fresh snapshot can proceed.
+    // Keep the independent black output; do not repair affinity or resume video.
+    interrupt(L"개인 HUD/영상 설정창 보호를 확인하지 못해 출력을 중지했습니다.\n보호 복귀 뒤 목록 새로고침 → 새 대상 선택 → 새 시험 패턴부터 확인하세요.");
+    if (panel_) ShowWindow(panel_, SW_HIDE);
+    show_step();
+    return false;
 }
 bool VideoOutputPanel::dispatch(MSG &message) noexcept
 {
@@ -124,7 +138,7 @@ void VideoOutputPanel::show_step() noexcept
 void VideoOutputPanel::open() noexcept
 {
     try {
-        if (!permitted()) return;
+        if (!guard_protection()) return;
         if (panel_) { ShowWindow(panel_, SW_SHOWNORMAL); SetForegroundWindow(panel_); return; }
         WNDCLASSW klass{}; klass.hInstance = GetModuleHandleW(nullptr); klass.lpfnWndProc = procedure;
         klass.hCursor = LoadCursorW(nullptr, IDC_ARROW); klass.lpszClassName = kPanelClass;
@@ -132,11 +146,18 @@ void VideoOutputPanel::open() noexcept
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
         klass.lpszClassName = kOutputClass; klass.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
-        panel_ = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_DLGMODALFRAME, kPanelClass,
+        panel_ = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_DLGMODALFRAME | WS_EX_LAYERED, kPanelClass,
             L"ChatView · 게임 창 별도 출력 (실험)", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
             CW_USEDEFAULT, CW_USEDEFAULT, 660, 620, nullptr, nullptr, klass.hInstance, this);
         if (!panel_) return;
-        if (!SetWindowDisplayAffinity(panel_, WDA_EXCLUDEFROMCAPTURE)) { DestroyWindow(panel_); panel_ = nullptr; return; }
+        // GetWindowDisplayAffinity requires a layered window. Keep this panel
+        // opaque and verify protection before both first show and later reuse.
+        DWORD affinity = 0;
+        if (!SetLayeredWindowAttributes(panel_, 0, 255, LWA_ALPHA) ||
+            !SetWindowDisplayAffinity(panel_, WDA_EXCLUDEFROMCAPTURE) ||
+            !GetWindowDisplayAffinity(panel_, &affinity) || affinity != WDA_EXCLUDEFROMCAPTURE) {
+            DestroyWindow(panel_); panel_ = nullptr; return;
+        }
         notifications_ = WTSRegisterSessionNotification(panel_, NOTIFY_FOR_THIS_SESSION) != FALSE;
         if (!notifications_) { DestroyWindow(panel_); panel_ = nullptr; return; }
         const auto dpi = GetDpiForWindow(panel_);
@@ -172,7 +193,7 @@ void VideoOutputPanel::open() noexcept
 }
 void VideoOutputPanel::refresh()
 {
-    if (!permitted() || !notifications_) return;
+    if (!guard_protection() || !notifications_) return;
     if (capture_.running() || requested_) { notice(L"출력을 중지한 뒤 목록을 갱신하세요."); return; }
     if (check_.active()) stop(L"시험 패턴을 중지했습니다. 다시 선택하세요.");
     invalidate_choices();
@@ -243,6 +264,7 @@ bool VideoOutputPanel::topology(bool inspect_paths) const noexcept
 }
 void VideoOutputPanel::identify()
 {
+    if (!guard_protection()) return;
     if (capture_.running() || requested_ || releasing_ || confirming_ || !notifications_ || !permitted()) { notice(L"출력을 중지하고 창과 별도 화면을 선택하세요."); return; }
     if (check_.active()) stop(L"이전 시험 패턴을 중지했습니다.");
     const LRESULT source = SendDlgItemMessageW(panel_, kSource, CB_GETCURSEL, 0, 0);
@@ -271,15 +293,16 @@ void VideoOutputPanel::identify()
     confirming_ = false;
     if (answer != IDYES || epoch != selection_epoch_ || !topology(true)) return;
     ensure_output();
-    if (epoch != selection_epoch_ || closing_) return;
+    if (epoch != selection_epoch_ || closing_ || !guard_protection()) return;
     show_pattern();
 }
 void VideoOutputPanel::show_pattern()
 {
+    if (!guard_protection()) return;
     const auto epoch = selection_epoch_;
     if (capture_.running() || requested_ || !output_intact() || !mask()) throw std::runtime_error("Pattern output unavailable");
     // Synchronous cover messages may have delivered a later Stop.
-    if (epoch != selection_epoch_ || closing_) return;
+    if (epoch != selection_epoch_ || closing_ || !guard_protection()) return;
     std::uint32_t identifier = 0;
     if (BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&identifier), static_cast<ULONG>(sizeof(identifier)), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
         throw std::runtime_error("Pattern label unavailable");
@@ -307,12 +330,12 @@ void VideoOutputPanel::paint_cover(HWND window) noexcept
     const bool checking = check_.active();
     bool painted = false;
     if (dc && GetClientRect(window, &rect)) {
-        if (checking && check_.current(GetTickCount64(), selection_epoch_))
+        if (checking && permitted() && check_.current(GetTickCount64(), selection_epoch_))
             painted = paint_video_output_pattern(dc, rect, check_.identifier(), check_.seconds(GetTickCount64()));
         if (!painted) FillRect(dc, &rect, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
     }
     EndPaint(window, &paint);
-    if (!checking) return;
+    if (!checking || !guard_protection()) return;
     check_.painted(painted);
     EnableWindow(GetDlgItem(panel_, kStart), painted ? TRUE : FALSE);
     // mask() clears the check before synchronous repaint; no recursive failure.
@@ -320,6 +343,7 @@ void VideoOutputPanel::paint_cover(HWND window) noexcept
 }
 void VideoOutputPanel::start()
 {
+    if (!guard_protection()) return;
     if (capture_.running() || requested_ || releasing_ || confirming_ || !notifications_ || !permitted()) { notice(L"현재 게임 출력을 시작할 수 없습니다."); return; }
     if (!check_.ready(GetTickCount64(), selection_epoch_) || !output_intact() || !IsWindowVisible(cover_) || !topology(true)) {
         stop(L"유효한 시험 패턴부터 표시하고 수신 화면에서 직접 확인하세요."); return;
@@ -343,6 +367,7 @@ void VideoOutputPanel::start()
 }
 void VideoOutputPanel::begin_capture()
 {
+    if (!guard_protection()) return;
     // The worker-start boundary owns the single-use check, including restart.
     // Callers must not consume it themselves or revive a stopped selection.
     const auto epoch = selection_epoch_;
@@ -351,7 +376,7 @@ void VideoOutputPanel::begin_capture()
     }
     if (!mask()) throw std::runtime_error("Video cover unavailable");
     // mask() sends window messages. A Stop processed there wins over this start.
-    if (epoch != selection_epoch_ || closing_) return;
+    if (epoch != selection_epoch_ || closing_ || !guard_protection()) return;
     requested_ = capture_.start(source_, output_);
     if (!requested_) {
         interrupt(L"선택한 창의 캡처를 시작하지 못했습니다. 검은 출력창을 유지합니다. 목록을 새로고침하고 새 대상·시험 패턴부터 다시 선택하세요.");
@@ -443,6 +468,7 @@ void VideoOutputPanel::release() noexcept
 void VideoOutputPanel::tick() noexcept
 {
     if (!enabled_ || closing_) return;
+    if ((panel_ || output_ || capture_.running()) && !guard_protection()) return;
     const auto now = GetTickCount64();
     const bool inspect_paths = now >= next_path_check_;
     if (check_.active() && !check_.current(now, selection_epoch_))
@@ -459,7 +485,7 @@ void VideoOutputPanel::tick() noexcept
 }
 void VideoOutputPanel::update_capture(const WindowCaptureSnapshot &value) noexcept
 {
-    if (!requested_ || closing_) return;
+    if (!requested_ || closing_ || !guard_protection()) return;
     // Terminal status takes precedence over frame freshness and worker teardown.
     // Never briefly uncover an old Capturing snapshot from a finished worker.
     if (value.status == WindowCaptureStatus::SourceLost || value.status == WindowCaptureStatus::Failed ||
@@ -539,14 +565,17 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
                 // Its HUD handler rechecks capture exclusion and UI protection.
                 // Do not change capture target, pattern consent, output mask,
                 // login authority or a sender on this route.
-                if (!self->permitted() || !self->hud_.capture_exclusion_intact()) {
+                if (!self->guard_protection()) {
                     SetDlgItemTextW(self->panel_, kChatHint,
-                        L"채팅 연결 거부 · 개인 HUD 보호 상태 미확인");
+                        L"채팅 연결 거부 · HUD/영상 설정창 보호 미확인");
                     return 0;
                 }
                 const UINT open = RegisterWindowMessageW(kOpenNativeChatMessageName);
-                SetDlgItemTextW(self->panel_, kChatHint, !open ||
-                    SendMessageW(self->hud_.window_, open, 0, 0) != 1
+                const bool opened = open && SendMessageW(self->hud_.window_, open, 0, 0) == 1;
+                // Opening chat dispatches synchronous window messages. A later
+                // protection loss must win over the earlier successful request.
+                if (!self->guard_protection()) return 0;
+                SetDlgItemTextW(self->panel_, kChatHint, !opened
                     ? L"채팅 연결창 열기 실패 · HUD 보호 상태 확인"
                     : L"보호된 채팅 연결창 열림 · 영상 출력은 유지");
                 return 0;

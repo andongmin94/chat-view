@@ -8,7 +8,8 @@ export const LOGIN_WINDOW_MS = 300_000;
 export const LOGIN_POLL_MS = 1000;
 const MAX_PENDING = 16;
 type Pending = { challenge: string; remember: boolean; role: ConnectionRole; expires: number; polled: number;
-  state: 'pending' | 'approved' | 'denied'; owner?: string; generation?: number; access?: DisplayAccess };
+  state: 'pending' | 'approved' | 'denied'; owner?: string; generation?: number; access?: DisplayAccess;
+  retry?: boolean };
 
 // The URL id cannot poll or obtain display secrets. Bind the creator only after
 // browser authentication; the launch role is fixed before that browser opens.
@@ -44,12 +45,24 @@ export class BrowserLogin {
     if (entry.state !== 'pending') throw new DisplayAccessError(409);
     return { remember: entry.remember, role: entry.role, code: id.slice(-6).toUpperCase() };
   }
+  // Read-only browser guidance, scoped to the identity that gave consent.
+  // It exposes no proof/capability and never reserves or transfers a PC role.
+  collectionState(id: string, owner: string): 'awaiting-app' | 'retry-required' | undefined {
+    const entry = this.#get(id);
+    if (entry.owner !== owner) return undefined;
+    if (entry.state === 'approved') {
+      const access = entry.access;
+      return access && entry.generation === access.generation && access.ownerId() === owner ? 'awaiting-app' : undefined;
+    }
+    return entry.state === 'pending' && entry.retry ? 'retry-required' : undefined;
+  }
   approve(id: string, access = this.#access) {
     const entry = this.#get(id);
     if (entry.state !== 'pending') throw new DisplayAccessError(409);
     const owner = access?.ownerId();
     if (!access || !owner) throw new DisplayAccessError(401);
-    entry.access = access;
+    if (entry.retry && entry.owner !== owner) throw new DisplayAccessError(403);
+    entry.retry = false; entry.access = access;
     entry.owner = owner; entry.generation = access.generation; entry.state = 'approved';
   }
   deny(id: string) {
@@ -65,12 +78,25 @@ export class BrowserLogin {
     if (now - entry.polled < LOGIN_POLL_MS) throw new DisplayAccessError(429);
     entry.polled = now;
     if (entry.state === 'pending') return { status: 'pending' as const };
-    this.#requests.delete(id);
-    if (entry.state === 'denied') throw new DisplayAccessError(403);
-    const access = entry.access;
-    if (!access || entry.generation !== access.generation || entry.owner !== access.ownerId()) throw new DisplayAccessError(401);
-    return { status: 'approved' as const,
-      lease: access.exchange(access.issue().ticket, entry.remember, entry.role) };
+    try {
+      if (entry.state === 'denied') throw new DisplayAccessError(403);
+      const access = entry.access;
+      if (!access || entry.generation !== access.generation || entry.owner !== access.ownerId()) throw new DisplayAccessError(401);
+      const lease = access.exchange(access.issue().ticket, entry.remember, entry.role);
+      this.#requests.delete(id);
+      return { status: 'approved' as const, lease };
+    } catch (error) {
+      if (entry.role === 'streaming' && error instanceof DisplayAccessError && error.status === 409) {
+        // SQLite rejected this role before creating an approval. Keep the same
+        // challenge/deadline/cadence, but discard consent: polling must NEVER
+        // acquire the slot later without a fresh explicit browser approval.
+        entry.state = 'pending'; entry.retry = true;
+        entry.access = undefined; entry.generation = undefined;
+        return { status: 'pending' as const };
+      }
+      this.#requests.delete(id);
+      throw error; // Revocation, storage failures and capacity errors stay failures.
+    }
   }
   clear() { this.#requests.clear(); }
 }

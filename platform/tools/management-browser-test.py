@@ -438,6 +438,72 @@ def run() -> None:
                 finally:
                     flow.close()
 
+                flow = Flow(browser, f, 390)
+                try:
+                    flow.identity("/account", "bob")
+                    flow.confirm("/account", "bob")
+                    pending = f.command("collection-start")
+                    pages = [flow.page, flow.context.new_page()]
+                    for page, path in zip(pages, pending["paths"], strict=True):
+                        page.goto(f.origin + path)
+                        page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True).click()
+                        expect(page.locator('[data-login-collection="awaiting-app"]')).to_contain_text(
+                            "아직 PC 연결 완료가 아닙니다")
+                        page.get_by_role("link", name="승인 수집 상태 확인", exact=True).click()
+                        expect(page).to_have_url(f.origin + path)
+                        expect(page.locator('[data-login-collection="awaiting-app"]')).to_have_count(1)
+                        expect(page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True)).to_have_count(0)
+                    raced = f.command("collection-race")
+                    flow.page = pages[raced["loserIndex"]]
+                    loser_path = pending["paths"][raced["loserIndex"]]
+                    with flow.page.expect_response(lambda r: urlsplit(r.url).path == loser_path) as conflict:
+                        flow.page.get_by_role("link", name="승인 수집 상태 확인", exact=True).click()
+                    assert conflict.value.status == 409
+                    expect(flow.page.locator('[data-login-collection="retry-required"]')).to_contain_text(
+                        "다른 송출 요청이 먼저 연결됐습니다")
+                    flow.image("collection-conflict-mobile")
+
+                    campaign = flow.context.new_page()
+                    campaign.goto(f.origin + "/campaigns")
+                    campaign.get_by_role("button", name="이 시험 캠페인 선택", exact=True).click()
+                    public_url = campaign.locator("#source-url").input_value()
+                    public = flow.context.new_page()
+                    public.goto(public_url)
+                    banner = public.locator("#banner")
+                    expect(banner).to_be_hidden()
+                    assert f.command("collection-report")["ok"]
+                    expect(banner).to_be_visible()
+
+                    flow.page.get_by_role("link", name="기존 송출 연결 확인·해제", exact=True).click()
+                    flow.page.locator(f'form[action="/connections/{raced["connectionId"]}/revoke"] button').click()
+                    expect(flow.page.locator('[data-pc-role="streaming"] [data-approved-count]')).to_have_attribute(
+                        "data-approved-count", "0")
+                    expect(flow.page.locator('[data-pc-role="gaming"] [data-approved-count]')).to_have_attribute(
+                        "data-approved-count", "1")
+                    expect(banner).to_be_hidden()
+                    assert f.command("collection-empty")["ok"]
+                    flow.page.get_by_role("link", name="원래 송출 승인 요청으로 돌아가기", exact=True).click()
+                    expect(flow.page).to_have_url(f.origin + loser_path)
+                    expect(flow.page.locator('[data-login-collection="retry-required"]')).to_contain_text(
+                        "자리가 비어도 자동 연결하지 않습니다")
+                    flow.page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True).click()
+                    assert f.command("collection-recollect")["ok"]
+                    assert f.command("collection-report")["ok"]
+                    campaign.reload()
+                    expect(campaign.locator('[data-public-banner-state="not-selected"]')).to_have_count(1)
+                    expect(banner).to_be_hidden()
+                    assert campaign.locator("#source-url").input_value() == public_url
+                    campaign.get_by_role("button", name="이 시험 캠페인 선택", exact=True).click()
+                    expect(campaign.locator('[data-public-banner-state="report-ready"]')).to_have_count(1)
+                    expect(banner).to_be_visible()
+                    expect(public).to_have_url(public_url)
+                    assert f.command("collection-check")["ok"]
+                    flow.page = campaign
+                    flow.image("collection-reselected-mobile")
+                    results.append("two consented senders race app collection; losing request requires fresh consent and manual same-source reselection")
+                finally:
+                    flow.close()
+
                 metadata = f.command("metadata")["metadata"]
                 returns = [r for r in metadata if r["path"] in ("/callback", "/account/confirm", "/login/:id")
                            and r["site"] == "cross-site"]

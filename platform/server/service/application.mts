@@ -183,6 +183,15 @@ ${this.#form(b, `${page}/login`, '치지직으로 브라우저 로그인')}
 ${this.#form(b, '/account/switch', '브라우저 관리 계정 바꾸기')}
 <p>계정 전환은 이 브라우저만 로그아웃합니다. 치지직에서 원하는 계정으로 전환한 뒤 다시 로그인하세요.</p></section>`;
   }
+  #showCollectionWaiting(response: ServerResponse, b: Browser, id: string) {
+    this.#page(response, '연결 요청 처리됨', `${this.#accountNotice(b)}
+<section data-login-collection="awaiting-app">
+<p>브라우저 동의를 받았습니다. 앱이 승인 응답을 수집하기 전이므로 아직 PC 연결 완료가 아닙니다.</p>
+<p>챗뷰 앱으로 돌아가 최종 연결 상태를 확인하세요. 동시에 다른 송출 요청이 먼저 연결되면 이 요청에서 다시 동의해야 합니다.</p>
+<p><a href="/login/${id}">승인 수집 상태 확인</a></p>
+<p>이 링크는 상태만 확인합니다. 연결·역할 이전·광고 선택을 자동 실행하지 않습니다. 앱 요청이 만료되면 해당 PC에서 로그인 / 연결을 다시 시작하세요.</p>
+</section><p><a href="/account">내 연결 관리</a></p>`);
+  }
   #streamingRequestNotice(b: Browser): string {
     const id = b.streamingConflict;
     if (!id) return '';
@@ -207,6 +216,7 @@ ${this.#form(b, '/account/switch', '브라우저 관리 계정 바꾸기')}
     b.streamingConflict = id;
     this.#page(response, '이미 승인된 송출 연결이 있습니다', `${this.#accountNotice(b)}
 <section aria-label="기존 송출 승인" data-streaming-conflict="existing-approval">
+${this.login.collectionState(id, b.owner!) === 'retry-required' ? '<p data-login-collection="retry-required">앱의 승인 수집 중 다른 송출 요청이 먼저 연결됐습니다. 이 요청의 이전 동의는 폐기했으며, 연결 관리 후 다시 직접 동의해야 합니다.</p>' : ''}
 <p>이 계정은 송출 역할을 하나만 승인할 수 있습니다. 기존 승인은 그대로이며 새 요청은 아직 승인되지 않았습니다.</p>
 <p>기존 송출 연결: <span style="overflow-wrap:anywhere">${connection.connectionId}</span></p>
 <p>기존 연결을 계속 쓸 경우 새 요청을 취소하세요. 다른 송출 PC로 옮기려면 아래 관리 화면에서 이 연결만 직접 해제하세요.</p>
@@ -321,7 +331,12 @@ ${this.#form(b, `/login/${id}/deny`, '새 송출 요청 취소')}`, 409);
       if (request.method === 'GET' && landing) {
         const id = landing[1]!;
         let intent: ReturnType<BrowserLogin['view']>;
-        try { intent = this.login.view(id); }
+        let collection: ReturnType<BrowserLogin['collectionState']>;
+        try {
+          collection = b?.owner ? this.login.collectionState(id, b.owner) : undefined;
+          if (collection === 'awaiting-app') { this.#showCollectionWaiting(response, b!, id); return; }
+          intent = this.login.view(id);
+        }
         catch (error) {
           if (!(error instanceof DisplayAccessError) || ![409, 410].includes(error.status)) throw error;
           this.#page(response, '채팅 연결 요청 종료',
@@ -329,9 +344,11 @@ ${this.#form(b, `/login/${id}/deny`, '새 송출 요청 취소')}`, 409);
         }
         if (!b) { this.#createBrowser(response); this.#redirect(response, url.pathname); return; }
         const account = b.owner ? this.#creators.describe(b.owner) : undefined;
+        if (collection === 'retry-required' && account?.authorized && this.#showStreamingConflict(response, b, id)) return;
         const roleLabel = intent.role === 'gaming' ? '게임 PC · 개인 HUD' : '송출 PC · OBS 관리 런타임';
         this.#page(response, '챗뷰에 채팅 연결', `<p>앱에서 직접 시작한 요청인지 확인하세요. 확인 번호: <strong>${intent.code}</strong></p>
 <p>앱이 요청한 역할: <strong>${roleLabel}</strong></p>
+${collection === 'retry-required' ? '<p data-login-collection="retry-required">승인 수집 중 송출 역할을 확보하지 못했습니다. 기존 연결은 유지했고 이전 동의는 폐기했습니다. 연결 관리를 확인한 뒤 같은 채널·역할에 다시 직접 동의하세요. 자리가 비어도 자동 연결하지 않습니다.</p>' : ''}
 ${intent.role === 'streaming' ? '<p>이 역할은 OBS의 송출·녹화 출력 활성 상태를 같은 계정의 연결에 전달합니다. 영상 제외나 시청 실적을 검증하는 권한은 아닙니다.</p>' : ''}
 <p>${intent.remember ? '이 PC에서 연결을 유지합니다. 공용 PC에서는 취소하세요.' : '이번 실행에서만 연결합니다.'}</p>
 ${account?.authorized ? `<p>채널: <strong>${escape(account.channel.channelName)}</strong></p>
@@ -470,6 +487,7 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
           this.login.approve(id, this.#creators.access(b.owner));
         }
         if (b.streamingConflict === id) b.streamingConflict = undefined;
+        if (action[2] === 'approve') { this.#showCollectionWaiting(response, b, id); return; }
         this.#page(response, '연결 요청 처리됨', '<p>챗뷰 앱으로 돌아가세요.</p><p><a href="/account">내 연결 관리</a></p>'); return;
       }
       if (url.pathname === '/logout') {

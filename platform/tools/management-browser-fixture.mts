@@ -2,10 +2,11 @@
 // Parent-controlled fixture only. Real service HTTP/SQLite/ws, synthetic CHZZK.
 // No debug HTTP routes; commands and redacted results use inherited stdio.
 import assert from 'node:assert/strict';
-import { once } from 'node:events';
+import { once, on } from 'node:events';
 import { createInterface } from 'node:readline';
 import { WebSocket } from 'ws';
 import { fixture } from '../tests/fixtures/service.mts';
+import { LOGIN_POLL_MS } from '../server/chat/browser-login.mts';
 import { BroadcastOutput } from '../server/chat/broadcast-output.mts';
 import { DisplayGateway } from '../server/chat/display-gateway.mts';
 import { TEST_CAMPAIGN } from '../server/ads/campaigns.mts';
@@ -16,6 +17,7 @@ Date.now = () => realNow() + offset; // Expire browser state, not native/provide
 const f = await fixture({ now: realNow,
   createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot, new BroadcastOutput(() => outputNow)) });
 let peer: WebSocket | undefined;
+const collectionPeers: WebSocket[] = [];
 let pending: Awaited<ReturnType<typeof f.start>> | undefined;
 const metadata: { path: string; method: string; site: string; mode: string; dest: string;
   cookie: boolean; authorization: boolean; origin: string; status: number }[] = [];
@@ -58,6 +60,23 @@ try {
   let replacement: typeof alice.lease | undefined;
   const sourceId = String(f.store.database.prepare('SELECT source_id FROM ad_sources WHERE owner = ?').get('alice')!.source_id);
   const selection = () => f.store.database.prepare('SELECT connection_id FROM ad_selections WHERE source_id = ?').get(sourceId);
+  type Started = Awaited<ReturnType<typeof f.start>>;
+  let collection: { requests: Started[]; gamer: WebSocket; loser?: Started;
+    lease?: typeof alice.lease; sender?: WebSocket; lastPollAt: number; sequence: number; before: string } | undefined;
+  const unaffected = () => JSON.stringify({ alice: f.store.connections('alice'), selection: selection(),
+    aliceGrant: f.grants.load('alice'), bobGrant: f.grants.load('bob'), starts: f.startedWith.length });
+  const openCollectionPeer = async (token: string) => {
+    const socket = new WebSocket(f.origin.replace('http:', 'ws:') + '/display/events',
+      { headers: { Authorization: `Bearer ${token}` }, handshakeTimeout: 3000 });
+    collectionPeers.push(socket); socket.on('error', () => {});
+    await once(socket, 'message', { signal: AbortSignal.timeout(3000) }); return socket;
+  };
+  const collect = (request: Started) => f.native(`/display/login/${request.id}`, 'ChatView-Login', request.verifier);
+  const waitCollectionCadence = async () => {
+    assert(collection);
+    await new Promise<void>(resolve => setTimeout(resolve,
+      Math.max(0, LOGIN_POLL_MS - (performance.now() - collection!.lastPollAt))));
+  };
   reply({ ready: true, origin: f.origin });
   const input = createInterface({ input: process.stdin });
   let sequence = 0;
@@ -159,6 +178,83 @@ try {
       assert.equal(f.refreshCalls, 0);
       reply({ ok: true }); continue;
     }
+    // Bob's previously empty sender slot is raced by two real app polls.
+    // Only browser forms consent/revoke/select; stdio never bypasses those actions.
+    if (command.op === 'collection-start') {
+      assert(!collection && replacement);
+      collection = { requests: [await f.start('streaming'), await f.start('streaming')],
+        gamer: await openCollectionPeer(bob.lease.token), lastPollAt: -Infinity, sequence: 0, before: unaffected() };
+      reply({ paths: collection.requests.map(r => r.verificationPath) }); continue;
+    }
+    if (command.op === 'collection-race') {
+      assert(collection && !collection.lease);
+      assert.equal(f.store.connections('bob').filter(c => c.role === 'streaming').length, 0);
+      const responses = await Promise.all(collection.requests.map(collect));
+      type Result = { status: 'pending' } | { status: 'approved'; lease: typeof alice.lease };
+      const results: Result[] = [];
+      for (const response of responses) { assert.equal(response.status, 200); results.push(await response.json() as Result); }
+      assert.equal(results.filter(r => r.status === 'approved').length, 1);
+      assert.equal(results.filter(r => r.status === 'pending').length, 1);
+      const index = results.findIndex(r => r.status === 'pending');
+      const winner = results[1 - index]!; assert(winner.status === 'approved');
+      collection.loser = collection.requests[index]!; collection.lease = winner.lease;
+      collection.lastPollAt = performance.now();
+      assert.equal(f.app.login.collectionState(collection.loser.id, 'bob'), 'retry-required');
+      assert.equal(f.store.connections('bob').length, 2);
+      collection.sender = await openCollectionPeer(winner.lease.token);
+      reply({ loserIndex: index, connectionId: winner.lease.membership.connectionId }); continue;
+    }
+    if (command.op === 'collection-empty') {
+      assert(collection?.loser && collection.lease && collection.sender);
+      assert.equal(f.store.find(collection.lease.sessionToken), undefined);
+      if (collection.sender.readyState !== WebSocket.CLOSED)
+        await once(collection.sender, 'close', { signal: AbortSignal.timeout(3000) });
+      await waitCollectionCadence();
+      const response = await collect(collection.loser); assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { status: 'pending' }); collection.lastPollAt = performance.now();
+      assert.equal(f.store.connections('bob').length, 1, 'a free role never replays the failed consent');
+      assert.equal(unaffected(), collection.before);
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'collection-recollect') {
+      assert(collection?.loser && collection.lease);
+      const previous = collection.lease;
+      await waitCollectionCadence();
+      const response = await collect(collection.loser); assert.equal(response.status, 200);
+      const result = await response.json() as { status: string; lease: typeof alice.lease };
+      assert.equal(result.status, 'approved'); collection.lease = result.lease; collection.sequence = 0;
+      assert.notEqual(collection.lease.membership.connectionId, previous.membership.connectionId);
+      assert.equal(f.store.find(collection.lease.sessionToken)?.owner, 'bob');
+      assert.equal(f.store.database.prepare(`SELECT 1 FROM ad_selections s JOIN ad_sources a USING(source_id)
+        WHERE a.owner = ?`).get('bob'), undefined, 'new approval cannot restore the removed selection');
+      collection.sender = await openCollectionPeer(collection.lease.token);
+      assert.equal((await collect(collection.loser)).status, 410);
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'collection-report') {
+      assert(collection?.lease?.outputToken && collection.sender?.readyState === WebSocket.OPEN);
+      outputNow += 500;
+      const response = await f.request('/broadcast/output', { method: 'POST', headers: {
+        Authorization: `ChatView-Output ${collection.lease.outputToken}`, 'Content-Type': 'application/json',
+      }, body: JSON.stringify({ sequence: ++collection.sequence, streaming: false, recording: false, sampleAgeMs: 0 }) });
+      assert.equal(response.status, 200); reply({ ok: true }); continue;
+    }
+    if (command.op === 'collection-check') {
+      assert(collection?.lease && collection.gamer.readyState === WebSocket.OPEN);
+      assert.equal(unaffected(), collection.before); assert(f.store.find(bob.lease.sessionToken));
+      const row = f.store.database.prepare(`SELECT connection_id FROM ad_selections s JOIN ad_sources a USING(source_id)
+        WHERE a.owner = ?`).get('bob');
+      assert.equal(row?.connection_id, collection.lease.membership.connectionId);
+      const controller = new AbortController();
+      const messages = on(collection.gamer, 'message', { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]) });
+      try {
+        const marker = 'collection-race-game-chat'; f.chats.get('bob')!.publish(marker);
+        let received = false;
+        for await (const [frame] of messages) if (String(frame).includes(marker)) { received = true; break; }
+        assert(received);
+      } finally { controller.abort(); }
+      reply({ ok: true }); continue;
+    }
     assert.equal(command.op, 'check');
     assert(snapshot() === before, 'browser actions must preserve native approvals, grants and selection');
     assert.equal(f.startedWith.filter(token => !token.includes(':charlie:')).length, starts);
@@ -177,5 +273,5 @@ try {
   reply({ error: 'Management browser fixture invariant failed' });
   process.exitCode = 1;
 } finally {
-  clearTimeout(deadline); peer?.terminate(); await f.close(); Date.now = realNow;
+  clearTimeout(deadline); for (const socket of collectionPeers) socket.terminate(); peer?.terminate(); await f.close(); Date.now = realNow;
 }

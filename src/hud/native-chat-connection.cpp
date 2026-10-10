@@ -12,7 +12,7 @@ namespace {
 constexpr int kConnectHotkey = 0x4348;
 constexpr int kOrigin = 101, kLocal = 103, kConnect = 104, kDisconnect = 105, kNotice = 106;
 constexpr int kRemember = 107, kForget = 108, kRole = 109, kSession = 110, kVideoScope = 111, kResume = 112, kDisplayStatus = 113;
-constexpr int kManage = 114, kManagementScope = 115;
+constexpr int kManage = 114, kManagementScope = 115, kCompanionVideo = 116;
 constexpr wchar_t kClass[] = L"ChatView.NativeConnection";
 // This UI does not keep the last server socket counts after a native stop.
 // Local resume eligibility is not a claim that the peer remains connected.
@@ -149,9 +149,10 @@ bool NativeChatConnection::open_dialog() noexcept
         klass.lpszClassName = kClass; klass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         klass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
+        const bool gaming = role_ == DisplayRole::Gaming;
         dialog_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT | WS_EX_LAYERED, kClass,
             L"ChatView · 자체 채팅 연결 (개발 검증)", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-            CW_USEDEFAULT, CW_USEDEFAULT, 600, 624, nullptr, nullptr, klass.hInstance, this);
+            CW_USEDEFAULT, CW_USEDEFAULT, 600, gaming ? 680 : 624, nullptr, nullptr, klass.hInstance, this);
         if (!dialog_) return false;
         displayed_status_.reset();
         // GetWindowDisplayAffinity documents a layered-window prerequisite.
@@ -165,7 +166,7 @@ bool NativeChatConnection::open_dialog() noexcept
         }
         const UINT dpi = GetDpiForWindow(dialog_);
         const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
-        SetWindowPos(dialog_, nullptr, 0, 0, scale(600), scale(624), SWP_NOMOVE | SWP_NOZORDER);
+        SetWindowPos(dialog_, nullptr, 0, 0, scale(600), scale(gaming ? 680 : 624), SWP_NOMOVE | SWP_NOZORDER);
         const auto add = [&](const wchar_t *kind, const wchar_t *caption, DWORD style,
                              int id, int x, int y, int width, int height) {
             HWND item = CreateWindowExW(std::wstring_view(kind) == L"EDIT" ? WS_EX_CLIENTEDGE : 0,
@@ -188,15 +189,23 @@ bool NativeChatConnection::open_dialog() noexcept
             kResume, 20, 314, 300, 32);
         HWND manage = add(L"BUTTON", L"계정·시험 광고·활동 관리", WS_TABSTOP | BS_PUSHBUTTON,
             kManage, 336, 314, 234, 32);
-        HWND management_scope = add(L"STATIC", L"브라우저의 로그인 계정으로 관리합니다. 열린 화면의 채널을 확인하세요.\n브라우저 화면은 HUD 캡처 보호 대상이 아닙니다.",
-            0, kManagementScope, 20, 402, 550, 40);
         HWND display = add(L"STATIC", L"", 0, kDisplayStatus, 20, 354, 550, 38);
-        add(L"STATIC", L"브라우저에서 채널과 요청 역할을 승인하세요. 기기등록이나 키 입력은 없습니다.\n공용 PC에서는 연결 유지를 선택하지 마세요.", 0, kNotice, 20, 452, 550, 80);
+        // Only the OBS-free gaming companion offers a separate-output panel.
+        // The button queues a local UI request, not video consent or login.
+        HWND video = gaming ? add(L"BUTTON", L"별도 영상 출력 설정 열기",
+            WS_TABSTOP | BS_PUSHBUTTON, kCompanionVideo, 20, 400, 250, 32) : nullptr;
+        if (gaming) add(L"STATIC", L"게임 PC 전용 · 채팅 연결/영상 출력은 서로 독립적", 0, 0, 284, 400, 286, 32);
+        const int offset = gaming ? 46 : 0;
+        HWND management_scope = add(L"STATIC", L"브라우저의 로그인 계정으로 관리합니다. 열린 화면의 채널을 확인하세요.\n브라우저 화면은 HUD 캡처 보호 대상이 아닙니다.",
+            0, kManagementScope, 20, 402 + offset, 550, 40);
+        add(L"STATIC", L"브라우저에서 채널과 요청 역할을 승인하세요. 기기등록이나 키 입력은 없습니다.\n공용 PC에서는 연결 유지를 선택하지 마세요.",
+            0, kNotice, 20, 452 + offset, 550, 80);
         // Always visible when this panel is open, independent of login, output
         // reports and transient notices. Local status never certifies video.
         HWND scope = add(L"STATIC", L"수신 영상의 HUD 제외: 미검증\n채팅 연결·OBS 활성 보고는 영상 검증이 아닙니다.",
-            0, kVideoScope, 20, 538, 550, 40);
-        if (!origin || !scope || !resume || !display || !manage || !management_scope) { DestroyWindow(dialog_); dialog_ = nullptr; return false; }
+            0, kVideoScope, 20, 538 + offset, 550, 40);
+        if (!origin || !scope || !resume || !display || !manage || !management_scope ||
+            (gaming && !video)) { DestroyWindow(dialog_); dialog_ = nullptr; return false; }
         SendMessageW(origin, EM_SETLIMITTEXT, 2048, 0);
         if (auto saved = load_connection()) {
             SetWindowTextW(origin, saved->origin.c_str());
@@ -226,6 +235,22 @@ LRESULT CALLBACK NativeChatConnection::procedure(HWND window, UINT message, WPAR
             self->end(L"연결을 종료했습니다. 서버 승인을 해제하려면 로그아웃을 선택하세요."); return 0;
         }
         if (LOWORD(wparam) == kResume) { self->resume_current(); return 0; }
+        if (LOWORD(wparam) == kCompanionVideo) {
+            // The streaming/OBS role can never request the gaming-PC output UI.
+            // This is only a queued same-thread UI request; the video panel
+            // rechecks HUD exclusion/topology and requires new visual consent.
+            if (self->role_ != DisplayRole::Gaming || self->closed_ || !self->host_ ||
+                self->hud_.shutting_down_ || self->hud_.system_suppressed() ||
+                self->hud_.capture_risk_ || self->hud_.capture_exclusion_failed_ ||
+                !self->hud_.capture_exclusion_intact()) {
+                self->notice(L"로컬 HUD 보호를 확인하지 못해 별도 영상 설정을 열지 않았습니다."); return 0;
+            }
+            const UINT request = RegisterWindowMessageW(kOpenCompanionVideoMessageName);
+            if (!request || !PostThreadMessageW(GetCurrentThreadId(), request, 0, 0))
+                self->notice(L"별도 영상 설정 열기를 요청하지 못했습니다. 기존 HUD 상태를 확인하세요.");
+            else self->notice(L"별도 영상 출력 설정 열기를 요청했습니다. 새 대상 선택과 수신 확인은 별도로 필요합니다.");
+            return 0;
+        }
         if (LOWORD(wparam) == kManage) { self->open_management(); return 0; }
         if (LOWORD(wparam) == kForget) { self->forget(); return 0; }
         if (LOWORD(wparam) == IDCANCEL) { SendMessageW(window, WM_CLOSE, 0, 0); return 0; }

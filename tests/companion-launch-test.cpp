@@ -133,8 +133,8 @@ int wmain(int argc, wchar_t **argv)
         Child child(argv[1]);
         choose(await_window(child, kConsentTitle), IDYES);
         const HWND panel = await_window(child, kPanelTitle);
-        expect(GetDlgItem(panel, 101) && GetDlgItem(panel, 107) && GetDlgItem(panel, 104),
-               "existing authenticated connection controls available");
+        expect(GetDlgItem(panel, 101) && GetDlgItem(panel, 107) && GetDlgItem(panel, 104) &&
+            GetDlgItem(panel, 116), "gaming chat panel exposes existing authentication and companion video setup");
         expect(GetDlgItem(panel, 102) == nullptr, "no manual credential field in connection panel");
         expect_video_scope(panel);
         choose(panel, 104); // Empty service address fails locally, not a live login.
@@ -180,6 +180,19 @@ int wmain(int argc, wchar_t **argv)
         GetDlgItemTextW(video, 210, step, 512);
         expect(std::wstring_view(step).find(L"1/5") != std::wstring_view::npos,
             "opening the protected chat does not advance video selection/consent");
+        // The reverse path reopens the SAME companion-only output controls.
+        // It does not use a fake global hotkey, login or target selection.
+        expect(SendMessageTimeoutW(video, WM_CLOSE, 0, 0,
+            SMTO_ABORTIFHUNG, 2000U, &ignored) != 0 && !IsWindowVisible(video),
+            "hide existing video selection panel without starting capture");
+        choose(panel, 116);
+        expect(await_window(child, L"ChatView · 게임 창 별도 출력 (실험)") == video,
+            "native gaming chat returns to the identical guarded video panel");
+        GetDlgItemTextW(video, 210, step, 512);
+        expect(std::wstring_view(step).find(L"1/5") != std::wstring_view::npos,
+            "round-trip between panels cannot advance video authorization");
+        expect(IsWindowVisible(panel) && IsWindowVisible(hud),
+            "return to video controls keeps local protected chat and HUD visible");
         expect(SendDlgItemMessageW(video, 201, CB_GETCURSEL, 0, 0) == CB_ERR &&
             SendDlgItemMessageW(video, 202, CB_GETCURSEL, 0, 0) == CB_ERR, "capture targets are never preselected");
         choose(video, 204);

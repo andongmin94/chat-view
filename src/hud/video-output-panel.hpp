@@ -42,6 +42,7 @@ private:
     void notice(const wchar_t *message) noexcept;
     void show_step() noexcept;
     HudWindow &hud_;
+    UINT open_message_ = 0U;
     bool enabled_ = false, hotkey_ = false, requested_ = false, releasing_ = false;
     bool notifications_ = false, session_blocked_ = false, suspended_ = false;
     bool confirming_ = false, closing_ = false;

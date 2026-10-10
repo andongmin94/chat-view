@@ -8,6 +8,9 @@ namespace chatview {
 // commands. Query v2 reports display selection and local return eligibility.
 // Eligibility is not proof that the server will accept the retained approval.
 inline constexpr wchar_t kOpenNativeChatMessageName[] = L"ChatViewOBS.OpenNativeChat.v1";
+// Local thread-only companion UI request. It only opens the existing video
+// selection panel; no target selection, worker start, consent or OBS launch.
+inline constexpr wchar_t kOpenCompanionVideoMessageName[] = L"ChatViewOBS.OpenCompanionVideo.v1";
 inline constexpr wchar_t kQueryNativeChatMessageName[] = L"ChatViewOBS.QueryNativeChat.v2";
 enum class NativeChatStatus : std::uint32_t {
     Unavailable = 0U, Idle, AwaitingApproval, Connecting, Receiving,

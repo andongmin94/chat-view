@@ -6,7 +6,7 @@ Implementation: `DisplayClient` (WinHTTP), `NativeChatConnection` (native contro
 
 **Ctrl+Alt+Shift+C** and **ChatView connection...** in the OBS Control Center open the same native panel. Capture exclusion, lock/suppression, input/placement and lifecycle protections remain in force. Opening/reconnecting cannot override them. Explicit `--companion` requires no local OBS; OBS-controlled launch validates its parent and transport. Invalid OBS arguments never fall back to companion.
 
-Launch fixes request intent: companion is `gaming`, OBS-managed runtime is `streaming`. The read-only label neither grants authority nor changes execution mode. One-PC OBS-managed use also has the streaming role; it does not imply a second physical PC.
+Launch fixes request intent: companion is `gaming`, OBS-managed runtime is `streaming`. The read-only label neither grants authority nor changes execution mode. Only the gaming companion's protected native connection panel offers **별도 영상 출력 설정 열기**, a same-thread request to reopen the existing companion video panel. The streaming/OBS role has no such button. This request never starts WGC, chooses a source, consumes test-pattern confirmation or claims a receiving screen is clean; all video controls retain their explicit window/output selection and receiver consent. One-PC OBS-managed use also has the streaming role; it does not imply a second physical PC.
 
 The panel accepts a canonical HTTPS service origin without a path. Literal `http://127.0.0.1` requires developer opt-in. WinHTTP disables cookies, automatic authentication and redirects, without disabling certificate validation. Provider secrets never enter the native client. Native credentials stay out of URLs, command lines, logs, UI mailboxes, OBS and chat HTML.
 

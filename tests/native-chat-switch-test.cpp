@@ -217,8 +217,14 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
          const std::filesystem::path &config_executable)
 {
     wchar_t temporary[MAX_PATH]{}; expect(GetTempPathW(MAX_PATH, temporary) != 0, "temporary root");
-    const auto profile = std::wstring(temporary) + L"ChatView-Switch-" + std::to_wstring(GetCurrentProcessId());
-    expect(CreateDirectoryW(profile.c_str(), nullptr) != FALSE, "isolated profile");
+    // A Windows PID may be recycled during the six short-lived fixture modes.
+    // GetTempFileNameW creates a unique existing entry; retire only that file
+    // and turn its exact path into a new isolated profile directory.
+    wchar_t unique[MAX_PATH]{};
+    expect(GetTempFileNameW(temporary, L"CVS", 0, unique) != 0, "allocate isolated profile path");
+    expect(DeleteFileW(unique) != FALSE && CreateDirectoryW(unique, nullptr) != FALSE,
+        "isolated profile");
+    const std::wstring profile(unique);
     expect(SetEnvironmentVariableW(L"LOCALAPPDATA", profile.c_str()) != FALSE, "isolated storage");
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     chatview::HudWindow hud;
@@ -251,6 +257,8 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     } else expect(chat.open_dialog(), "existing connection panel");
     const HWND dialog = Access::dialog(chat);
     expect(GetDlgItem(dialog, 112) != nullptr, "explicit current-approval return button");
+    expect(GetDlgItem(dialog, 116) == nullptr,
+        "OBS-managed streaming role cannot open gaming companion video controls");
     expect_status(chat, Status::Idle);
     expect((GetWindowLongPtrW(dialog, GWL_EXSTYLE) & WS_EX_LAYERED) != 0, "protected panel uses documented layered affinity query");
     BYTE alpha = 0; DWORD layer_flags = 0;

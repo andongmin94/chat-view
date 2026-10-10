@@ -53,7 +53,10 @@ bool extended_sdr(const wchar_t *output, const wchar_t *source)
 }
 VideoOutputPanel::VideoOutputPanel(HudWindow &hud, bool companion) noexcept : hud_(hud), enabled_(companion)
 {
-    if (enabled_) hotkey_ = RegisterHotKey(nullptr, kVideoHotkey, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'V') != FALSE;
+    if (enabled_) {
+        open_message_ = RegisterWindowMessageW(kOpenCompanionVideoMessageName);
+        hotkey_ = RegisterHotKey(nullptr, kVideoHotkey, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'V') != FALSE;
+    }
 }
 VideoOutputPanel::~VideoOutputPanel() { close(); }
 DWORD VideoOutputPanel::wait_timeout() const noexcept { return enabled_ && (output_ || capture_.running()) ? 50U : INFINITE; }
@@ -64,7 +67,14 @@ bool VideoOutputPanel::permitted() const noexcept
 }
 bool VideoOutputPanel::dispatch(MSG &message) noexcept
 {
-    if (enabled_ && !message.hwnd && message.message == WM_HOTKEY && message.wParam == kVideoHotkey) { open(); return true; }
+    if (enabled_ && !message.hwnd) {
+        if (open_message_ && message.message == open_message_ && !message.wParam && !message.lParam) {
+            open(); return true; // Existing guarded companion panel only.
+        }
+        if (message.message == WM_HOTKEY && message.wParam == kVideoHotkey) {
+            open(); return true;
+        }
+    }
     return panel_ && IsWindowVisible(panel_) && IsDialogMessageW(panel_, &message);
 }
 void VideoOutputPanel::notice(const wchar_t *message) noexcept

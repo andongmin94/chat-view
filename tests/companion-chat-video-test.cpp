@@ -4,6 +4,7 @@
 #include "hud/hud-window.hpp"
 #include "hud/native-chat-connection.hpp"
 #include "hud/video-output-panel.hpp"
+#include "hud/saved-connection.hpp"
 #include "common/win32-handle.hpp"
 #include <wrl/event.h>
 #include <functional>
@@ -174,7 +175,7 @@ struct Flow {
             "first text and current server socket count shown in native connection panel");
     }
 };
-void run(const wchar_t *source_path, const std::wstring &origin)
+void run(const wchar_t *source_path, const std::wstring &origin, const std::wstring &other, bool revoked)
 {
     Source first(source_path), second(source_path);
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
@@ -268,11 +269,85 @@ void run(const wchar_t *source_path, const std::wstring &origin)
     flow.wait([&] { return !IsWindowVisible(cover) && pixels(RGB(180,70,30)); }, "new source displayed through same WGC output", 10000);
     expect(Video::output(video) == output && Video::cover(video) == cover && Video::source(video) == replacement &&
         Chat::membership(chat)->membership == approved && IsWindowVisible(hud_window), "reselection preserves output windows and readable chat");
-    flow.checkpoint("reselected"); command(dialog, 108);
-    flow.state(Status::Idle, controls);
-    expect(!Chat::client(chat).can_resume_current() && !Chat::membership(chat) && !Chat::first_text(chat), "logout retires chat authority");
-    expect(Video::requested(video) && !IsWindowVisible(cover) && pixels(RGB(180,70,30)), "chat logout is not an implicit video stop");
-    flow.checkpoint("signed-out");
+    flow.checkpoint("reselected");
+    if (revoked) {
+        // Keep the chosen fixture animated across the real server close/renewal.
+        // Otherwise a legitimate two-second stale-frame mask would be expected.
+        expect(SendMessageW(replacement, WM_APP + 42, 0, 0) != 0, "animate the existing selected fixture");
+        flow.wait([&] { return !IsWindowVisible(cover) && pixels(RGB(20,100,180)); }, "animated chosen window pixels", 10000);
+        expect(chatview::save_connection({origin, other, true}), "unrelated saved approval fixture");
+        Microsoft::WRL::ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(Chat::surface(chat));
+        expect(core.Get() != nullptr, "current owned renderer before server revocation");
+        const auto epoch = Video::epoch(video), frames = Video::capture(video).snapshot().frames;
+        flow.checkpoint("revoke-requested"); // Parent removes only this server membership.
+        flow.state(Status::Idle, controls);
+        expect(!Chat::client(chat).running() && !Chat::client(chat).can_resume_current() &&
+            !Chat::membership(chat) && !Chat::first_text(chat) && !Chat::surface(chat).ready(),
+            "confirmed denial retires authority, first text and socket metadata without a new login");
+        const auto denied = [&] {
+            const auto summary = text(dialog, 110);
+            expect(summary.find(L"이전 채팅 승인: 서버 거부") != std::wstring::npos &&
+                summary.find(L"복귀 불가") != std::wstring::npos && summary.find(L"확인되지 않음") != std::wstring::npos &&
+                summary.find(L"서버 채팅 연결: 게임 1") == std::wstring::npos,
+                "denial reason persists separately from unknown current server socket counts");
+            expect(!IsWindowEnabled(GetDlgItem(dialog, 112)) && text(controls, 209).find(L"복귀") == std::wstring::npos,
+                "neither panel offers a revoked approval as resumable");
+        };
+        denied(); roundtrip(); denied();
+        struct Cleared { bool pending = false, done = false, empty = false; HRESULT status = E_FAIL; };
+        auto cleared = std::make_shared<Cleared>();
+        flow.wait([&] {
+            if (cleared->done) {
+                expect(SUCCEEDED(cleared->status), "cleared renderer inspection succeeds");
+                if (cleared->empty) return true;
+                cleared->pending = false; cleared->done = false;
+            }
+            if (!cleared->pending) {
+                cleared->pending = true;
+                expect(SUCCEEDED(core->ExecuteScript(L"document.querySelectorAll('#messages li').length === 0",
+                    Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+                        [cleared](HRESULT result, LPCWSTR value) -> HRESULT {
+                            cleared->status = result;
+                            cleared->empty = value && std::wstring_view(value) == L"true";
+                            cleared->done = true; return S_OK;
+                        }).Get())), "inspect actual cleared renderer");
+            }
+            return false;
+        }, "server revocation clears actual previous chat rows");
+        SetDlgItemTextW(dialog, 101, L"https://not-the-current-service.invalid");
+        SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_UNCHECKED, 0);
+        SendDlgItemMessageW(dialog, 107, BM_SETCHECK, BST_CHECKED, 0);
+        command(dialog, 112); command(dialog, 105); // Even direct old commands cannot resurrect approval.
+        flow.pulse(); denied();
+        expect(!Chat::client(chat).running() && !Chat::membership(chat), "return does not substitute edited controls or saved account");
+        auto saved = chatview::load_connection();
+        const bool preserved = saved && saved->credential == other && saved->origin == origin;
+        if (saved) SecureZeroMemory(saved->credential.data(), saved->credential.size() * sizeof(wchar_t));
+        expect(preserved, "denial neither uses nor deletes a different saved approval");
+        flow.wait([&] { return Video::capture(video).snapshot().frames > frames &&
+            !IsWindowVisible(cover) && pixels(RGB(20,100,180)); }, "fresh selected video continues after revocation", 10000);
+        expect(Video::requested(video) && Video::epoch(video) == epoch && !Video::check(video).active() &&
+            Video::output(video) == output && Video::cover(video) == cover && Video::source(video) == replacement &&
+            IsWindowVisible(hud_window), "denial does not stop/reselect video or revive consumed consent");
+        flow.checkpoint("revoked");
+        command(controls, 205);
+        flow.wait([&] { return !Video::capture(video).running() && IsWindowVisible(cover) && pixels(RGB(0,0,0)); },
+            "explicit stop still masks video after chat revocation", 2000);
+        expect(!Video::accept(video), "revocation is not a reusable receiver confirmation");
+        Video::pattern(video, replacement);
+        expect(!Video::capture(video).running() && Video::check(video).active(), "fresh identification alone cannot start capture");
+        expect(Video::accept(video), "new explicit receiver confirmation restarts only game video");
+        flow.wait([&] { return !IsWindowVisible(cover) && pixels(RGB(20,100,180)); }, "video restarts independently of denied chat", 10000);
+        denied();
+        expect(!Chat::client(chat).running() && !Chat::membership(chat), "video restart never reapproves chat");
+        flow.checkpoint("revoked-video-restarted");
+    } else {
+        command(dialog, 108);
+        flow.state(Status::Idle, controls);
+        expect(!Chat::client(chat).can_resume_current() && !Chat::membership(chat) && !Chat::first_text(chat), "logout retires chat authority");
+        expect(Video::requested(video) && !IsWindowVisible(cover) && pixels(RGB(180,70,30)), "chat logout is not an implicit video stop");
+        flow.checkpoint("signed-out");
+    }
     expect(!GetModuleHandleW(L"obs.dll") && !GetModuleHandleW(L"obs-frontend-api.dll"), "no OBS in gaming companion fixture");
     command(controls, 205);
     flow.wait([&] { return !Video::capture(video).running() && pixels(RGB(0,0,0)); }, "final explicit video stop", 2000);
@@ -282,15 +357,21 @@ void run(const wchar_t *source_path, const std::wstring &origin)
 int wmain(int argc, wchar_t **argv)
 {
     try {
-        expect(argc == 2, "source fixture executable required"); std::string origin; std::getline(std::cin, origin);
-        expect(origin.starts_with("http://127.0.0.1:"), "local fixture origin");
+        expect(argc == 3, "source fixture and explicit return/revoked mode required");
+        const std::wstring_view mode(argv[2]);
+        expect(mode == L"return" || mode == L"revoked", "known flow mode");
+        std::string origin, auxiliary; std::getline(std::cin, origin); std::getline(std::cin, auxiliary);
+        expect(origin.size() < 2048 && origin.starts_with("http://127.0.0.1:") && auxiliary.size() == 64, "bounded fixture input");
+        std::wstring other(auxiliary.begin(), auxiliary.end());
+        SecureZeroMemory(auxiliary.data(), auxiliary.size());
+        struct Wipe { std::wstring &value; ~Wipe() { SecureZeroMemory(value.data(), value.size() * sizeof(wchar_t)); } } wipe{other};
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         expect(GetSystemMetrics(SM_CXSCREEN) >= 900 && GetSystemMetrics(SM_CYSCREEN) >= 600, "interactive desktop required, not skipped");
         wchar_t temporary[MAX_PATH]{}, profile[MAX_PATH]{};
         expect(GetTempPathW(MAX_PATH, temporary) != 0 && GetTempFileNameW(temporary, L"CVC", 0, profile) != 0, "unique profile reservation");
         expect(DeleteFileW(profile) && CreateDirectoryW(profile, nullptr) && SetEnvironmentVariableW(L"LOCALAPPDATA", profile), "isolated profile");
         expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM initialization");
-        try { run(argv[1], std::wstring(origin.begin(), origin.end())); } catch (...) { CoUninitialize(); throw; }
+        try { run(argv[1], std::wstring(origin.begin(), origin.end()), other, mode == L"revoked"); } catch (...) { CoUninitialize(); throw; }
         CoUninitialize(); return 0;
     } catch (const std::exception &error) { std::cerr << "Companion chat/video: " << error.what() << '\n'; return 1; }
 }

@@ -69,6 +69,7 @@ private:
     bool remembered_ = false;
     bool reconnecting_ = false;
     bool signing_out_ = false;
+    bool approval_denied_ = false; // Last server denial, not authority or a transport-error guess.
     bool pending_subscribed_ = false;
     bool in_flight_subscribed_ = false;
     bool displayed_subscribed_ = false;

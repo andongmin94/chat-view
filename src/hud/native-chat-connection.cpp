@@ -16,7 +16,7 @@ constexpr int kManage = 114, kManagementScope = 115, kCompanionVideo = 116;
 constexpr wchar_t kClass[] = L"ChatView.NativeConnection";
 // This UI does not keep the last server socket counts after a native stop.
 // Local resume eligibility is not a claim that the peer remains connected.
-constexpr const wchar_t *unavailable_connection_text(NativeChatStatus status) noexcept
+constexpr const wchar_t *unavailable_connection_text(NativeChatStatus status, bool approval_denied) noexcept
 {
     if (can_request_native_chat_return(status))
         return L"서버 채팅 연결 수: 현재 확인되지 않음 (표시 중지)\n"
@@ -24,6 +24,9 @@ constexpr const wchar_t *unavailable_connection_text(NativeChatStatus status) no
     if (status == NativeChatStatus::Stopping || status == NativeChatStatus::SigningOut)
         return L"서버 채팅 연결 수: 확인되지 않음 (종료 처리 중)\n"
             L"복귀: 작업 종료까지 대기\n영상 제외: 미검증";
+    if (approval_denied)
+        return L"서버 채팅 연결 수: 현재 확인되지 않음\n"
+            L"이전 채팅 승인: 서버 거부 · 복귀 불가\n로그인 / 연결에서 다시 승인하세요. 영상 제외: 미검증";
     return L"서버 채팅 연결 수: 현재 확인되지 않음\n"
         L"현재 복귀 승인: 없음 또는 미확인\n영상 제외: 미검증";
 }
@@ -107,7 +110,7 @@ void NativeChatConnection::show_connection_state() noexcept
     show_display_status();
     try {
         const auto summary = connection_state_ ? connection_summary(*connection_state_)
-            : std::wstring(unavailable_connection_text(local_status()));
+            : std::wstring(unavailable_connection_text(local_status(), approval_denied_));
         SetDlgItemTextW(dialog_, kSession, summary.c_str());
     } catch (...) { SetDlgItemTextW(dialog_, kSession, L"세션 상태를 확인하지 못했습니다."); }
 }
@@ -128,7 +131,7 @@ void NativeChatConnection::show_display_status() noexcept
     // The WinHTTP worker may retire AFTER clear_display() painted "Stopping".
     // Update the same session control on IdleResumable/ExternalPageResumable
     // transition, without restoring any stale socket counts.
-    if (!connection_state_) SetDlgItemTextW(dialog_, kSession, unavailable_connection_text(status));
+    if (!connection_state_) SetDlgItemTextW(dialog_, kSession, unavailable_connection_text(status, approval_denied_));
 }
 bool NativeChatConnection::open_dialog() noexcept
 {
@@ -288,6 +291,7 @@ void NativeChatConnection::begin(std::wstring origin, std::wstring credential, b
         notice(L"연결 주소를 준비하지 못했습니다."); return;
     }
     if (!client_.start(std::move(origin), std::move(credential), local, mode, role_)) { notice(L"주소 또는 연결 승인을 확인하세요."); return; }
+    approval_denied_ = false; // A new explicit attempt, never a claim of approval.
     // start() has validated the origin. This is a non-secret navigation target,
     // never an extra approval or a value read back from editable controls.
     service_origin_ = std::move(bound_origin);
@@ -450,7 +454,12 @@ void NativeChatConnection::tick() noexcept
                 end(L"현재 실행 역할과 저장된 승인 역할이 다릅니다. 원래 실행 방식으로 돌아가거나 로그아웃 후 다시 승인하세요."); return;
             }
             if (update.status == DisplayStatus::Denied) {
-                end(L"연결 승인이 해제·만료됐습니다. 다시 연결해 주세요."); return;
+                // Only a confirmed session-authorizing denial sets this reason.
+                // Socket loss/retry is not revocation; the client owns authority.
+                approval_denied_ = true; auto_connect_pending_ = false;
+                end(L"서버가 이전 채팅 승인을 거부했습니다.\n현재 승인으로 복귀할 수 없습니다. 로그인 / 연결에서 다시 승인하세요.\n별도 영상 출력은 변경하지 않았습니다.");
+                hud_.set_page_health(HudPageState::LoginRequired, HudProvider::Chzzk);
+                return;
             }
             if (update.status == DisplayStatus::Ended || update.status == DisplayStatus::Failed) {
                 end(L"로그인 또는 연결이 종료됐습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요. 승인 없이 로그인에 실패했다면 다시 로그인하세요."); return;

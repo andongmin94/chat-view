@@ -22,6 +22,15 @@ struct NativeChatConnectionTestAccess {
     static bool running(NativeChatConnection &c) { return c.client_.running(); }
     static bool has_metadata(NativeChatConnection &c) { return c.connection_state_.has_value(); }
     static void disable_auto_connect(NativeChatConnection &c) { c.auto_connect_pending_ = false; }
+    static void first_display_evidence(NativeChatConnection &c) {
+        // Failure-only phase flags. Never print a URL, nonce, credential or chat.
+        std::cerr << "First approved chat phase: status=" << static_cast<unsigned>(c.local_status())
+            << " active=" << c.active_ << " worker=" << c.client_.running()
+            << " awaiting_login=" << c.awaiting_login_ << " surface_ready=" << c.surface_.ready()
+            << " frames=" << c.surface_.rendered_frames() << " rows=" << c.surface_.rendered_messages()
+            << " rejected=" << c.surface_.rejected_frames() << " metadata=" << c.connection_state_.has_value()
+            << " pending_frame=" << !c.pending_.empty() << " awaiting_render=" << (c.awaiting_frame_ != 0U) << '\n';
+    }
 };
 struct NativeChatSurfaceTestAccess {
     static ICoreWebView2 *core(NativeChatSurface &s) { return s.webview_.Get(); }
@@ -109,7 +118,12 @@ void run(const std::wstring &origin, const std::wstring &auxiliary, const std::s
         await([&] { return browser_opened; }, "browser login request", connection);
         if (mode != "pending") {
             auto &surface = chatview::NativeChatConnectionTestAccess::surface(connection);
-            await([&] { return surface.rendered_messages() == 1U; }, "approved chat rendered", connection);
+            try {
+                await([&] { return surface.rendered_messages() == 1U; }, "approved chat rendered", connection);
+            } catch (...) {
+                chatview::NativeChatConnectionTestAccess::first_display_evidence(connection);
+                throw; // Keep the original first-render condition and 15-second deadline.
+            }
             core = chatview::NativeChatSurfaceTestAccess::core(surface);
             expect(chatview::NativeChatConnectionTestAccess::has_metadata(connection), "connection metadata before logout");
             auto saved = chatview::load_connection();

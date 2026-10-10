@@ -24,6 +24,9 @@ constexpr const wchar_t *unavailable_connection_text(NativeChatStatus status, bo
     if (status == NativeChatStatus::Stopping || status == NativeChatStatus::SigningOut)
         return L"서버 채팅 연결 수: 확인되지 않음 (종료 처리 중)\n"
             L"복귀: 작업 종료까지 대기\n영상 제외: 미검증";
+    if (approval_denied && status == NativeChatStatus::AwaitingApproval)
+        return L"서버 채팅 연결 수: 현재 확인되지 않음\n"
+            L"새 로그인: 브라우저 승인 대기 · 이전 승인 복귀 불가\n영상 제외: 미검증";
     if (approval_denied)
         return L"서버 채팅 연결 수: 현재 확인되지 않음\n"
             L"이전 채팅 승인: 서버 거부 · 복귀 불가\n로그인 / 연결에서 다시 승인하세요. 영상 제외: 미검증";
@@ -291,7 +294,8 @@ void NativeChatConnection::begin(std::wstring origin, std::wstring credential, b
         notice(L"연결 주소를 준비하지 못했습니다."); return;
     }
     if (!client_.start(std::move(origin), std::move(credential), local, mode, role_)) { notice(L"주소 또는 연결 승인을 확인하세요."); return; }
-    approval_denied_ = false; // A new explicit attempt, never a claim of approval.
+    // Keep the denied context until an authenticated frame establishes the
+    // new approval. Cancellation or a failed browser launch is not approval.
     // start() has validated the origin. This is a non-secret navigation target,
     // never an extra approval or a value read back from editable controls.
     service_origin_ = std::move(bound_origin);
@@ -311,7 +315,8 @@ void NativeChatConnection::connect() noexcept
     auto_connect_pending_ = false;
     try {
         if (client_.running() || signing_out_) { notice(L"연결 또는 종료 처리 중입니다. 중복 연결하지 않습니다."); return; }
-        if (!hud_.webview_ready_ || hud_.system_suppressed() || hud_.shutting_down_ || hud_.capture_exclusion_failed_) {
+        if (!hud_.webview_ready_ || hud_.system_suppressed() || hud_.shutting_down_ ||
+            hud_.capture_risk_ || hud_.capture_exclusion_failed_ || !hud_.capture_exclusion_intact()) {
             notice(L"HUD를 현재 사용할 수 없습니다. 캡처·잠금 보호는 우회하지 않습니다."); return;
         }
         if (client_.can_resume_current()) {
@@ -320,7 +325,9 @@ void NativeChatConnection::connect() noexcept
         auto origin = text(dialog_, kOrigin, 2048);
         const bool local = SendDlgItemMessageW(dialog_, kLocal, BM_GETCHECK, 0, 0) == BST_CHECKED;
         const bool remember = SendDlgItemMessageW(dialog_, kRemember, BM_GETCHECK, 0, 0) == BST_CHECKED;
-        if (auto saved = load_connection()) {
+        // A rejected approval requires fresh browser consent, never a different
+        // saved account at the same service. Remember applies to that new grant.
+        if (auto saved = approval_denied_ ? std::optional<SavedConnection>{} : load_connection()) {
             if (remember && saved->origin == origin && saved->developer_loopback == local) {
                 begin(std::move(saved->origin), std::move(saved->credential), local, DisplayAuthentication::Saved); return;
             }
@@ -423,7 +430,7 @@ void NativeChatConnection::tick() noexcept
                 : L"로그아웃 미확인: 저장 정보 삭제 또는 서버 해제에 실패했습니다. 다시 로그아웃하거나 관리 화면에서 연결을 해제하세요.");
             return;
         }
-        if (auto_connect_pending_ && !active_ && !client_.running() && hud_.webview_ready_ &&
+        if (auto_connect_pending_ && !approval_denied_ && !active_ && !client_.running() && hud_.webview_ready_ &&
             !hud_.system_suppressed() && !hud_.shutting_down_ && !hud_.capture_exclusion_failed_) {
             auto_connect_pending_ = false;
             if (auto saved = load_connection()) begin(std::move(saved->origin), std::move(saved->credential),
@@ -431,8 +438,10 @@ void NativeChatConnection::tick() noexcept
         }
         if (!active_) return;
         if (hud_.system_suppressed() || hud_.shutting_down_ || hud_.capture_exclusion_failed_) {
-            auto_connect_pending_ = remembered_ && !hud_.shutting_down_ && !hud_.capture_exclusion_failed_;
-            end(L"시스템 보호로 연결을 중지했습니다. 저장한 연결은 복귀 뒤 다시 연결합니다.", true);
+            auto_connect_pending_ = remembered_ && !approval_denied_ && !hud_.shutting_down_ && !hud_.capture_exclusion_failed_;
+            end(approval_denied_
+                ? L"시스템 보호로 새 로그인 요청을 중지했습니다. 보호 해제 후 로그인 / 연결에서 다시 승인하세요."
+                : L"시스템 보호로 연결을 중지했습니다. 저장한 연결은 복귀 뒤 다시 연결합니다.", true);
             if (dialog_) { ShowWindow(dialog_, SW_HIDE); }
             return;
         }
@@ -472,6 +481,9 @@ void NativeChatConnection::tick() noexcept
                 notice(L"연결 복구 중입니다. 서버와 채널 승인이 준비되면 자동 재연결합니다.");
             }
             if (update.status == DisplayStatus::Receiving) {
+                // DisplayClient has checked the role and bound membership.
+                // This restores chat authority, not first-text or video proof.
+                approval_denied_ = false;
                 if (awaiting_login_) {
                     awaiting_login_ = false;
                     if (!open_surface()) {

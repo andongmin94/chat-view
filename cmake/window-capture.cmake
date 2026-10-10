@@ -129,4 +129,8 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/companion-chat-video-test.mts"
         "$<TARGET_FILE:chat-view-companion-chat-video-test>" "$<TARGET_FILE:chat-view-window-capture-test>" revoked)
     set_tests_properties(chat-view-companion-chat-revocation PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME chat-view-companion-chat-reapproval COMMAND "${CHATVIEW_NODE_EXECUTABLE}" --experimental-strip-types
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/companion-chat-video-test.mts"
+        "$<TARGET_FILE:chat-view-companion-chat-video-test>" "$<TARGET_FILE:chat-view-window-capture-test>" reapproved)
+    set_tests_properties(chat-view-companion-chat-reapproval PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 endif()

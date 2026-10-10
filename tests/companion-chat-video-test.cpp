@@ -63,6 +63,7 @@ namespace {
 using Chat = chatview::NativeChatConnectionTestAccess;
 using Video = chatview::VideoOutputPanelTestAccess;
 using Status = chatview::NativeChatStatus;
+unsigned browser_requests = 0;
 void expect(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
 void command(HWND window, int id) { SendMessageW(window, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED), 0); }
 std::wstring text(HWND window, int id) { wchar_t value[1024]{}; GetDlgItemTextW(window, id, value, 1024); return value; }
@@ -175,14 +176,101 @@ struct Flow {
             "first text and current server socket count shown in native connection panel");
     }
 };
-void run(const wchar_t *source_path, const std::wstring &origin, const std::wstring &other, bool revoked)
+void reapprove(Flow &flow, const std::wstring &origin, const std::wstring &other,
+               const chatview::DisplayMembership &previous)
 {
+    auto &chat = flow.chat; auto &video = flow.video;
+    const HWND dialog = Chat::dialog(chat), controls = Video::open(video);
+    const HWND output = Video::output(video), cover = Video::cover(video), source = Video::source(video);
+    SetDlgItemTextW(dialog, 101, origin.c_str());
+    SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
+    const auto unrelated_saved = [&] {
+        auto saved = chatview::load_connection();
+        const bool intact = saved && saved->credential == other && saved->origin == origin;
+        if (saved) SecureZeroMemory(saved->credential.data(), saved->credential.size() * sizeof(wchar_t));
+        expect(intact, "fresh login never uses or deletes the unrelated saved approval");
+    };
+    const auto begin_login = [&] {
+        const auto before = browser_requests;
+        command(dialog, 104);
+        flow.wait([&] { return browser_requests == before + 1; }, "one explicit fresh browser request");
+        flow.state(Status::AwaitingApproval, controls);
+        expect(!Chat::membership(chat) && !Chat::first_text(chat) && !Chat::surface(chat).ready() &&
+            !IsWindowEnabled(GetDlgItem(dialog, 112)) && !IsWindowEnabled(GetDlgItem(dialog, 114)),
+            "pending consent cannot inherit chat metadata, first text, return or management");
+        expect(text(dialog, 110).find(L"새 로그인: 브라우저 승인 대기") != std::wstring::npos,
+            "pending new consent is distinct from old denial or an approved connection");
+        command(dialog, 104); command(dialog, 112); // Duplicate actions grant nothing.
+        unrelated_saved();
+    };
+    // Two cancelled remembered attempts expose both saved-account substitution
+    // and premature clearing of the denial fence. No provider consent is given.
+    SendDlgItemMessageW(dialog, 107, BM_SETCHECK, BST_CHECKED, 0);
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        if (attempt == 1) {
+            command(controls, 205);
+            flow.wait([&] { return !Video::capture(video).running() && pixels(RGB(0,0,0)); },
+                "explicit video stop before another login attempt", 2000);
+        }
+        const auto epoch = Video::epoch(video), frames = Video::capture(video).snapshot().frames;
+        begin_login(); flow.checkpoint("reapproval-pending");
+        if (attempt == 0) flow.wait([&] {
+            return Video::capture(video).snapshot().frames > frames && !IsWindowVisible(cover) && pixels(RGB(20,100,180));
+        }, "fresh video continues during pending browser consent", 10000);
+        else expect(!Video::requested(video) && IsWindowVisible(cover) && pixels(RGB(0,0,0)),
+            "pending login cannot restart explicitly stopped video");
+        command(dialog, 105); flow.state(Status::Idle, controls);
+        expect(!Chat::client(chat).can_resume_current() && !Chat::membership(chat) && !Chat::first_text(chat) &&
+            text(dialog, 110).find(L"이전 채팅 승인: 서버 거부") != std::wstring::npos,
+            "cancelled fresh login preserves the need for new consent");
+        expect(Video::epoch(video) == epoch && Video::output(video) == output && Video::cover(video) == cover,
+            "login cancellation never changes video choices or output ownership");
+        unrelated_saved(); flow.checkpoint("reapproval-cancelled");
+    }
+    // The final new approval is memory-only, preserving the other saved account.
+    SendDlgItemMessageW(dialog, 107, BM_SETCHECK, BST_UNCHECKED, 0);
+    begin_login(); flow.checkpoint("reapproval-approve");
+    flow.wait([&] { return Chat::membership(chat).has_value() && Chat::surface(chat).rendered_frames() >= 1; },
+        "new approval renders its own empty subscription");
+    expect(Chat::surface(chat).rendered_messages() == 0 && !Chat::first_text(chat),
+        "fresh subscription cannot inherit the revoked document's first-text acknowledgement");
+    const auto renewed = Chat::membership(chat)->membership;
+    expect(renewed.role == previous.role && renewed.connection_id != previous.connection_id,
+        "browser consent creates a new connection with the original gaming role");
+    flow.checkpoint("reapproval-empty-ready"); flow.received(L"reapproved-chat");
+    flow.state(Status::Receiving, controls);
+    expect(text(dialog, 110).find(L"서버 거부") == std::wstring::npos && IsWindowEnabled(GetDlgItem(dialog, 114)),
+        "fresh authenticated display retires the old denial guidance");
+    expect(!Video::requested(video) && !Video::check(video).active() && IsWindowVisible(cover) && pixels(RGB(0,0,0)),
+        "first new chat does not restore old receiver consent or restart video");
+    unrelated_saved(); flow.checkpoint("reapproved");
+    command(dialog, 105); flow.state(Status::IdleResumable, controls);
+    flow.checkpoint("reapproved-paused"); command(dialog, 112);
+    flow.received(L"reapproved-return-chat"); flow.state(Status::Receiving, controls);
+    expect(Chat::membership(chat)->membership == renewed, "manual return renews only the newly approved connection");
+    expect(!Video::requested(video) && pixels(RGB(0,0,0)), "new-approval return leaves video black");
+    flow.checkpoint("reapproved-returned");
+    expect(!Video::accept(video), "successful reapproval is not receiver consent");
+    Video::pattern(video, source); expect(Video::accept(video), "fresh receiver check explicitly restarts video");
+    flow.wait([&] { return !IsWindowVisible(cover) && pixels(RGB(20,100,180)); }, "video after new explicit receiver check", 10000);
+    expect(Video::output(video) == output && Video::cover(video) == cover && Video::source(video) == source &&
+        Chat::membership(chat)->membership == renewed, "new approval preserves the same output windows and selected game");
+    flow.checkpoint("reapproved-video-restarted"); command(dialog, 108); flow.state(Status::Idle, controls);
+    expect(!Chat::membership(chat) && !Chat::first_text(chat) && !Chat::client(chat).can_resume_current(),
+        "logout retires only the newly approved chat");
+    expect(Video::requested(video) && !IsWindowVisible(cover) && pixels(RGB(20,100,180)),
+        "new-approval logout does not implicitly stop the game video");
+    unrelated_saved(); flow.checkpoint("reapproved-signed-out");
+}
+void run(const wchar_t *source_path, const std::wstring &origin, const std::wstring &other, std::wstring_view mode)
+{
+    const bool revoked = mode != L"return";
     Source first(source_path), second(source_path);
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     chatview::HudWindow hud;
     expect(hud.create(GetModuleHandleW(nullptr), ready.get()), "production HUD");
     chatview::NativeChatConnection chat(hud, chatview::DisplayRole::Gaming, [](HWND, const wchar_t *) {
-        std::cout << "browser-opened\n" << std::flush; return true;
+        ++browser_requests; std::cout << "browser-opened\n" << std::flush; return true;
     });
     chatview::VideoOutputPanel video(hud, true); Flow flow{chat, video}; hud.show_ready();
     flow.wait([&] { return WaitForSingleObject(ready.get(), 0) == WAIT_OBJECT_0; }, "HUD ready");
@@ -341,6 +429,7 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
         denied();
         expect(!Chat::client(chat).running() && !Chat::membership(chat), "video restart never reapproves chat");
         flow.checkpoint("revoked-video-restarted");
+        if (mode == L"reapproved") reapprove(flow, origin, other, approved);
     } else {
         command(dialog, 108);
         flow.state(Status::Idle, controls);
@@ -357,9 +446,9 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
 int wmain(int argc, wchar_t **argv)
 {
     try {
-        expect(argc == 3, "source fixture and explicit return/revoked mode required");
+        expect(argc == 3, "source fixture and explicit flow mode required");
         const std::wstring_view mode(argv[2]);
-        expect(mode == L"return" || mode == L"revoked", "known flow mode");
+        expect(mode == L"return" || mode == L"revoked" || mode == L"reapproved", "known flow mode");
         std::string origin, auxiliary; std::getline(std::cin, origin); std::getline(std::cin, auxiliary);
         expect(origin.size() < 2048 && origin.starts_with("http://127.0.0.1:") && auxiliary.size() == 64, "bounded fixture input");
         std::wstring other(auxiliary.begin(), auxiliary.end());
@@ -371,7 +460,7 @@ int wmain(int argc, wchar_t **argv)
         expect(GetTempPathW(MAX_PATH, temporary) != 0 && GetTempFileNameW(temporary, L"CVC", 0, profile) != 0, "unique profile reservation");
         expect(DeleteFileW(profile) && CreateDirectoryW(profile, nullptr) && SetEnvironmentVariableW(L"LOCALAPPDATA", profile), "isolated profile");
         expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM initialization");
-        try { run(argv[1], std::wstring(origin.begin(), origin.end()), other, mode == L"revoked"); } catch (...) { CoUninitialize(); throw; }
+        try { run(argv[1], std::wstring(origin.begin(), origin.end()), other, mode); } catch (...) { CoUninitialize(); throw; }
         CoUninitialize(); return 0;
     } catch (const std::exception &error) { std::cerr << "Companion chat/video: " << error.what() << '\n'; return 1; }
 }

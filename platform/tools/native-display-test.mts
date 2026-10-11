@@ -15,8 +15,10 @@ assert(executable, 'native test executable required');
 const snapshot = { state: 'subscribed', received: 1, messages: [
   { nickname: '검증 사용자', content: '안녕 😀 <img onerror=evil()>', messageTime: 1700000000000 },
 ] };
-for (const mode of ['gateway', 'cancel', 'local-expiry', 'redirect', 'wrong-scope', 'wrong-role',
+for (const mode of ['gateway', 'gateway-gaming', 'login-cancel', 'login-expiry', 'login-denied', 'cancel', 'local-expiry', 'redirect', 'wrong-scope', 'wrong-role',
   'wrong-session', 'bad-count', 'claimed-capture', 'missing-connection', 'invalid-json', 'binary', 'oversize', 'idle']) {
+  const ui = mode === 'gateway' || mode === 'gateway-gaming' || mode.startsWith('login-');
+  const role = mode === 'gateway-gaming' ? 'gaming' : 'streaming';
   let origin = '';
   const access = new DisplayAccess(() => ({ id: 'synthetic-owner', expiresAt: performance.now() + 60000 }));
   const issued = access.issue();
@@ -27,14 +29,20 @@ for (const mode of ['gateway', 'cancel', 'local-expiry', 'redirect', 'wrong-scop
   const gateway = new DisplayGateway(access, () => origin, () => snapshot);
   const sessionGateway = new DisplaySessionGateway(access, () => origin, () => gateway.changed());
   let loginId = '', grantId = '', browserOpened = false, loginStarts = 0, loginPolls = 0;
+  let approved = false, denied = false;
+  const ids: string[] = [];
   const startLogin = sessionGateway.login.start.bind(sessionGateway.login), pollLogin = sessionGateway.login.poll.bind(sessionGateway.login);
-  sessionGateway.login.start = (challenge, remember, role) => {
-    const result = startLogin(challenge, remember, role); loginId = result.id; return result;
+  sessionGateway.login.start = (challenge, remember, requested) => {
+    assert.equal(requested, role); assert.equal(remember, false);
+    const result = startLogin(challenge, remember, requested); loginId = result.id; ids.push(loginId);
+    // Shorten only this test response so the actual client's original deadline
+    // can expire without waiting five minutes or modifying production budgets.
+    return { ...result, expiresInMs: mode === 'login-expiry' && loginStarts === 1 ? 2000 : result.expiresInMs };
   };
   sessionGateway.login.poll = (id, verifier) => {
     const result = pollLogin(id, verifier);
     if (result.status === 'approved') {
-      assert.equal(result.lease.membership?.role, 'streaming');
+      assert.equal(result.lease.membership?.role, role);
       grantId = result.lease.id;
     }
     return result;
@@ -44,12 +52,12 @@ for (const mode of ['gateway', 'cancel', 'local-expiry', 'redirect', 'wrong-scop
   let requests = 0, upgrades = 0, redirected = 0, rendered = false;
   let child: ReturnType<typeof spawn> | undefined;
   const server = createServer((request, response) => {
-    if (mode === 'gateway') {
+    if (ui) {
       assert.equal(request.headers.cookie, undefined);
       if (request.url === '/display/login') {
-        assert.equal(request.headers['x-chatview-role'], 'streaming'); loginStarts++;
+        assert.equal(request.headers['x-chatview-role'], role); loginStarts++;
       } else if (request.url === `/display/login/${loginId}`) loginPolls++;
-      else if (request.url === '/display/refresh') assert.equal(request.headers['x-chatview-role'], 'streaming');
+      else if (request.url === '/display/refresh') assert.equal(request.headers['x-chatview-role'], role);
       else assert.fail('native login must not submit a manual display ticket');
       assert(sessionGateway.handle(request, response)); return;
     }
@@ -69,7 +77,7 @@ for (const mode of ['gateway', 'cancel', 'local-expiry', 'redirect', 'wrong-scop
   });
   server.on('upgrade', (request, socket, head) => {
     upgrades++;
-    if (mode === 'gateway') { gateway.upgrade(request, socket, head); return; }
+    if (ui) { gateway.upgrade(request, socket, head); return; }
     assert.equal(request.url, '/display/events');
     assert.equal(request.headers.authorization, `Bearer ${token}`);
     assert.equal(request.headers.cookie, undefined);
@@ -106,7 +114,15 @@ for (const mode of ['gateway', 'cancel', 'local-expiry', 'redirect', 'wrong-scop
       output = (output + chunk).slice(-4096);
       if (/(^|\n)browser-opened\r?\n/u.test(output) && !browserOpened) {
         assert(loginId); browserOpened = true;
-        assert.equal(sessionGateway.login.view(loginId).role, 'streaming');
+        assert.equal(sessionGateway.login.view(loginId).role, role);
+      }
+      if (/(^|\n)deny-login\r?\n/u.test(output) && !denied) {
+        assert(ui && mode === 'login-denied' && loginStarts === 1);
+        denied = true; sessionGateway.login.deny(loginId);
+      }
+      if (/(^|\n)approve-login\r?\n/u.test(output) && !approved) {
+        assert(ui); approved = true;
+        assert.equal(loginStarts, mode.startsWith('login-') ? 2 : 1);
         sessionGateway.login.approve(loginId);
       }
       if (/(^|\n)rendered\r?\n/u.test(output) && !rendered) {
@@ -120,11 +136,16 @@ for (const mode of ['gateway', 'cancel', 'local-expiry', 'redirect', 'wrong-scop
       const [code] = await exited;
       assert.equal(code, 0, `${mode}: ${errors}`);
     } finally { clearTimeout(timeout); }
-    if (mode === 'gateway') {
-      assert(browserOpened); assert.equal(loginStarts, 1); assert(loginPolls >= 1); assert.equal(requests, 0);
+    if (ui) {
+      assert(browserOpened && approved); assert.equal(loginStarts, mode.startsWith('login-') ? 2 : 1);
+      assert.equal(new Set(ids).size, loginStarts, 'only explicit restarts create new requests');
+      assert(loginPolls >= 1); assert.equal(requests, 0);
+      if (mode === 'login-cancel' || mode === 'login-expiry')
+        assert.equal(sessionGateway.login.view(ids[0]!).role, role, 'uncollected old request never acquired approval');
+      assert.equal(denied, mode === 'login-denied');
     } else assert.equal(requests, 1, `${mode}: no replay of the one-use exchange`);
     assert.equal(redirected, 0, 'credentials never follow a redirect');
-    if (mode === 'gateway') assert(rendered, 'native DOM acknowledgement before revocation');
+    if (ui) assert(rendered, 'native DOM acknowledgement before revocation');
     if (['wrong-scope', 'wrong-role', 'redirect', 'cancel'].includes(mode)) assert.equal(upgrades, 0);
     console.log(`${mode}: passed`);
   } finally {

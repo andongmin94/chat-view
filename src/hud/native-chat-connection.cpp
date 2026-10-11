@@ -12,7 +12,7 @@ namespace {
 constexpr int kConnectHotkey = 0x4348;
 constexpr int kOrigin = 101, kLocal = 103, kConnect = 104, kDisconnect = 105, kNotice = 106;
 constexpr int kRemember = 107, kForget = 108, kRole = 109, kSession = 110, kVideoScope = 111, kResume = 112, kDisplayStatus = 113;
-constexpr int kManage = 114, kManagementScope = 115, kCompanionVideo = 116;
+constexpr int kManage = 114, kManagementScope = 115, kCompanionVideo = 116, kReopenLogin = 117, kLoginCode = 118;
 constexpr wchar_t kClass[] = L"ChatView.NativeConnection";
 // This UI does not keep the last server socket counts after a native stop.
 // Local resume eligibility is not a claim that the peer remains connected.
@@ -119,9 +119,22 @@ void NativeChatConnection::show_connection_state() noexcept
 }
 void NativeChatConnection::show_display_status() noexcept
 {
+    if (!client_.login_pending()) login_url_.clear();
     if (!dialog_) return;
     const auto status = local_status();
     EnableWindow(GetDlgItem(dialog_, kManage), can_open_management(status));
+    // The request can expire or finish without changing the cached UI status.
+    EnableWindow(GetDlgItem(dialog_, kReopenLogin), can_reopen_login(status));
+    // Keep the non-secret six-character confirmation visible even when a
+    // transient notice changes. It is cleared with the request, never saved.
+    wchar_t code[7]{};
+    if (login_url_.size() >= 6U) {
+        for (size_t i = 0; i < 6U; ++i) {
+            auto c = login_url_[login_url_.size() - 6U + i];
+            code[i] = c >= L'a' && c <= L'f' ? static_cast<wchar_t>(c - (L'a' - L'A')) : c;
+        }
+    }
+    SetDlgItemTextW(dialog_, kLoginCode, code);
     if (displayed_status_ == status) return;
     displayed_status_ = status;
     // A subscribed empty chat is not an acknowledged first text message.
@@ -158,7 +171,7 @@ bool NativeChatConnection::open_dialog() noexcept
         const bool gaming = role_ == DisplayRole::Gaming;
         dialog_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT | WS_EX_LAYERED, kClass,
             L"ChatView · 자체 채팅 연결 (개발 검증)", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-            CW_USEDEFAULT, CW_USEDEFAULT, 600, gaming ? 680 : 624, nullptr, nullptr, klass.hInstance, this);
+            CW_USEDEFAULT, CW_USEDEFAULT, 600, gaming ? 722 : 666, nullptr, nullptr, klass.hInstance, this);
         if (!dialog_) return false;
         displayed_status_.reset();
         // GetWindowDisplayAffinity documents a layered-window prerequisite.
@@ -172,7 +185,7 @@ bool NativeChatConnection::open_dialog() noexcept
         }
         const UINT dpi = GetDpiForWindow(dialog_);
         const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
-        SetWindowPos(dialog_, nullptr, 0, 0, scale(600), scale(gaming ? 680 : 624), SWP_NOMOVE | SWP_NOZORDER);
+        SetWindowPos(dialog_, nullptr, 0, 0, scale(600), scale(gaming ? 722 : 666), SWP_NOMOVE | SWP_NOZORDER);
         const auto add = [&](const wchar_t *kind, const wchar_t *caption, DWORD style,
                              int id, int x, int y, int width, int height) {
             HWND item = CreateWindowExW(std::wstring_view(kind) == L"EDIT" ? WS_EX_CLIENTEDGE : 0,
@@ -195,13 +208,16 @@ bool NativeChatConnection::open_dialog() noexcept
             kResume, 20, 314, 300, 32);
         HWND manage = add(L"BUTTON", L"계정·시험 광고·활동 관리", WS_TABSTOP | BS_PUSHBUTTON,
             kManage, 336, 314, 234, 32);
-        HWND display = add(L"STATIC", L"", 0, kDisplayStatus, 20, 354, 550, 38);
+        HWND reopen = add(L"BUTTON", L"브라우저 승인 페이지 다시 열기", WS_TABSTOP | BS_PUSHBUTTON,
+            kReopenLogin, 20, 354, 350, 32);
+        HWND code = add(L"STATIC", L"", SS_CENTERIMAGE, kLoginCode, 386, 354, 184, 32);
+        HWND display = add(L"STATIC", L"", 0, kDisplayStatus, 20, 396, 550, 38);
         // Only the OBS-free gaming companion offers a separate-output panel.
         // The button queues a local UI request, not video consent or login.
         HWND video = gaming ? add(L"BUTTON", L"별도 영상 출력 설정 열기",
-            WS_TABSTOP | BS_PUSHBUTTON, kCompanionVideo, 20, 400, 250, 32) : nullptr;
-        if (gaming) add(L"STATIC", L"게임 PC 전용 · 채팅 연결/영상 출력은 서로 독립적", 0, 0, 284, 400, 286, 32);
-        const int offset = gaming ? 46 : 0;
+            WS_TABSTOP | BS_PUSHBUTTON, kCompanionVideo, 20, 442, 250, 32) : nullptr;
+        if (gaming) add(L"STATIC", L"게임 PC 전용 · 채팅 연결/영상 출력은 서로 독립적", 0, 0, 284, 442, 286, 32);
+        const int offset = 42 + (gaming ? 46 : 0);
         HWND management_scope = add(L"STATIC", L"브라우저의 로그인 계정으로 관리합니다. 열린 화면의 채널을 확인하세요.\n브라우저 화면은 HUD 캡처 보호 대상이 아닙니다.",
             0, kManagementScope, 20, 402 + offset, 550, 40);
         add(L"STATIC", L"브라우저에서 채널과 요청 역할을 승인하세요. 기기등록이나 키 입력은 없습니다.\n공용 PC에서는 연결 유지를 선택하지 마세요.",
@@ -210,7 +226,7 @@ bool NativeChatConnection::open_dialog() noexcept
         // reports and transient notices. Local status never certifies video.
         HWND scope = add(L"STATIC", L"수신 영상의 HUD 제외: 미검증\n채팅 연결·OBS 활성 보고는 영상 검증이 아닙니다.",
             0, kVideoScope, 20, 538 + offset, 550, 40);
-        if (!origin || !scope || !resume || !display || !manage || !management_scope ||
+        if (!origin || !scope || !resume || !reopen || !code || !display || !manage || !management_scope ||
             (gaming && !video)) { DestroyWindow(dialog_); dialog_ = nullptr; return false; }
         SendMessageW(origin, EM_SETLIMITTEXT, 2048, 0);
         if (auto saved = load_connection()) {
@@ -263,6 +279,7 @@ LRESULT CALLBACK NativeChatConnection::procedure(HWND window, UINT message, WPAR
             else self->notice(L"별도 영상 출력 설정 열기를 요청했습니다. 새 대상 선택과 수신 확인은 별도로 필요합니다.");
             return 0;
         }
+        if (LOWORD(wparam) == kReopenLogin) { self->reopen_login(); return 0; }
         if (LOWORD(wparam) == kManage) { self->open_management(); return 0; }
         if (LOWORD(wparam) == kForget) { self->forget(); return 0; }
         if (LOWORD(wparam) == IDCANCEL) { SendMessageW(window, WM_CLOSE, 0, 0); return 0; }
@@ -298,7 +315,7 @@ void NativeChatConnection::begin(std::wstring origin, std::wstring credential, b
     // new approval. Cancellation or a failed browser launch is not approval.
     // start() has validated the origin. This is a non-secret navigation target,
     // never an extra approval or a value read back from editable controls.
-    service_origin_ = std::move(bound_origin);
+    login_url_.clear(); service_origin_ = std::move(bound_origin);
     awaiting_login_ = mode == DisplayAuthentication::Browser || mode == DisplayAuthentication::BrowserRemember;
     if (awaiting_login_) surface_.close();
     else if (!open_surface()) {
@@ -314,7 +331,11 @@ void NativeChatConnection::connect() noexcept
 {
     auto_connect_pending_ = false;
     try {
-        if (client_.running() || signing_out_) { notice(L"연결 또는 종료 처리 중입니다. 중복 연결하지 않습니다."); return; }
+        if (client_.running() || signing_out_) {
+            notice(client_.login_pending()
+                ? L"같은 로그인 요청을 기다리고 있습니다. '브라우저 승인 페이지 다시 열기'에서 상태를 확인하세요."
+                : L"연결 또는 종료 처리 중입니다. 중복 연결하지 않습니다."); return;
+        }
         if (!hud_.webview_ready_ || hud_.system_suppressed() || hud_.shutting_down_ ||
             hud_.capture_risk_ || hud_.capture_exclusion_failed_ || !hud_.capture_exclusion_intact()) {
             notice(L"HUD를 현재 사용할 수 없습니다. 캡처·잠금 보호는 우회하지 않습니다."); return;
@@ -387,6 +408,43 @@ void NativeChatConnection::open_management() noexcept
             : L"브라우저를 열지 못했습니다. 채팅 연결은 변경하지 않았습니다. 다시 시도하세요.");
     } catch (...) { notice(L"관리 화면을 열지 못했습니다. 채팅 연결은 변경하지 않았습니다."); }
 }
+bool NativeChatConnection::can_reopen_login(NativeChatStatus status) const noexcept
+{
+    return !closed_ && !opening_login_ && !signing_out_ && active_ && awaiting_login_ &&
+        status == NativeChatStatus::AwaitingApproval && !login_url_.empty() && client_.login_pending();
+}
+void NativeChatConnection::reopen_login() noexcept
+{
+    if (!dialog_ || !IsWindowVisible(dialog_) || !can_reopen_login(local_status())) {
+        notice(L"다시 열 수 있는 현재 로그인 요청이 없습니다. 종료·만료된 요청은 로그인 / 연결에서 새로 시작하세요.");
+        show_display_status(); return;
+    }
+    DWORD affinity = 0;
+    if (!GetWindowDisplayAffinity(dialog_, &affinity) || affinity != WDA_EXCLUDEFROMCAPTURE) {
+        notice(L"연결창 보호를 확인하지 못해 승인 페이지를 열지 않았습니다.");
+        ShowWindow(dialog_, SW_HIDE); return;
+    }
+    {
+        opening_login_ = true;
+        struct Reset { bool &flag; ~Reset() { flag = false; } } reset{opening_login_};
+        std::wstring url;
+        try {
+            // Exact non-secret URL from this running request, never editable
+            // controls, saved accounts, a fresh challenge or a native token.
+            // Hold a local copy across a shell call that can dispatch messages.
+            url = login_url_;
+            const bool opened = browser_(dialog_, url.c_str());
+            if (active_ && awaiting_login_ && login_url_ == url && client_.login_pending())
+                notice(opened
+                    ? L"같은 승인 페이지 열기를 요청했습니다. 브라우저에서 채널·확인 번호와 승인 수집 상태를 확인하세요. 새 요청은 만들지 않았습니다."
+                    : L"브라우저를 열지 못했습니다. 현재 요청은 그대로 대기합니다. 다시 열기를 누르거나 연결 중지 후 새로 로그인하세요.");
+        } catch (...) {
+            if (active_ && awaiting_login_ && login_url_ == url && client_.login_pending())
+                notice(L"승인 페이지를 열지 못했습니다. 현재 요청의 만료 시간과 연결은 변경하지 않았습니다.");
+        }
+    }
+    show_display_status();
+}
 void NativeChatConnection::forget() noexcept
 {
     auto_connect_pending_ = false;
@@ -400,7 +458,7 @@ void NativeChatConnection::forget() noexcept
 }
 void NativeChatConnection::clear_display(bool preserve_host) noexcept
 {
-    pending_.clear(); connection_state_.reset(); first_text_rendered_ = false;
+    login_url_.clear(); pending_.clear(); connection_state_.reset(); first_text_rendered_ = false;
     if (active_) {
         active_ = false; awaiting_login_ = false; ready_ = false; displayed_subscribed_ = false; awaiting_frame_ = 0U; surface_.close();
         if (!preserve_host) {
@@ -451,8 +509,18 @@ void NativeChatConnection::tick() noexcept
             std::wstring code = suffix;
             for (auto &c : code) if (c >= L'a' && c <= L'f') c = static_cast<wchar_t>(c - (L'a' - L'A'));
             const std::wstring message = L"브라우저에서 승인하세요. 확인 번호: " + code;
+            login_url_ = login_url;
             notice(message.c_str());
-            if (!browser_(dialog_, login_url.c_str())) { end(L"브라우저를 열지 못했습니다. 다시 로그인하세요."); return; }
+            // Initial launch stays one-shot. Reopening is a separate explicit
+            // action, and a nested command cannot recursively open browsers.
+            if (client_.login_pending()) {
+                opening_login_ = true;
+                struct Reset { bool &flag; ~Reset() { flag = false; } } reset{opening_login_};
+                const bool opened = browser_(dialog_, login_url.c_str());
+                if (!active_ || !awaiting_login_ || login_url_ != login_url) return;
+                if (!opened && client_.login_pending()) { end(L"브라우저를 열지 못했습니다. 다시 로그인하세요."); return; }
+            }
+            show_display_status();
         }
         DisplayUpdate update;
         if (client_.take(update)) {
@@ -471,7 +539,9 @@ void NativeChatConnection::tick() noexcept
                 return;
             }
             if (update.status == DisplayStatus::Ended || update.status == DisplayStatus::Failed) {
-                end(L"로그인 또는 연결이 종료됐습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요. 승인 없이 로그인에 실패했다면 다시 로그인하세요."); return;
+                end(awaiting_login_
+                    ? L"로그인 요청이 종료됐습니다. 이 요청의 승인 페이지는 다시 열 수 없습니다. 로그인 / 연결을 눌러 새 요청을 시작하세요."
+                    : L"로그인 또는 연결이 종료됐습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요. 승인 없이 로그인에 실패했다면 다시 로그인하세요."); return;
             }
             if (update.status == DisplayStatus::Reconnecting) {
                 if (!reconnecting_ && !open_surface()) {
@@ -485,7 +555,7 @@ void NativeChatConnection::tick() noexcept
                 // This restores chat authority, not first-text or video proof.
                 approval_denied_ = false;
                 if (awaiting_login_) {
-                    awaiting_login_ = false;
+                    awaiting_login_ = false; login_url_.clear();
                     if (!open_surface()) {
                         end(L"승인 후 채팅 화면을 열지 못했습니다. 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요."); return;
                     }
@@ -541,7 +611,7 @@ void NativeChatConnection::tick() noexcept
 }
 void NativeChatConnection::close() noexcept
 {
-    closed_ = true; service_origin_.clear();
+    closed_ = true; login_url_.clear(); service_origin_.clear();
     if (host_) { RemoveWindowSubclass(host_, host_procedure, kConnectHotkey); host_ = nullptr; }
     auto_connect_pending_ = false; client_.stop();
     connection_state_.reset();

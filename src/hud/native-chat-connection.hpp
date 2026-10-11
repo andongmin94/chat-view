@@ -42,6 +42,8 @@ private:
     void forget() noexcept;
     bool can_open_management(NativeChatStatus status) const noexcept;
     void open_management() noexcept;
+    bool can_reopen_login(NativeChatStatus status) const noexcept;
+    void reopen_login() noexcept;
     void clear_display(bool preserve_host = false) noexcept;
     void end(const wchar_t *notice, bool preserve_host = false) noexcept;
     void notice(const wchar_t *text) noexcept;
@@ -60,6 +62,7 @@ private:
     UINT query_message_ = 0U;
     bool opening_dialog_ = false;
     bool opening_management_ = false;
+    bool opening_login_ = false;
     bool closed_ = false;
     bool hotkey_ = false;
     bool active_ = false;
@@ -78,6 +81,7 @@ private:
     ULONGLONG render_deadline_ = 0;
     ULONGLONG loading_deadline_ = 0;
     std::wstring pending_;
+    std::wstring login_url_; // Current request only; no verifier or approval token.
     std::wstring service_origin_; // Validated current service only; not an auth capability.
 };
 }

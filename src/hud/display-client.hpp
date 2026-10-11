@@ -39,6 +39,9 @@ public:
     // worker, whether persisted or not. True means requested, not confirmed.
     // The finished mailbox must report SignedOut before the UI claims success.
     [[nodiscard]] bool sign_out() noexcept;
+    // Request lifetime only, even after take_login_url(). Never a browser
+    // capability. False immediately on stop, collection, expiry or failure.
+    [[nodiscard]] bool login_pending() const noexcept;
     [[nodiscard]] bool take_login_url(std::wstring &url) noexcept;
     [[nodiscard]] bool take(DisplayUpdate &update) noexcept;
     [[nodiscard]] bool running() const noexcept;

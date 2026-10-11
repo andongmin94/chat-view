@@ -6,7 +6,10 @@
 #include "common/win32-handle.hpp"
 #include <Windows.h>
 #include <wrl/event.h>
+#include <algorithm>
+#include <cstddef>
 #include <functional>
+#include <utility>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -14,6 +17,8 @@
 
 namespace chatview {
 struct NativeChatConnectionTestAccess {
+    static DisplayClient &client(NativeChatConnection &c) { return c.client_; }
+    static const std::wstring &login_url(NativeChatConnection &c) { return c.login_url_; }
     static HWND dialog(NativeChatConnection &c) { return c.dialog_; }
     static HWND host(NativeChatConnection &c) { return c.host_; }
     static NativeChatSurface &surface(NativeChatConnection &c) { return c.surface_; }
@@ -95,7 +100,12 @@ void validate_inputs(const std::wstring &origin, const std::wstring &ticket)
     expect(!client.start(origin, ticket), "plain loopback requires explicit opt-in");
     expect(!client.start(origin, L"not-a-ticket", true), "bad ticket rejected before I/O");
 }
-void gateway_ui(const std::wstring &origin)
+struct BrowserProbe {
+    std::wstring origin, last_url;
+    unsigned calls = 0U;
+    bool fail_next = false, reenter_next = false;
+} browser_probe;
+void gateway_ui(const std::wstring &origin, const std::string &mode)
 {
     wchar_t temporary[MAX_PATH]{}; expect(GetTempPathW(MAX_PATH, temporary) != 0, "temporary directory");
     const std::wstring profile = std::wstring(temporary) + L"ChatView-Delivery-" + std::to_wstring(GetCurrentProcessId());
@@ -104,11 +114,23 @@ void gateway_ui(const std::wstring &origin)
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     chatview::HudWindow hud;
     expect(hud.create(GetModuleHandleW(nullptr), ready.get()), "create production HUD");
-    chatview::NativeChatConnection connection(hud, chatview::DisplayRole::Streaming, [](HWND, const wchar_t *url) {
-        const std::wstring value(url);
-        expect(value.starts_with(L"http://127.0.0.1:") && value.find(L"/login/") != std::wstring::npos,
-               "browser launch uses only the validated service login URL");
-        std::cout << "browser-opened\n" << std::flush; return true;
+    const bool gaming = mode == "gateway-gaming";
+    const auto role = gaming ? chatview::DisplayRole::Gaming : chatview::DisplayRole::Streaming;
+    browser_probe.origin = origin;
+    chatview::NativeChatConnection connection(hud, role, [](HWND window, const wchar_t *url) {
+        const std::wstring value(url), prefix = browser_probe.origin + L"/login/";
+        expect(value.starts_with(prefix) && value.size() == prefix.size() + 32U &&
+            std::all_of(value.begin() + static_cast<std::ptrdiff_t>(prefix.size()), value.end(), [](wchar_t c) {
+                return (c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f');
+            }), "browser receives only the original origin and canonical non-secret request path");
+        browser_probe.last_url = value; ++browser_probe.calls;
+        if (std::exchange(browser_probe.reenter_next, false)) {
+            const auto calls = browser_probe.calls;
+            SendMessageW(window, WM_COMMAND, MAKEWPARAM(117, BN_CLICKED), 0);
+            expect(browser_probe.calls == calls, "shell reentrancy cannot open another browser");
+        }
+        std::cout << "browser-opened\n" << std::flush;
+        return !std::exchange(browser_probe.fail_next, false);
     });
     hud.show_ready();
     await([&] { return WaitForSingleObject(ready.get(), 0) == WAIT_OBJECT_0; }, "HUD startup", &connection);
@@ -145,19 +167,94 @@ void gateway_ui(const std::wstring &origin)
     expect(SetWindowDisplayAffinity(dialog, WDA_EXCLUDEFROMCAPTURE) != FALSE, "restore test panel protection");
     expect(open() == 1 && IsWindowVisible(dialog), "open succeeds only after protection is restored");
     expect_video_scope(dialog);
-    expect(control_text(dialog, 109).find(L"송출 PC") != std::wstring::npos, "panel identifies OBS runtime role before consent");
+    expect(control_text(dialog, 109).find(gaming ? L"게임 PC" : L"송출 PC") != std::wstring::npos, "panel identifies launch role before consent");
     expect(control_text(dialog, 110).find(L"확인되지 않음") != std::wstring::npos, "no session claim before authorization");
     SetDlgItemTextW(dialog, 101, origin.c_str());
     SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
     SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(104, BN_CLICKED), 0);
     expect(GetDlgItem(dialog, 102) == nullptr && GetDlgItem(dialog, 107) != nullptr, "login panel has no manual key input");
+    auto &client = chatview::NativeChatConnectionTestAccess::client(connection);
     auto &surface = chatview::NativeChatConnectionTestAccess::surface(connection);
+    const auto reopen = [&] { SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(117, BN_CLICKED), 0); };
+    await([&] { return browser_probe.calls == 1U && IsWindowEnabled(GetDlgItem(dialog, 117)); },
+        "initial URL is delivered once and the same request can be reopened", &connection);
+    const auto first_url = browser_probe.last_url;
+    const auto first_notice = control_text(dialog, 106);
+    auto code = first_url.substr(first_url.size() - 6U);
+    for (auto &c : code) if (c >= L'a' && c <= L'f') c = static_cast<wchar_t>(c - (L'a' - L'A'));
+    expect(control_text(dialog, 118) == code, "pending confirmation is persistently visible beside reopen");
+    expect(client.login_pending() && !client.can_resume_current() &&
+        query() == chatview::NativeChatStatus::AwaitingApproval && !surface.ready(),
+        "pending login is not a display approval or chat document");
+    expect(control_text(dialog, 117) == L"브라우저 승인 페이지 다시 열기", "explicit reopen action is labelled");
+    RECT button_bounds{}, display_bounds{}, dialog_bounds{};
+    expect(GetWindowRect(GetDlgItem(dialog, 117), &button_bounds) &&
+        GetWindowRect(GetDlgItem(dialog, 113), &display_bounds) && GetWindowRect(dialog, &dialog_bounds),
+        "actual native reopen and status bounds");
+    expect(button_bounds.bottom <= display_bounds.top && button_bounds.right <= dialog_bounds.right,
+        "reopen row does not overlap status or overflow the panel");
+    expect((GetDlgItem(dialog, 116) != nullptr) == gaming, "reopen does not introduce gaming video controls in OBS role");
+    std::wstring unused;
+    expect(!client.take_login_url(unused), "tick cannot automatically reopen an already delivered URL");
+
+    ShowWindow(dialog, SW_HIDE); reopen();
+    expect(browser_probe.calls == 1U, "hidden panel rejects a queued reopen command");
+    expect(open() == 1 && browser_probe.calls == 1U, "showing the panel is not browser navigation");
+    expect(SetWindowDisplayAffinity(dialog, WDA_NONE) != FALSE, "inject lost protection during pending login");
+    reopen(); expect(browser_probe.calls == 1U && !IsWindowVisible(dialog), "unprotected panel cannot reopen a browser");
+    expect(SetWindowDisplayAffinity(dialog, WDA_EXCLUDEFROMCAPTURE) != FALSE && open() == 1,
+        "restore panel protection without changing the pending request");
+    SetDlgItemTextW(dialog, 101, L"https://other.invalid/edited?credential=not-a-real-key");
+    SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_UNCHECKED, 0);
+    SendDlgItemMessageW(dialog, 107, BM_SETCHECK, BST_CHECKED, 0);
+    browser_probe.reenter_next = true; reopen();
+    expect(browser_probe.calls == 2U && browser_probe.last_url == first_url, "reopen ignores edited origin and login choices");
+    browser_probe.fail_next = true; reopen();
+    expect(browser_probe.calls == 3U && client.login_pending() &&
+        chatview::NativeChatConnectionTestAccess::active(connection), "reopen launch failure preserves the current request");
+    expect(control_text(dialog, 106).find(L"그대로 대기") != std::wstring::npos, "reopen failure explains preserved request");
+    reopen(); expect(browser_probe.calls == 4U && browser_probe.last_url == first_url,
+        "explicit retry uses exactly the same request without resetting its deadline");
+    SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(104, BN_CLICKED), 0);
+    expect(browser_probe.calls == 4U && client.login_pending(), "connect while pending never starts a duplicate login");
+    expect(first_notice.find(L"확인 번호") != std::wstring::npos && control_text(dialog, 118) == code,
+        "original confirmation survives reopen, failure and edited controls");
+
+    if (mode.starts_with("login-")) {
+        if (mode == "login-cancel") {
+            SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(105, BN_CLICKED), 0);
+            expect(!client.login_pending(), "stop invalidates reopening before worker retirement");
+        } else {
+            if (mode == "login-denied") std::cout << "deny-login\n" << std::flush;
+            // No connection.tick(): test the client's request fence even when
+            // its final status has not yet reached the UI. Expiry uses a shorter
+            // fixture response lifetime, never a larger production time budget.
+            await([&] { return !client.login_pending(); }, "denied or expired request loses reopening eligibility", nullptr, 5000U);
+        }
+        reopen(); expect(browser_probe.calls == 4U, "terminal request cannot be reopened before the next UI tick");
+        await([&] { return !client.running() && !chatview::NativeChatConnectionTestAccess::active(connection); },
+            "old login ends without an automatic replacement", &connection, 2000U);
+        expect(!IsWindowEnabled(GetDlgItem(dialog, 117)) &&
+            chatview::NativeChatConnectionTestAccess::login_url(connection).empty() && control_text(dialog, 118).empty() &&
+            !client.can_resume_current(),
+            "ended login keeps neither stale URL nor approval");
+        SetDlgItemTextW(dialog, 101, origin.c_str());
+        SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
+        SendDlgItemMessageW(dialog, 107, BM_SETCHECK, BST_UNCHECKED, 0);
+        SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(104, BN_CLICKED), 0);
+        await([&] { return browser_probe.calls == 5U && client.login_pending(); }, "explicit new login after termination", &connection);
+        expect(browser_probe.last_url != first_url, "new login has a new request, not revived old consent");
+    }
+    const auto calls = browser_probe.calls;
+    std::cout << "approve-login\n" << std::flush;
+    await([&] { return !client.login_pending(); }, "collected approval retires the login URL before DOM readiness", nullptr, 5000U);
+    reopen(); expect(browser_probe.calls == calls, "queued reopen after collection cannot reopen an old consent page");
     await([&] { return surface.rendered_messages() == 1U; }, "WinHTTP gateway frame rendered", &connection);
     await([&] { return query() == chatview::NativeChatStatus::Receiving; },
         "query reports receiving only after native rendering acknowledgement", &connection);
     const auto &state = chatview::NativeChatConnectionTestAccess::connection(connection);
-    expect(state && state->membership.role == chatview::DisplayRole::Streaming &&
-        state->gaming_connections == 0 && state->streaming_connections == 1,
+    expect(state && state->membership.role == role &&
+        state->gaming_connections == (gaming ? 1U : 0U) && state->streaming_connections == (gaming ? 0U : 1U),
         "native controls receive authorized role and same-session display counts");
     expect(control_text(dialog, 110) == chatview::connection_summary(*state), "panel displays actual accepted session metadata");
     expect(control_text(dialog, 110).find(L"영상 제외 미검증") != std::wstring::npos, "role connection is not capture qualification");
@@ -168,6 +265,9 @@ void gateway_ui(const std::wstring &origin)
         document.querySelector('#messages li .content').textContent === '안녕 😀 <img onerror=evil()>' &&
         document.querySelectorAll('#messages img,#messages script').length === 0
     )JS", connection) == L"true", "real DOM Unicode/inert markup");
+    expect(!IsWindowEnabled(GetDlgItem(dialog, 117)) &&
+        chatview::NativeChatConnectionTestAccess::login_url(connection).empty() && control_text(dialog, 118).empty(),
+        "receiving cannot retain a login reopen action or confirmation code");
     const auto approved_membership = state->membership;
     expect(open() == 1 && dialog == chatview::NativeChatConnectionTestAccess::dialog(connection) &&
         chatview::NativeChatConnectionTestAccess::connection(connection)->membership == approved_membership,
@@ -241,9 +341,10 @@ int main(int argc, char **argv)
         expect(origin_line.size() < 2048U && ticket_line.size() == 64U, "bounded fixture input");
         const std::wstring origin(origin_line.begin(), origin_line.end()), ticket(ticket_line.begin(), ticket_line.end());
         validate_inputs(origin, ticket);
-        if (std::string(argv[1]) == "gateway") {
+        const std::string mode = argv[1];
+        if (mode == "gateway" || mode == "gateway-gaming" || mode.starts_with("login-")) {
             expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM startup");
-            try { gateway_ui(origin); } catch (...) { CoUninitialize(); throw; }
+            try { gateway_ui(origin, mode); } catch (...) { CoUninitialize(); throw; }
             CoUninitialize();
         } else transport(origin, ticket, argv[1]);
         std::cout << "Native display scenario passed\n"; return 0;

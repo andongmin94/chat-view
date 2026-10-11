@@ -274,6 +274,7 @@ struct DisplayClient::State {
     std::mutex mutex;
     DisplayUpdate latest{DisplayStatus::Connecting, {}, false};
     std::wstring login_url;
+    ULONGLONG login_expires = 0U; // Original request deadline, including HTTP latency.
     std::wstring origin;
     std::wstring renewal;
     std::optional<DisplayMembership> approved_membership;
@@ -300,13 +301,14 @@ struct DisplayClient::State {
         std::lock_guard lock(mutex);
         // Keep the exact approval even when cancellation races with receipt or
         // persistence. Only this worker uses it; it is never part of a mailbox.
+        login_url.clear(); login_expires = 0U;
         erase(renewal); renewal = value;
     }
     void clear_approval() noexcept { std::lock_guard lock(mutex); erase(renewal); }
     void finish(DisplayStatus status) noexcept
     {
         std::lock_guard lock(mutex);
-        latest = {status, {}, false}; login_url.clear(); pending = true; expires = 0; last_frame = 0;
+        latest = {status, {}, false}; login_url.clear(); login_expires = 0U; pending = true; expires = 0; last_frame = 0;
         erase(output_token); output_expires = 0U;
     }
 };
@@ -359,7 +361,7 @@ bool DisplayClient::resume_current() noexcept
             require(ResetEvent(state->cancel.get()) && ResetEvent(state->logout_cancel.get()) &&
                 ResetEvent(state->output_cancel.get()) && ResetEvent(state->output_changed.get()));
             state->latest = {DisplayStatus::Connecting, {}, false};
-            state->login_url.clear(); state->pending = true;
+            state->login_url.clear(); state->login_expires = 0U; state->pending = true;
             state->expires = 0; state->last_frame = 0;
             erase(state->output_token); state->output_expires = 0; state->output_sample = {};
             state->finished.store(false);
@@ -389,7 +391,7 @@ bool DisplayClient::sign_out() noexcept
                 if (!state_->logout_requested) ResetEvent(state_->logout_cancel.get());
                 state_->logout_requested = true;
                 SetEvent(state_->cancel.get()); SetEvent(state_->output_cancel.get());
-                state_->latest = {DisplayStatus::Ended, {}, false}; state_->login_url.clear();
+                state_->latest = {DisplayStatus::Ended, {}, false}; state_->login_url.clear(); state_->login_expires = 0U;
                 state_->pending = true; state_->expires = 0; state_->last_frame = 0;
                 return true;
             }
@@ -418,8 +420,18 @@ bool DisplayClient::take_login_url(std::wstring &url) noexcept
 {
     if (!state_) return false;
     std::lock_guard lock(state_->mutex);
-    if (state_->login_url.empty() || WaitForSingleObject(state_->cancel.get(), 0) != WAIT_TIMEOUT) return false;
+    if (state_->login_url.empty() || state_->finished.load() || state_->logout_requested ||
+        GetTickCount64() >= state_->login_expires || WaitForSingleObject(state_->cancel.get(), 0) != WAIT_TIMEOUT) return false;
     url = std::move(state_->login_url); state_->login_url.clear(); return true;
+}
+bool DisplayClient::login_pending() const noexcept
+{
+    if (!state_) return false;
+    std::lock_guard lock(state_->mutex);
+    // The UI may already have consumed the URL and may not have processed the
+    // final mailbox yet. Neither case extends this request or its authority.
+    return !state_->finished.load() && !state_->logout_requested &&
+        GetTickCount64() < state_->login_expires && WaitForSingleObject(state_->cancel.get(), 0) == WAIT_TIMEOUT;
 }
 bool DisplayClient::running() const noexcept { return state_ && !state_->finished.load(); }
 bool DisplayClient::take(DisplayUpdate &update) noexcept
@@ -564,6 +576,7 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                 std::lock_guard lock(state->mutex);
                 network(WaitForSingleObject(state->cancel.get(), 0) == WAIT_TIMEOUT);
                 state->login_url = (origin.ends_with(L"/") ? origin.substr(0, origin.size() - 1U) : origin) + path;
+                state->login_expires = deadline;
                 state->latest = {DisplayStatus::AwaitingLogin, {}, false}; state->pending = true;
             }
             while (!approved_lease) {

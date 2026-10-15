@@ -17,7 +17,9 @@
 
 ### 검증 및 남은 범위
 
-- 실제 Windows 빌드·CTest는 **이 코드 커밋에서 실행 후 그 결과를 기록해야 한다**. 서버/Node/Chromium/OBS 별도 workflow의 실행·미실행을 구분한다. 합성 fixture와 단발 routine 통과는 실제 CHZZK 계정·반복성·물리 두 PC에서 HUD가 없는 수신 영상의 증거가 아니다.
+- **코드 커밋 `52ef97826b4399773f6e03a11f1988fbaccb8565`**: CHZZK contract **#76/run `38735851173`: completed/success, 전체 5개 job 성공**. Ubuntu/Windows × Node22·24의 서비스 테스트·엄격 타입·audit/lock 통과, Ubuntu24 **326/326·실패/skip0**, Chromium 관리 브라우저 **18/18** 통과. 이번 SHA에는 별도의 공식 OBS 광고 합성 workflow가 실행되지 않았다.
+- **Windows development #407/run `38735851151`, job `116424885748`: MSVC 빌드 성공, routine CTest **43/44·211.40초 전체 실패**. 새 `early-retry`를 포함한 실제 WinHTTP/HTTP/SQLite/ws·WebView2 `native-chat-switch` **26.65초 통과**, `native-display-client` 47.55초, `native-logout` 28.84초, `companion-chat-video` 5.46초 통과. 기존 공개 광고 `public-ad-browser`는 **13.07초 실패**, WebView2 탐색 이벤트 `started=1, completed=0, id=2`로 #406과 같은 표면 증상이 반복됐다. 디스플레이 재시도 조건·첫 텍스트 ACK/렌더 제한과 모든 기존 CTest 한도는 유지했다.
+- 이번 변경으로 서버 승인·첫 DOM/첫 글자 간헐 실패 D1 또는 WebView2 광고 탐색 D7의 **근본 원인이 해결됐다고 주장하지 않는다**. routine 성공이나 배포 qualification/장기 반복·실계정·물리 수신 HUD 제외·유료 광고 노출을 확보하지 못했다. 
 - D1의 #390/#392/#400 최초 DOM/첫 글자 간헐 실패 원인은 **미확정**이며 이번 명시적 복귀는 오류 발생 가능성 자체를 없앤 것으로 주장하지 않는다. D7 #406 WebView2 공개 광고 탐색 미완료·OBS #23 첫 픽셀 실패, D2 자원, D4 OBS frontend, D6 WGC 장시간/물리 수신 등은 별도 미해결이다.
 
 ## G1. 한 화면의 작업과 개인 채팅
@@ -74,7 +76,7 @@ HUD가 보이면서 수신 영상에는 없어야 한다. HUD 숨김은 보호�
 | D2 | #292 후반 핸들+104>64; #294 초기+284>256, 후반+8. R-02 한도 유지. [자원 조사](resource-growth-investigation.md). |
 | D4 | 동기 OBS UI-task/join·borrowed item `510f8e1`, 좌표#354, core queue `66fd5a6`/#355 보완/통과. 실제 frontend 종료/장면 전환·qualification 남음. Control Center에 Q4/Q5 시험 UI 없음. |
 | D6 | #339 첫 WGC픽셀10초 실패/#340 미재현; #353 resize/여백 인과 미확정. #359 burst9는 `4cbcc5e`/#361 같은12단계/강화 픽셀 통과. #365 sequence6 received601×201/surface600×500/pool601×500 Waiting·검정. #366 same-pool 재시작0x8000FFFF. `4b711c2`/#367 새 pool/session12단계·lifecycle 통과이나 첫표시/장시간/물리 수신 남음. |
-| D7 | #371/#406 WebView2 NavigationCompleted 미도착(started1/completed0); OBS CEF#10 배너 CSS/픽셀 실패(inside4082/painted102). `1cda0c0` CEF#11 PNG13/13와 WebView2#374 routine40/40은 원인·반복 안정성·실방송·유료 노출 종결이 아니다. OBS #18/run38069340507/job114263381493 첫 CreateScene8초 무응답은 배너 생성/픽셀 검사 전에 실패해 완료된 픽셀 검사는0개이며 원인 미확정이다. 기존 CEF 실패와 같은 원인으로 단정하지 않는다. |
+| D7 | #371/#406/#407 WebView2 NavigationCompleted 미도착(started1/completed0); OBS CEF#10 배너 CSS/픽셀 실패(inside4082/painted102). `1cda0c0` CEF#11 PNG13/13와 WebView2#374 routine40/40은 원인·반복 안정성·실방송·유료 노출 종결이 아니다. OBS #18/run38069340507/job114263381493 첫 CreateScene8초 무응답은 배너 생성/픽셀 검사 전에 실패해 완료된 픽셀 검사는0개이며 원인 미확정이다. 기존 CEF 실패와 같은 원인으로 단정하지 않는다. |
 
 D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, #367 빌드 성공39/40·165.17초. **#364/run `37275017123`/job `111650053171`/code `af41b5c28e3ba96b66e8455fa2a12b6b777e35bb`는 보존 기록상 조회 불가·최종 미확정**이며 이유는 추정하지 않는다.
 

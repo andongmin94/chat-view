@@ -18,7 +18,9 @@
 
 ### 검증과 범위
 
-- **원격 Windows 빌드·CTest 및 관련 테스트 결과는 아직 미확정**. 합성 제공자, 테스트 수신 동의 및 단일 PC 창 좌표는 물리 투컴 수신 영상 인증이 아니며 실제 CHZZK·유료 광고·HP/정산 검증과도 구분한다.
+- **기능 커밋 `c29044cbae71306716502a90fadc14a93c507a2c`**의 Windows development **#408/run `38761837035`/job `116514894783`: MSVC 빌드 성공, CTest **40/45 통과·255.48초, 전체 실패**. 새 네이티브 **`chat-view-companion-chat-video-redraw` 14.36초 통과**: 실제 WGC 영상 재생 상태/명시적 검정 중지 상태에서 각각 자체 채팅 표시를 재시도하고 기존 게임 역할·원 승인·별도 영상 대상/덮개/시험 패턴 확인을 보존했다. 기존 `companion-chat-video` 5.61초, `companion-chat-revocation` 7.05초, `companion-chat-reapproval` 11.64초도 통과. Node/Chromium 서비스나 공식 OBS 광고 합성은 이번 SHA에서 별도 실행되지 않았다.
+- 같은 Windows #408의 다른 5개는 실패: `native-logout` 첫 승인 채팅에서 `surface_ready=0, frames=0, membership=1` (39.69초), `native-chat-switch` HUD startup(16.50초), `native-output` HUD ready(19.53초), `public-ad-browser` fixture 응답 대기 중 AbortError timeout(28.11초), `obs-capture-scene` 기존 10초 기한 초과(13.54초). 어느 것도 이번 새 `redraw` 검사 실패는 아니지만, **전체 CI 성공이라고 주장하지 않는다**. 환경/원인 동일성을 추정하지 않으며 기존 한도를 조정하거나 변경 없이 재실행하지 않는다.
+- 합성 제공자, 시험 수신 동의 및 단일 PC 창 좌표는 실계정 치지직·물리 투컴 수신 영상 인증이 아니며 실제 유료 광고 노출·HP/정산·배포 qualification과도 구분한다.
 - D1 최초 DOM/WebView2 첫 글자 간헐 실패, D2 자원, D4 OBS 종료, D6 실제 WGC/장시간 캡처, D7 WebView2/OBS CEF 간헐 초기화는 원인/실기기 검증 전 미해결로 유지한다. 신규 진단·한도 증가·변경 없는 재실행으로 결과를 미화하지 않는다.
 
 ## G1. 한 화면의 작업과 개인 채팅
@@ -71,11 +73,11 @@ HUD가 보이면서 수신 영상에는 없어야 한다. HUD 숨김은 보호�
 
 | ID | 근거와 범위 |
 | --- | --- |
-| D1 | `82f36a6`/#294 반복3 첫 gateway frame 미확인; #366 첫 chat-switch render 실패; #390 native-logout unrelated 첫표시15초 실패(로그아웃·다른 계정 저장 전, 전체41/42·165.70초); #392 chat-switch revoked 최초 빈 표시15초 실패(철회 전, 전체43/44·189.48초). 실패 단계/타이머 인과는 미확정. #400 companion-chat-video 첫 빈 DOM 표시15초 실패를 추가한다. #393 성공만으로 종료하지 않는다. G4/R-01·실계정 남음. |
+| D1 | #408 native-logout 첫 수신 문서 surface_ready0/frames0 및 native-chat-switch·native-output HUD startup 지연; `82f36a6`/#294 반복3 첫 gateway frame 미확인; #366 첫 chat-switch render 실패; #390 native-logout unrelated 첫표시15초 실패(로그아웃·다른 계정 저장 전, 전체41/42·165.70초); #392 chat-switch revoked 최초 빈 표시15초 실패(철회 전, 전체43/44·189.48초). 실패 단계/타이머 인과는 미확정. #400 companion-chat-video 첫 빈 DOM 표시15초 실패를 추가한다. #393 성공만으로 종료하지 않는다. G4/R-01·실계정 남음. |
 | D2 | #292 후반 핸들+104>64; #294 초기+284>256, 후반+8. R-02 한도 유지. [자원 조사](resource-growth-investigation.md). |
-| D4 | 동기 OBS UI-task/join·borrowed item `510f8e1`, 좌표#354, core queue `66fd5a6`/#355 보완/통과. 실제 frontend 종료/장면 전환·qualification 남음. Control Center에 Q4/Q5 시험 UI 없음. |
+| D4 | #408 obs-capture-scene 기존 10초 제한 초과(원인 미확정); 동기 OBS UI-task/join·borrowed item `510f8e1`, 좌표#354, core queue `66fd5a6`/#355 보완/통과. 실제 frontend 종료/장면 전환·qualification 남음. Control Center에 Q4/Q5 시험 UI 없음. |
 | D6 | #339 첫 WGC픽셀10초 실패/#340 미재현; #353 resize/여백 인과 미확정. #359 burst9는 `4cbcc5e`/#361 같은12단계/강화 픽셀 통과. #365 sequence6 received601×201/surface600×500/pool601×500 Waiting·검정. #366 same-pool 재시작0x8000FFFF. `4b711c2`/#367 새 pool/session12단계·lifecycle 통과이나 첫표시/장시간/물리 수신 남음. |
-| D7 | #371/#406/#407 WebView2 NavigationCompleted 미도착(started1/completed0); OBS CEF#10 배너 CSS/픽셀 실패(inside4082/painted102). `1cda0c0` CEF#11 PNG13/13와 WebView2#374 routine40/40은 원인·반복 안정성·실방송·유료 노출 종결이 아니다. OBS #18/run38069340507/job114263381493 첫 CreateScene8초 무응답은 배너 생성/픽셀 검사 전에 실패해 완료된 픽셀 검사는0개이며 원인 미확정이다. 기존 CEF 실패와 같은 원인으로 단정하지 않는다. |
+| D7 | #408 public-ad-browser 대기 AbortError(원인 미확정); #371/#406/#407 WebView2 NavigationCompleted 미도착(started1/completed0); OBS CEF#10 배너 CSS/픽셀 실패(inside4082/painted102). `1cda0c0` CEF#11 PNG13/13와 WebView2#374 routine40/40은 원인·반복 안정성·실방송·유료 노출 종결이 아니다. OBS #18/run38069340507/job114263381493 첫 CreateScene8초 무응답은 배너 생성/픽셀 검사 전에 실패해 완료된 픽셀 검사는0개이며 원인 미확정이다. 기존 CEF 실패와 같은 원인으로 단정하지 않는다. |
 
 D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, #367 빌드 성공39/40·165.17초. **#364/run `37275017123`/job `111650053171`/code `af41b5c28e3ba96b66e8455fa2a12b6b777e35bb`는 보존 기록상 조회 불가·최종 미확정**이며 이유는 추정하지 않는다.
 

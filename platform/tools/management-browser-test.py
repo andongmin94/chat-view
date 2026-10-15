@@ -329,10 +329,12 @@ def run() -> None:
                     flow = Flow(browser, f, 390)
                     try:
                         old = f.command("stale-start")
+                        if server_cancelled:
+                            # Stop reached the server first; only its ACK was
+                            # lost before the user explicitly started a new login.
+                            assert f.command("stale-cancel-response-lost")["ok"]
                         current = f.command("stale-new-start")
                         assert old["path"] != current["path"]
-                        if server_cancelled:
-                            assert f.command("stale-cancel-response-lost")["ok"]
                         flow.page.goto(f.origin + old["path"])
                         if server_cancelled:
                             expect(flow.page.locator('[data-login-request="ended"]')).to_have_count(1)

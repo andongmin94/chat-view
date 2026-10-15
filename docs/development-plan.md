@@ -23,7 +23,9 @@
 - 브라우저 409 표현 개선 `97821dfce4f73dfb3e3c2ac4c44946e8cc269a50`: **410은 취소·수집 완료·만료**, **409는 다른 브라우저 수집 대기와 거부의 구분 불가**로 안내한다. 관련 Chromium은 #74에서 성공했으나 플랫폼 전체는 위 단위 검사에서 실패했다.
 - 원래 네이티브 변경의 **Windows #402/run `38729137146`, job `116402349135`: MSVC 빌드 성공, CTest 42/44·218.45초로 실패.** Companion launch는 영상 미검증 경고가 실제 panel client 아래로 벗어났다. 원인은 `CreateWindowExW`에 새 높이를 쓰고 후속 DPI-scaled `SetWindowPos`에서 옛 높이 722/666을 다시 적용한 것. `native-display-client`는 '취소 미확인'으로 바뀐 UX 문구와 이전 단위 검사 문구의 불일치이며 게임/송출 기본 시나리오와 취소 확인 시나리오는 통과했다. **하나의 dialog_height를 생성과 DPI 적용에 재사용**하고 두 역할의 하단 미검증 경고가 client 안에 있는지 실 HWND로 검사한다. 실패를 CI timeout 조정으로 숨기지 않는다.
 - OBS public ad flow **#22/run `38729137100`: success**였고 #23/run `38730298932`은 초기 `placed-960` PNG 픽셀 검사에 실패했다. 이번 변경은 공개 배너 렌더러를 고치지 않았으므로 기존 D7/OBS #18과 구분해 원인 미확정으로 유지한다. 성공한 이전 실행만으로 #23을 종결하지 않는다.
-- 위 수정 후 새 원격 Windows/플랫폼/Chromium/CEF 검사 결과는 **아직 미확정**. 직전 #401의44/44 통과를 이번 변경 성공으로 계산하지 않는다. 로컬 합성 provider는 실계정/물리 투컴·유료 배포 검증이 아니다.
+- **수정 커밋 `c59bd3a7253a0349c9fe4471bcf34fd7218cfcdd` 원격 결과:** CHZZK contract **#75/run `38732738234` completed/success**, Ubuntu/Windows × Node22/24 네 환경의 Node·엄격 타입·audit/lock 검사 성공. Ubuntu24 **326/326 통과**, Chromium **18/18 통과**. 기존 조건 완화·검사 비활성화는 없다.
+- **Windows development #406/run `38732738266`, job `116414336265`: MSVC 빌드 성공, CTest **43/44 실패·217.13초**. 이번 수정 대상인 `companion-launch` **1.32초 통과**, `native-display-client` **43.13초 통과**; 영상 미검증 경고가 실제 양 역할 panel 경계 안에 있음을 검사했고 취소 미확인 후 현재 번호/옛 번호 분리도 통과했다. **기존 `public-ad-browser`는 15.98초에 `NavigationCompleted` 미도착(started1/completed0/id2)으로 실패**했다. 이는 #371의 D7 유형이나 원인 동일성은 입증되지 않았으며, 관련 CEF/실방송 지원 완료로 처리하지 않는다.
+- OBS public ad flow **#23/run `38730298932`**은 별도로 첫 `placed-960` 픽셀 검사에 실패했다. 선행 #22의 성공이나 이번 새 브라우저/채팅 테스트 성공만으로 D7을 닫지 않는다. 이번 코드에 대한 routine 전체 성공/배포 qualification은 **미확보**이며, 실계정/물리 투컴/실제 시청 노출/유료 정산과 구분한다.
 - Chromium 및 네이티브 fixture의 CHZZK 제공자·계정은 합성이며 브라우저 자체 동의와 로컬 WebView2 ACK가 실제 치지직 승인, 물리 수신 영상 HUD 제외 또는 수익 지급을 인증하지 않는다.
 
 ## G1. 한 화면의 작업과 개인 채팅
@@ -80,7 +82,7 @@ HUD가 보이면서 수신 영상에는 없어야 한다. HUD 숨김은 보호�
 | D2 | #292 후반 핸들+104>64; #294 초기+284>256, 후반+8. R-02 한도 유지. [자원 조사](resource-growth-investigation.md). |
 | D4 | 동기 OBS UI-task/join·borrowed item `510f8e1`, 좌표#354, core queue `66fd5a6`/#355 보완/통과. 실제 frontend 종료/장면 전환·qualification 남음. Control Center에 Q4/Q5 시험 UI 없음. |
 | D6 | #339 첫 WGC픽셀10초 실패/#340 미재현; #353 resize/여백 인과 미확정. #359 burst9는 `4cbcc5e`/#361 같은12단계/강화 픽셀 통과. #365 sequence6 received601×201/surface600×500/pool601×500 Waiting·검정. #366 same-pool 재시작0x8000FFFF. `4b711c2`/#367 새 pool/session12단계·lifecycle 통과이나 첫표시/장시간/물리 수신 남음. |
-| D7 | #371 WebView2 NavigationCompleted 미도착(started1/completed0); OBS CEF#10 배너 CSS/픽셀 실패(inside4082/painted102). `1cda0c0` CEF#11 PNG13/13와 WebView2#374 routine40/40은 원인·반복 안정성·실방송·유료 노출 종결이 아니다. OBS #18/run38069340507/job114263381493 첫 CreateScene8초 무응답은 배너 생성/픽셀 검사 전에 실패해 완료된 픽셀 검사는0개이며 원인 미확정이다. 기존 CEF 실패와 같은 원인으로 단정하지 않는다. |
+| D7 | #371/#406 WebView2 NavigationCompleted 미도착(started1/completed0); OBS CEF#10 배너 CSS/픽셀 실패(inside4082/painted102). `1cda0c0` CEF#11 PNG13/13와 WebView2#374 routine40/40은 원인·반복 안정성·실방송·유료 노출 종결이 아니다. OBS #18/run38069340507/job114263381493 첫 CreateScene8초 무응답은 배너 생성/픽셀 검사 전에 실패해 완료된 픽셀 검사는0개이며 원인 미확정이다. 기존 CEF 실패와 같은 원인으로 단정하지 않는다. |
 
 D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, #367 빌드 성공39/40·165.17초. **#364/run `37275017123`/job `111650053171`/code `af41b5c28e3ba96b66e8455fa2a12b6b777e35bb`는 보존 기록상 조회 불가·최종 미확정**이며 이유는 추정하지 않는다.
 

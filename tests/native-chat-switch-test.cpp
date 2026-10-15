@@ -28,6 +28,7 @@ struct NativeChatConnectionTestAccess {
     static NativeChatSurface &surface(NativeChatConnection &c) { return c.surface_; }
     static auto membership(NativeChatConnection &c) { return c.connection_state_; }
     static bool first_text_rendered(NativeChatConnection &c) { return c.first_text_rendered_; }
+    static bool retry_pending(NativeChatConnection &c) { return c.retry_first_display_pending_; }
     static void cached_status(NativeChatConnection &c, NativeChatStatus status) { c.displayed_status_ = status; }
 };
 struct NativeChatSurfaceTestAccess {
@@ -79,8 +80,14 @@ void expect_status(chatview::NativeChatConnection &chat, Status expected)
         const wchar_t *label = expected == Status::Receiving && Access::first_text_rendered(chat)
             ? L"자체 채팅 첫 텍스트 렌더링 확인 · 로컬 HUD 응답"
             : chatview::native_chat_status_text_ko(expected);
+        const bool retry_ready = (expected == Status::Connecting || expected == Status::Receiving) &&
+            !Access::first_text_rendered(chat) && Access::active(chat) &&
+            Access::membership(chat).has_value() && Access::client(chat).running();
         return status == expected && text(Access::dialog(chat), 113) == label &&
-            (IsWindowEnabled(GetDlgItem(Access::dialog(chat), 112)) != FALSE) == chatview::can_request_native_chat_return(expected) &&
+            (IsWindowEnabled(GetDlgItem(Access::dialog(chat), 112)) != FALSE) ==
+                (chatview::can_request_native_chat_return(expected) || retry_ready) &&
+            text(Access::dialog(chat), 112) == (retry_ready
+                ? L"현재 승인으로 채팅 표시 다시 시도" : L"현재 승인으로 자체 채팅 복귀") &&
             (!center || center->matches(expected));
     }, "Control Center, native status and return button agree");
     if (center) expect(center->video_warning(), "Control Center keeps independent video warning");
@@ -281,6 +288,45 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     }, "empty subscribed chat renders before first text");
     expect(!Access::first_text_rendered(chat), "empty subscription does not acknowledge the first text");
     expect_status(chat, Status::Receiving);
+    if (mode == "early-retry") {
+        const auto prior = Access::membership(chat);
+        expect(prior.has_value(), "early redraw requires an authenticated same-role membership");
+        expect(chatview::save_connection({origin, other, true}), "keep an unrelated remembered account");
+        // A hidden command cannot start a retry, even though the server
+        // approval and the original subscribed empty DOM remain valid.
+        ShowWindow(dialog, SW_HIDE); command(dialog, 112);
+        expect(!Access::retry_pending(chat) && Access::active(chat) && Access::membership(chat) == prior,
+            "hidden connection panel cannot trigger a private display redraw");
+        expect(chat.open_dialog() && IsWindowVisible(dialog), "reopen exactly the protected panel");
+        expect(SetWindowDisplayAffinity(dialog, WDA_NONE), "inject missing panel protection");
+        command(dialog, 112);
+        expect(!Access::retry_pending(chat) && Access::active(chat) && !IsWindowVisible(dialog),
+            "unprotected panel refuses explicit redraw instead of changing the approval");
+        expect(SetWindowDisplayAffinity(dialog, WDA_EXCLUDEFROMCAPTURE) && chat.open_dialog(),
+            "restore protection before the explicit user action");
+        expect_status(chat, Status::Receiving);
+        command(dialog, 112);
+        expect(Access::retry_pending(chat) && !Access::active(chat) &&
+            !Access::membership(chat) && !Access::surface(chat).ready(),
+            "one explicit retry clears private text and socket counts without a new login");
+        command(dialog, 112); command(dialog, 104);
+        expect(Access::retry_pending(chat) && !Access::active(chat),
+            "duplicate retry and Connect cannot replace a retiring same-approval worker");
+        expect(chat.wait_timeout() == 100U, "queued single retry keeps the owner loop awake");
+        await(chat, [&] {
+            return !Access::retry_pending(chat) && Access::client(chat).running() &&
+                Access::membership(chat).has_value() && Access::surface(chat).rendered_frames() >= 1U &&
+                Access::surface(chat).rendered_messages() == 0U;
+        }, "one user-requested return renders a new subscribed empty document");
+        expect(Access::membership(chat)->membership == prior->membership &&
+            !Access::first_text_rendered(chat),
+            "same role, session and owner return before first text without inheriting old text");
+        expect_status(chat, Status::Receiving);
+        auto saved = chatview::load_connection();
+        expect(saved && saved->credential == other,
+            "single click never substitutes or deletes an unrelated stored approval");
+        if (saved) SecureZeroMemory(saved->credential.data(), saved->credential.size() * sizeof(wchar_t));
+    }
     if (mode == "memory") {
         // Real owned WebView2 document rejects one deliberately invalid
         // synthetic frame BEFORE the first provider text exists. No extra
@@ -411,7 +457,8 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
         expect(return_ack == "continue", "creator account observes native return without new approval");
         auto saved = chatview::load_connection();
         if (mode == "remembered") expect(saved.has_value(), "remembered connection preserved");
-        else if (mode == "unrelated") expect(saved && saved->credential == other, "return preserves unrelated stored account");
+        else if (mode == "unrelated" || mode == "early-retry")
+            expect(saved && saved->credential == other, "return preserves unrelated stored account");
         else expect(!saved, "return never persists memory-only approval despite edited checkbox");
         if (saved) SecureZeroMemory(saved->credential.data(), saved->credential.size() * sizeof(wchar_t));
         command(dialog, 105);

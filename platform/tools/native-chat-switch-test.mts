@@ -9,7 +9,7 @@ import { fixture } from '../tests/fixtures/service.mts';
 
 const executable = process.argv[2]; assert(executable, 'native switch executable required');
 const configExecutable = process.argv[3]; assert(configExecutable, 'Control Center executable required');
-for (const mode of ['memory', 'remembered', 'unrelated', 'revoked', 'mismatch', 'logout-failure']) {
+for (const mode of ['memory', 'early-retry', 'remembered', 'unrelated', 'revoked', 'mismatch', 'logout-failure']) {
   const f = await fixture({ createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot) });
   let child: ReturnType<typeof spawn> | undefined;
   try {
@@ -128,8 +128,8 @@ for (const mode of ['memory', 'remembered', 'unrelated', 'revoked', 'mismatch', 
     assert.equal(returnedSeen, !['revoked', 'mismatch'].includes(mode),
       'browser and native account agree on the first explicitly restored streaming peer');
     assert.equal(loginStarts, 1, 'return never issues a new browser approval');
-    assert.equal(refreshes, ['revoked', 'mismatch'].includes(mode) ? 1 : mode === 'memory' ? 3 : 2,
-      'one extra explicit renewal only after the first-display failure in memory mode');
+    assert.equal(refreshes, ['revoked', 'mismatch'].includes(mode) ? 1 : ['memory', 'early-retry'].includes(mode) ? 3 : 2,
+      'one extra explicit renewal only after first-display failure or user-requested early redraw');
     assert.equal(signouts, ['revoked', 'mismatch'].includes(mode) ? 0 : mode === 'logout-failure' ? 2 : 1);
     assert(f.store.find(observer.lease.sessionToken)); assert(f.store.find(other.lease.sessionToken));
     if (mode !== 'mismatch') assert.equal(f.store.find(target), undefined);

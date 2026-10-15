@@ -125,6 +125,15 @@ void NativeChatConnection::show_display_status() noexcept
     EnableWindow(GetDlgItem(dialog_, kManage), can_open_management(status));
     // The request can expire or finish without changing the cached UI status.
     EnableWindow(GetDlgItem(dialog_, kReopenLogin), can_reopen_login(status));
+    const bool can_retry = can_retry_first_display(status);
+    if (retry_first_display_label_ != can_retry) {
+        retry_first_display_label_ = can_retry;
+        SetDlgItemTextW(dialog_, kResume, can_retry
+            ? L"현재 승인으로 채팅 표시 다시 시도"
+            : L"현재 승인으로 자체 채팅 복귀");
+    }
+    EnableWindow(GetDlgItem(dialog_, kResume),
+        can_retry || (!retry_first_display_pending_ && can_request_native_chat_return(status)));
     // Keep the non-secret six-character confirmation visible even when a
     // transient notice changes. It is cleared with the request, never saved.
     wchar_t code[7]{};
@@ -149,7 +158,6 @@ void NativeChatConnection::show_display_status() noexcept
         ? L"자체 채팅 첫 텍스트 렌더링 확인 · 로컬 HUD 응답"
         : native_chat_status_text_ko(status);
     SetDlgItemTextW(dialog_, kDisplayStatus, label);
-    EnableWindow(GetDlgItem(dialog_, kResume), can_request_native_chat_return(status));
     // The WinHTTP worker may retire AFTER clear_display() painted "Stopping".
     // Update the same session control on IdleResumable/ExternalPageResumable
     // transition, without restoring any stale socket counts.
@@ -181,6 +189,7 @@ bool NativeChatConnection::open_dialog() noexcept
             CW_USEDEFAULT, CW_USEDEFAULT, 600, dialog_height, nullptr, nullptr, klass.hInstance, this);
         if (!dialog_) return false;
         displayed_status_.reset();
+        retry_first_display_label_ = false;
         // GetWindowDisplayAffinity documents a layered-window prerequisite.
         // Keep this ordinary panel opaque and verify before its first showing,
         // so reopening can enforce the same guard even while it is hidden.
@@ -282,7 +291,11 @@ LRESULT CALLBACK NativeChatConnection::procedure(HWND window, UINT message, WPAR
             }
             return 0;
         }
-        if (LOWORD(wparam) == kResume) { self->resume_current(); return 0; }
+        if (LOWORD(wparam) == kResume) {
+            if (self->can_retry_first_display(self->local_status())) self->retry_first_display();
+            else self->resume_current();
+            return 0;
+        }
         if (LOWORD(wparam) == kCompanionVideo) {
             // The streaming/OBS role can never request the gaming-PC output UI.
             // This is only a queued same-thread UI request; the video panel
@@ -325,6 +338,7 @@ bool NativeChatConnection::open_surface() noexcept
 void NativeChatConnection::begin(std::wstring origin, std::wstring credential, bool local, DisplayAuthentication mode) noexcept
 {
     auto_connect_pending_ = false;
+    retry_first_display_pending_ = false;
     if (closed_ || !host_) {
         if (!credential.empty()) SecureZeroMemory(credential.data(), credential.size() * sizeof(wchar_t));
         notice(L"HUD 연결 제어를 준비하지 못했습니다."); return;
@@ -360,6 +374,9 @@ void NativeChatConnection::connect() noexcept
         if (login_cancel_waiting_) {
             notice(L"이전 로그인 요청의 서버 취소 결과를 확인 중입니다. 완료 후 다시 로그인하세요."); return;
         }
+        if (retry_first_display_pending_) {
+            notice(L"현재 승인으로 채팅 화면을 다시 준비 중입니다. 새 로그인을 시작하지 않습니다."); return;
+        }
         if (client_.running() || signing_out_) {
             notice(client_.login_pending()
                 ? L"같은 로그인 요청을 기다리고 있습니다. '브라우저 승인 페이지 다시 열기'에서 상태를 확인하세요."
@@ -386,10 +403,40 @@ void NativeChatConnection::connect() noexcept
         begin(std::move(origin), {}, local, remember ? DisplayAuthentication::BrowserRemember : DisplayAuthentication::Browser);
     } catch (...) { end(L"연결을 시작하지 못했습니다."); }
 }
+bool NativeChatConnection::can_retry_first_display(NativeChatStatus status) const noexcept
+{
+    return (status == NativeChatStatus::Connecting || status == NativeChatStatus::Receiving) &&
+        !closed_ && !retry_first_display_pending_ && !signing_out_ && !login_cancel_waiting_ &&
+        active_ && !awaiting_login_ && !reconnecting_ && !first_text_rendered_ &&
+        connection_state_.has_value() && client_.running();
+}
+void NativeChatConnection::retry_first_display() noexcept
+{
+    auto_connect_pending_ = false;
+    if (!dialog_ || !IsWindowVisible(dialog_) || !can_retry_first_display(local_status())) {
+        notice(L"표시를 다시 시도할 현재 승인이 없습니다. 연결 상태 또는 첫 채팅 글자를 확인하세요."); return;
+    }
+    DWORD affinity = 0;
+    if (!GetWindowDisplayAffinity(dialog_, &affinity) || affinity != WDA_EXCLUDEFROMCAPTURE) {
+        notice(L"연결창 보호를 확인하지 못해 표시 다시 시도를 거부했습니다.");
+        ShowWindow(dialog_, SW_HIDE); return;
+    }
+    if (!hud_.capture_exclusion_intact() || hud_.shutting_down_ ||
+        hud_.system_suppressed() || hud_.capture_exclusion_failed_ || hud_.capture_risk_) {
+        notice(L"HUD 보호 상태에서 채팅 표시를 다시 시도할 수 없습니다."); return;
+    }
+    // An explicit click retires the old local DOM and delivery first.
+    // Retain only the worker-owned exact renewable approval. No new browser
+    // flow, remembered-account lookup, scene control or video output restart.
+    end(L"첫 채팅 표시를 중지했습니다. 현재 승인으로 새 채팅 화면을 준비합니다.", true);
+    retry_first_display_pending_ = true;
+    show_display_status();
+}
 void NativeChatConnection::resume_current() noexcept
 {
     auto_connect_pending_ = false;
-    if (closed_ || !host_ || active_ || signing_out_ || login_cancel_waiting_ || client_.running()) {
+    if (closed_ || !host_ || active_ || signing_out_ || login_cancel_waiting_ ||
+        retry_first_display_pending_ || client_.running()) {
         notice(L"연결 또는 종료 처리 중입니다. 중복 복귀하지 않습니다."); return;
     }
     if (!hud_.webview_ready_ || hud_.shutting_down_ || hud_.system_suppressed() ||
@@ -481,6 +528,8 @@ void NativeChatConnection::forget() noexcept
     if (login_cancel_waiting_) {
         notice(L"로그인 요청 취소 결과를 확인 중입니다. 승인 철회와는 다르므로 완료 후 다시 선택하세요."); return;
     }
+    // An explicit logout supersedes any uncompleted user-requested redraw.
+    retry_first_display_pending_ = false;
     // The client owns both in-run and remembered approvals. It cancels receipt,
     // clears only matching storage and revokes on its worker, never on this UI.
     signing_out_ = client_.sign_out();
@@ -502,6 +551,7 @@ void NativeChatConnection::clear_display(bool preserve_host) noexcept
 }
 void NativeChatConnection::end(const wchar_t *message, bool preserve_host) noexcept
 {
+    retry_first_display_pending_ = false; // Stop, external navigation and security loss override a queued retry.
     client_.stop(); clear_display(preserve_host); notice(message);
 }
 void NativeChatConnection::tick() noexcept
@@ -530,6 +580,15 @@ void NativeChatConnection::tick() noexcept
             } else {
                 notice(L"서버 취소 미확인: 이전 브라우저에서 이 요청 번호를 확인하고 직접 취소하세요. 새 로그인은 앱에 표시되는 새 번호로만 동의하세요.");
             }
+        }
+        if (retry_first_display_pending_) {
+            if (client_.running()) return; // Do not block the UI on WinHTTP or WebView shutdown.
+            retry_first_display_pending_ = false;
+            // resume_current() rechecks protection and the exact in-run
+            // approval. If revoked during shutdown, the user is told to log in
+            // again; another saved account must never be substituted.
+            resume_current();
+            return;
         }
         if (auto_connect_pending_ && !approval_denied_ && !active_ && !client_.running() && hud_.webview_ready_ &&
             !hud_.system_suppressed() && !hud_.shutting_down_ && !hud_.capture_exclusion_failed_) {
@@ -660,7 +719,8 @@ void NativeChatConnection::tick() noexcept
 }
 void NativeChatConnection::close() noexcept
 {
-    closed_ = true; login_cancel_waiting_ = false; force_new_login_ = false;
+    closed_ = true; login_cancel_waiting_ = false; retry_first_display_pending_ = false;
+    force_new_login_ = false; retry_first_display_label_ = false;
     previous_login_code_.clear(); login_url_.clear(); service_origin_.clear();
     if (host_) { RemoveWindowSubclass(host_, host_procedure, kConnectHotkey); host_ = nullptr; }
     auto_connect_pending_ = false; client_.stop();

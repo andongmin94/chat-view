@@ -26,7 +26,7 @@ public:
         // Keep ticking only while a real panel still displays "Stopping";
         // otherwise its explicit return button may remain disabled forever.
         const bool pending_status = dialog_ && displayed_status_ == NativeChatStatus::Stopping;
-        return active_ || auto_connect_pending_ || signing_out_ || login_cancel_waiting_ || client_.running() ||
+        return active_ || auto_connect_pending_ || signing_out_ || login_cancel_waiting_ || retry_first_display_pending_ || client_.running() ||
             pending_status ? 100U : INFINITE;
     }
     void close() noexcept;
@@ -37,6 +37,8 @@ private:
     NativeChatStatus local_status() const noexcept;
     void connect() noexcept;
     void resume_current() noexcept;
+    [[nodiscard]] bool can_retry_first_display(NativeChatStatus status) const noexcept;
+    void retry_first_display() noexcept;
     void begin(std::wstring origin, std::wstring credential, bool local, DisplayAuthentication mode) noexcept;
     bool open_surface() noexcept;
     void forget() noexcept;
@@ -73,6 +75,8 @@ private:
     bool reconnecting_ = false;
     bool signing_out_ = false;
     bool login_cancel_waiting_ = false; // Await worker evidence, not a server-side revocation.
+    bool retry_first_display_pending_ = false; // Explicit one-time same-approval display return.
+    bool retry_first_display_label_ = false;
     bool force_new_login_ = false; // Never switch to another remembered account after stopping consent.
     bool approval_denied_ = false; // Last server denial, not authority or a transport-error guess.
     bool pending_subscribed_ = false;

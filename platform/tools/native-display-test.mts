@@ -33,7 +33,9 @@ for (const mode of ['gateway', 'gateway-gaming', 'login-cancel', 'login-cancel-u
   const ids: string[] = [];
   const startLogin = sessionGateway.login.start.bind(sessionGateway.login), pollLogin = sessionGateway.login.poll.bind(sessionGateway.login);
   sessionGateway.login.start = (challenge, remember, requested) => {
-    assert.equal(requested, role); assert.equal(remember, false);
+    assert.equal(requested, role);
+    const restartedAfterCancel = mode.startsWith('login-cancel') && loginStarts === 2;
+    assert.equal(remember, restartedAfterCancel, 'only the explicit new request can choose remembrance');
     const result = startLogin(challenge, remember, requested); loginId = result.id; ids.push(loginId);
     // Shorten only this test response so the actual client's original deadline
     // can expire without waiting five minutes or modifying production budgets.

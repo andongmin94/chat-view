@@ -186,7 +186,9 @@ ${this.#form(b, '/account/switch', '브라우저 관리 계정 바꾸기')}
   #showCollectionWaiting(response: ServerResponse, b: Browser, id: string) {
     this.#page(response, '연결 요청 처리됨', `${this.#accountNotice(b)}
 <section data-login-collection="awaiting-app">
+<p>브라우저가 동의한 요청 번호: <strong data-login-code>${id.slice(-6).toUpperCase()}</strong></p>
 <p>브라우저 동의를 받았습니다. 앱이 승인 응답을 수집하기 전이므로 아직 PC 연결 완료가 아닙니다.</p>
+<p>앱에 다른 확인 번호가 보이면 이 페이지는 이전 요청입니다. 여기서 재동의하거나 새 요청으로 자동 연결할 수 없습니다. 현재 앱의 새 번호로 승인하세요.</p>
 <p>챗뷰 앱으로 돌아가 최종 연결 상태를 확인하세요. 동시에 다른 송출 요청이 먼저 연결되면 이 요청에서 다시 동의해야 합니다.</p>
 <p><a href="/login/${id}">승인 수집 상태 확인</a></p>
 <p>이 링크는 상태만 확인합니다. 연결·역할 이전·광고 선택을 자동 실행하지 않습니다. 앱 요청이 만료되면 해당 PC에서 로그인 / 연결을 다시 시작하세요.</p>
@@ -344,13 +346,17 @@ ${this.#form(b, `/login/${id}/deny`, '새 송출 요청 취소')}`, 409);
         catch (error) {
           if (!(error instanceof DisplayAccessError) || ![409, 410].includes(error.status)) throw error;
           this.#page(response, '채팅 연결 요청 종료',
-            '<p>요청이 종료됐거나 만료됐습니다. 앱의 연결창에서 로그인 / 연결을 다시 시작하세요. 기존 연결은 자동으로 변경하지 않았습니다.</p><p><a href="/account">내 연결 관리</a></p>', error.status); return;
+            '<section data-login-request="ended"><p>이전 승인 요청이 취소·거부·수집 완료됐거나 만료됐습니다. 이 페이지에서 승인할 수 없습니다.</p><p>앱의 로그인 / 연결에서 새 요청을 시작하고, 새 브라우저 페이지의 확인 번호·역할을 현재 앱 화면과 대조하세요. 기존 연결은 자동으로 변경하지 않았습니다.</p></section><p><a href="/account">내 연결 관리</a></p>', error.status); return;
         }
         if (!b) { this.#createBrowser(response); this.#redirect(response, url.pathname); return; }
         const account = b.owner ? this.#creators.describe(b.owner) : undefined;
         if (collection === 'retry-required' && account?.authorized && this.#showStreamingConflict(response, b, id)) return;
         const roleLabel = intent.role === 'gaming' ? '게임 PC · 개인 HUD' : '송출 PC · OBS 관리 런타임';
-        this.#page(response, '챗뷰에 채팅 연결', `<p>앱에서 직접 시작한 요청인지 확인하세요. 확인 번호: <strong>${intent.code}</strong></p>
+        this.#page(response, '챗뷰에 채팅 연결', `<section data-login-request="pending" aria-label="현재 앱 요청 대조">
+<p>이 페이지의 확인 번호: <strong data-login-code>${intent.code}</strong></p>
+<p>앱 연결창의 <strong>현재 요청</strong> 확인 번호와 역할이 모두 같을 때만 동의하세요. 브라우저는 앱이 중지됐거나 새 로그인을 시작했는지 알 수 없습니다.</p>
+<p>앱에 다른 새 번호가 보이거나 연결 중지를 눌렀다면 이 페이지는 이전 요청일 수 있습니다. 아래 <strong>이 요청 취소</strong>를 누른 뒤 앱에서 새로 연 페이지를 사용하세요. 다른 요청·게임 영상·시험 광고에는 영향을 주지 않습니다.</p>
+</section>
 <p>앱이 요청한 역할: <strong>${roleLabel}</strong></p>
 ${collection === 'retry-required' ? '<p data-login-collection="retry-required">승인 수집 중 송출 역할을 확보하지 못했습니다. 기존 연결은 유지했고 이전 동의는 폐기했습니다. 연결 관리를 확인한 뒤 같은 채널·역할에 다시 직접 동의하세요. 자리가 비어도 자동 연결하지 않습니다.</p>' : ''}
 ${intent.role === 'streaming' ? '<p>이 역할은 OBS의 송출·녹화 출력 활성 상태를 같은 계정의 연결에 전달합니다. 영상 제외나 시청 실적을 검증하는 권한은 아닙니다.</p>' : ''}
@@ -359,7 +365,7 @@ ${account?.authorized ? `<p>채널: <strong>${escape(account.channel.channelName
 ${this.#form(b, `/login/${id}/approve`, '이 채널과 요청 역할로 연결')}
 <p>역할은 앱 실행 방식에서 정해집니다. 송출 역할을 옮길 때는 기존 연결을 먼저 해제하세요.</p><p><a href="/account">내 연결 관리</a></p>`
 : this.#form(b, `/login/${id}/connect`, '치지직으로 로그인')}
-${this.#form(b, `/login/${id}/deny`, '취소')}`); return;
+${this.#form(b, `/login/${id}/deny`, '이 요청 취소')}`); return;
       }
       if (request.method === 'GET' && url.pathname === '/account/confirm') {
         if (!b?.pending || b.pending.expires <= Date.now()) {

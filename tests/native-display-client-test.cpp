@@ -24,6 +24,8 @@ struct NativeChatConnectionTestAccess {
     static NativeChatSurface &surface(NativeChatConnection &c) { return c.surface_; }
     static bool active(NativeChatConnection &c) { return c.active_; }
     static bool cancel_waiting(NativeChatConnection &c) { return c.login_cancel_waiting_; }
+    static bool force_new_login(NativeChatConnection &c) { return c.force_new_login_; }
+    static const std::wstring &previous_code(NativeChatConnection &c) { return c.previous_login_code_; }
     static const std::optional<DisplayConnectionState> &connection(NativeChatConnection &c) { return c.connection_state_; }
 };
 struct NativeChatSurfaceTestAccess {
@@ -188,12 +190,15 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
         query() == chatview::NativeChatStatus::AwaitingApproval && !surface.ready(),
         "pending login is not a display approval or chat document");
     expect(control_text(dialog, 117) == L"브라우저 승인 페이지 다시 열기", "explicit reopen action is labelled");
-    RECT button_bounds{}, display_bounds{}, dialog_bounds{};
+    RECT button_bounds{}, previous_bounds{}, display_bounds{}, dialog_bounds{};
     expect(GetWindowRect(GetDlgItem(dialog, 117), &button_bounds) &&
+        GetWindowRect(GetDlgItem(dialog, 119), &previous_bounds) &&
         GetWindowRect(GetDlgItem(dialog, 113), &display_bounds) && GetWindowRect(dialog, &dialog_bounds),
-        "actual native reopen and status bounds");
-    expect(button_bounds.bottom <= display_bounds.top && button_bounds.right <= dialog_bounds.right,
-        "reopen row does not overlap status or overflow the panel");
+        "actual native reopen, old-request warning and status bounds");
+    expect(button_bounds.bottom <= previous_bounds.top && previous_bounds.bottom <= display_bounds.top &&
+        previous_bounds.right <= dialog_bounds.right && button_bounds.right <= dialog_bounds.right,
+        "current and previous request rows do not overlap or overflow the protected panel");
+    expect(control_text(dialog, 119).empty(), "there is no obsolete request before a cancellation");
     expect((GetDlgItem(dialog, 116) != nullptr) == gaming, "reopen does not introduce gaming video controls in OBS role");
     std::wstring unused;
     expect(!client.take_login_url(unused), "tick cannot automatically reopen an already delivered URL");
@@ -227,8 +232,9 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
             SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(105, BN_CLICKED), 0);
             expect(GetTickCount64() - before < 200U, "stop never waits for server cancel I/O");
             expect(!client.login_pending() && !client.can_resume_current() &&
-                chatview::NativeChatConnectionTestAccess::cancel_waiting(connection),
-                "stop fences the old browser request locally without claiming server cancellation");
+                chatview::NativeChatConnectionTestAccess::cancel_waiting(connection) &&
+                chatview::NativeChatConnectionTestAccess::force_new_login(connection),
+                "stop fences old consent and prevents saved-account substitution without server proof");
             expect(control_text(dialog, 106).find(L"확인 중") != std::wstring::npos &&
                 control_text(dialog, 118).empty(), "pending cancellation clears confirmation code immediately");
             SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(104, BN_CLICKED), 0);
@@ -250,6 +256,16 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
                 "native panel reports confirmed or unconfirmed cancellation after worker retirement", &connection);
             expect(!chatview::NativeChatConnectionTestAccess::cancel_waiting(connection),
                 "terminal cancel result is consumed only once");
+            if (mode == "login-cancel-unconfirmed") {
+                expect(chatview::NativeChatConnectionTestAccess::previous_code(connection) == code &&
+                    control_text(dialog, 119).find(code) != std::wstring::npos,
+                    "unconfirmed old request has an independent persistent code, not the current login code");
+                expect(control_text(dialog, 106).find(L"미확인") != std::wstring::npos,
+                    "ambiguous response never claims the old request was revoked");
+            } else {
+                expect(chatview::NativeChatConnectionTestAccess::previous_code(connection).empty() &&
+                    control_text(dialog, 119).empty(), "acknowledged remote cancellation clears the old warning");
+            }
         }
         expect(!IsWindowEnabled(GetDlgItem(dialog, 117)) &&
             chatview::NativeChatConnectionTestAccess::login_url(connection).empty() && control_text(dialog, 118).empty() &&
@@ -257,10 +273,23 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
             "ended login keeps neither stale URL nor approval");
         SetDlgItemTextW(dialog, 101, origin.c_str());
         SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
-        SendDlgItemMessageW(dialog, 107, BM_SETCHECK, BST_UNCHECKED, 0);
+        // A remembered unrelated credential must never silently replace the
+        // explicit fresh-browser flow after Stop, even if this box is checked.
+        const bool cancelled = mode == "login-cancel" || mode == "login-cancel-unconfirmed";
+        SendDlgItemMessageW(dialog, 107, BM_SETCHECK, cancelled ? BST_CHECKED : BST_UNCHECKED, 0);
         SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(104, BN_CLICKED), 0);
         await([&] { return browser_probe.calls == 5U && client.login_pending(); }, "explicit new login after termination", &connection);
         expect(browser_probe.last_url != first_url, "new login has a new request, not revived old consent");
+        if (cancelled) {
+            expect(chatview::NativeChatConnectionTestAccess::force_new_login(connection),
+                "fresh request retains no-saved-account fence until real receiving");
+            if (mode == "login-cancel-unconfirmed") {
+                expect(control_text(dialog, 118) != code &&
+                    control_text(dialog, 119).find(code) != std::wstring::npos &&
+                    control_text(dialog, 106).find(L"이전 취소 미확인") != std::wstring::npos,
+                    "native panel distinguishes new code from old unconfirmed browser consent");
+            }
+        }
     }
     const auto calls = browser_probe.calls;
     std::cout << "approve-login\n" << std::flush;
@@ -285,6 +314,9 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
     expect(!IsWindowEnabled(GetDlgItem(dialog, 117)) &&
         chatview::NativeChatConnectionTestAccess::login_url(connection).empty() && control_text(dialog, 118).empty(),
         "receiving cannot retain a login reopen action or confirmation code");
+    expect(!chatview::NativeChatConnectionTestAccess::force_new_login(connection) &&
+        control_text(dialog, 119).empty(),
+        "only the fresh confirmed approval retires the saved-account fence and transient old-code warning");
     const auto approved_membership = state->membership;
     expect(open() == 1 && dialog == chatview::NativeChatConnectionTestAccess::dialog(connection) &&
         chatview::NativeChatConnectionTestAccess::connection(connection)->membership == approved_membership,

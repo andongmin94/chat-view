@@ -61,6 +61,7 @@ try {
   const sourceId = String(f.store.database.prepare('SELECT source_id FROM ad_sources WHERE owner = ?').get('alice')!.source_id);
   const selection = () => f.store.database.prepare('SELECT connection_id FROM ad_selections WHERE source_id = ?').get(sourceId);
   type Started = Awaited<ReturnType<typeof f.start>>;
+  let stale: { old: Started; current?: Started; serverCancelled: boolean } | undefined;
   let collection: { requests: Started[]; gamer: WebSocket; loser?: Started;
     lease?: typeof alice.lease; sender?: WebSocket; lastPollAt: number; sequence: number; before: string } | undefined;
   const unaffected = () => JSON.stringify({ alice: f.store.connections('alice'), selection: selection(),
@@ -131,6 +132,51 @@ try {
       assert.equal(result.status, 'approved');
       const session = f.store.find(result.lease.sessionToken);
       assert(session?.owner === 'charlie' && session.membership?.role === 'streaming');
+      reply({ ok: true }); continue;
+    }
+    // The native client has already stopped: only this bounded parent fixture
+    // can simulate the lost cancellation response. The Chromium page is real.
+    if (command.op === 'stale-start') {
+      assert(!stale);
+      stale = { old: await f.start('gaming'), serverCancelled: false };
+      reply({ path: stale.old.verificationPath, code: stale.old.id.slice(-6).toUpperCase() }); continue;
+    }
+    if (command.op === 'stale-cancel-response-lost') {
+      assert(stale && !stale.current && !stale.serverCancelled);
+      const result = await f.native(`/display/login/${stale.old.id}/cancel`,
+        'ChatView-Login', stale.old.verifier);
+      assert.equal(result.status, 200);
+      assert.deepEqual(await result.json(), { cancelled: true });
+      stale.serverCancelled = true; // Discard response in the simulated native caller.
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'stale-new-start') {
+      assert(stale && !stale.current);
+      stale.current = await f.start('gaming');
+      assert.notEqual(stale.current.id, stale.old.id);
+      reply({ path: stale.current.verificationPath, code: stale.current.id.slice(-6).toUpperCase() }); continue;
+    }
+    if (command.op === 'stale-check') {
+      assert(stale?.current);
+      assert.throws(() => f.app.login.view(stale!.old.id), (error: unknown) =>
+        error instanceof Error && 'status' in error &&
+        (error.status === (stale!.serverCancelled ? 410 : 409)),
+        'old request is terminal only by authenticated cancel or explicit browser denial');
+      assert.equal(f.app.login.view(stale.current.id).role, 'gaming');
+      assert.equal(snapshot(), before, 'no creator, original PC or ad selection changed');
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'stale-collect') {
+      assert(stale?.current);
+      const response = await f.native(`/display/login/${stale.current.id}`,
+        'ChatView-Login', stale.current.verifier);
+      assert.equal(response.status, 200);
+      const result = await response.json() as { status: string; lease: { sessionToken: string; membership?: { role: string } } };
+      assert.equal(result.status, 'approved');
+      const session = f.store.find(result.lease.sessionToken);
+      assert(session?.owner === 'charlie' && session.membership?.role === 'gaming');
+      assert.equal(snapshot(), before, 'fresh consent never changes another sender or ad selection');
+      stale = undefined;
       reply({ ok: true }); continue;
     }
     // This final flow deliberately replaces only Alice's sender via browser

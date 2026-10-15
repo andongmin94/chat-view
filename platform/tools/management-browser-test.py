@@ -315,6 +315,61 @@ def run() -> None:
                 finally:
                     flow.close()
 
+                # Two distinct responses to the same ambiguous native Stop:
+                # the cancel arrived but the reply vanished, or it never arrived
+                # and the creator must explicitly cancel the old browser form.
+                # The browser can prove only its own request status; it cannot
+                # infer which approval is current in the gaming companion.
+                for server_cancelled in (False, True):
+                    flow = Flow(browser, f, 390)
+                    try:
+                        old = f.command("stale-start")
+                        current = f.command("stale-new-start")
+                        assert old["path"] != current["path"]
+                        if server_cancelled:
+                            assert f.command("stale-cancel-response-lost")["ok"]
+                        flow.page.goto(f.origin + old["path"])
+                        if server_cancelled:
+                            expect(flow.page.locator('[data-login-request="ended"]')).to_have_count(1)
+                            expect(flow.page.locator('form[action$="/approve"]')).to_have_count(0)
+                            expect(flow.page.locator('body')).to_contain_text("새 브라우저 페이지")
+                        else:
+                            expect(flow.page.locator('[data-login-request="pending"]')).to_have_count(1)
+                            expect(flow.page.locator("[data-login-code]")).to_have_text(old["code"])
+                            expect(flow.page.locator('[data-login-request="pending"]')).to_contain_text(
+                                "앱에 다른 새 번호가 보이거나 연결 중지를 눌렀다면")
+                            expect(flow.page.get_by_role("button", name="이 요청 취소", exact=True)).to_have_count(1)
+                            flow.image("previous-pending-request-mobile")
+                            flow.page.get_by_role("button", name="이 요청 취소", exact=True).click()
+                            expect(flow.page.locator("h1")).to_have_text("연결 요청 처리됨")
+                            flow.page.goto(f.origin + old["path"])
+                            expect(flow.page.locator('[data-login-request="ended"]')).to_have_count(1)
+                        assert f.command("stale-check")["ok"]
+                        flow.page.goto(f.origin + current["path"])
+                        expect(flow.page.locator('[data-login-request="pending"]')).to_have_count(1)
+                        expect(flow.page.locator("[data-login-code]")).to_have_text(current["code"])
+                        expect(flow.page.locator("body")).to_contain_text("게임 PC · 개인 HUD")
+                        expect(flow.page.get_by_role("button", name="이 요청 취소", exact=True)).to_have_count(1)
+                        flow.page.get_by_role("button", name="치지직으로 로그인", exact=True).click()
+                        expect(flow.page.locator("h1")).to_have_text("Synthetic provider")
+                        with flow.page.expect_response(lambda response:
+                                urlsplit(response.url).path == current["path"]) as callback:
+                            flow.page.locator("#charlie").click()
+                        assert callback.value.status == 200
+                        expect(flow.page.locator("[data-login-code]")).to_have_text(current["code"])
+                        flow.page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True).click()
+                        expect(flow.page.locator('[data-login-collection="awaiting-app"]')).to_have_count(1)
+                        expect(flow.page.locator("[data-login-code]")).to_have_text(current["code"])
+                        assert f.command("stale-collect")["ok"]
+                        flow.page.goto(f.origin + old["path"])
+                        expect(flow.page.locator('[data-login-request="ended"]')).to_have_count(1)
+                        flow.image("old-closed-new-collected-" + ("reply-lost" if server_cancelled else "browser-cancel"))
+                        assert f.command("check")["ok"]
+                        results.append("old browser consent " + ("cancelled after lost reply" if server_cancelled
+                            else "explicitly denied") + "; only fresh matching game-role code collects")
+                    finally:
+                        flow.close()
+
                 flow = Flow(browser, f, 390)
                 try:
                     flow.identity("/campaigns")

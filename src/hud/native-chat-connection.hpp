@@ -73,6 +73,7 @@ private:
     bool reconnecting_ = false;
     bool signing_out_ = false;
     bool login_cancel_waiting_ = false; // Await worker evidence, not a server-side revocation.
+    bool force_new_login_ = false; // Never switch to another remembered account after stopping consent.
     bool approval_denied_ = false; // Last server denial, not authority or a transport-error guess.
     bool pending_subscribed_ = false;
     bool in_flight_subscribed_ = false;
@@ -83,6 +84,7 @@ private:
     ULONGLONG loading_deadline_ = 0;
     std::wstring pending_;
     std::wstring login_url_; // Current request only; no verifier or approval token.
+    std::wstring previous_login_code_; // Only six public code characters while old cancellation is unconfirmed.
     std::wstring service_origin_; // Validated current service only; not an auth capability.
 };
 }

@@ -133,4 +133,11 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/companion-chat-video-test.mts"
         "$<TARGET_FILE:chat-view-companion-chat-video-test>" "$<TARGET_FILE:chat-view-window-capture-test>" reapproved)
     set_tests_properties(chat-view-companion-chat-reapproval PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+    # Same authenticated empty chat can be explicitly redrawn while a separate
+    # WGC video is playing and again after an explicit black video stop. Test
+    # consumes two additional renewals, never a new browser approval or video consent.
+    add_test(NAME chat-view-companion-chat-video-redraw COMMAND "${CHATVIEW_NODE_EXECUTABLE}" --experimental-strip-types
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/companion-chat-video-test.mts"
+        "$<TARGET_FILE:chat-view-companion-chat-video-test>" "$<TARGET_FILE:chat-view-window-capture-test>" redraw)
+    set_tests_properties(chat-view-companion-chat-video-redraw PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 endif()

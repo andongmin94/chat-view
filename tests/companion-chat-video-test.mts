@@ -8,8 +8,9 @@ import { DisplayGateway } from '../platform/server/chat/display-gateway.mts';
 import { fixture } from '../platform/tests/fixtures/service.mts';
 
 const executable = process.argv[2], source = process.argv[3], mode = process.argv[4];
-assert(executable && source && ['return', 'revoked', 'reapproved'].includes(mode ?? ''), 'native flow, source and explicit mode required');
-const reapproved = mode === 'reapproved', revoked = mode !== 'return';
+assert(executable && source && ['return', 'revoked', 'reapproved', 'redraw'].includes(mode ?? ''), 'native flow, source and explicit mode required');
+const reapproved = mode === 'reapproved', redraw = mode === 'redraw';
+const revoked = mode === 'revoked' || reapproved;
 const f = await fixture({ createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot) });
 let child: ReturnType<typeof spawn> | undefined;
 try {
@@ -73,7 +74,9 @@ try {
   const exited = once(child, 'exit'); child.stdin!.write(`${f.origin}\n${other.lease.sessionToken}\n`);
   let errors = '', phase = 0;
   child.stderr!.on('data', chunk => { errors = (errors + String(chunk)).slice(-4096); });
-  const phases = ['browser-opened', 'chat-empty-ready', 'pattern-paused', 'pattern-returned',
+  const phases = ['browser-opened',
+    ...(redraw ? ['live-redraw-started', 'live-redraw-ready', 'black-redraw-started', 'black-redraw-ready'] : []),
+    'chat-empty-ready', 'pattern-paused', 'pattern-returned',
     'capture-paused', 'capture-returned', 'video-stopped', 'black-paused', 'black-returned', 'reselected',
     ...(revoked ? ['revoke-requested', 'revoked', 'revoked-video-restarted'] : ['signed-out']),
     ...(reapproved ? ['browser-opened', 'reapproval-pending', 'reapproval-cancelled',
@@ -114,6 +117,21 @@ try {
         child!.stdin!.write('continue\n'); continue;
       }
       assert.equal(loginStarts, 1, 'panel navigation never starts a second login');
+      if (line.includes('-redraw-')) {
+        assert(redraw && !removed && !freshApproval && !reapproved);
+        assert.equal(signouts, 0, 'manual redraw never signs out the same approval');
+        assert.equal(f.store.find(target)?.membership?.connectionId, connectionId,
+          'one browser consent keeps the exact same gaming-role approval across both redraws');
+        const expected = line.startsWith('live-') ? 1 : 2;
+        if (line.endsWith('-ready')) {
+          assert.equal(refreshes, expected, 'one explicit renewed chat connection per redraw, no login');
+          await account(1);
+        } else {
+          assert(refreshes >= expected - 1 && refreshes <= expected,
+            'explicit redraw may finish asynchronously but never duplicates renewal');
+        }
+        child!.stdin!.write('continue\n'); continue;
+      }
       if (line === 'signed-out') {
         assert.equal(signouts, 1); assert.equal(f.store.find(target), undefined);
       } else if (line === 'revoked' || line === 'revoked-video-restarted') {
@@ -127,7 +145,8 @@ try {
         : line === 'pattern-returned' || line === 'capture-paused' ? 1
         : ['capture-returned', 'video-stopped', 'black-paused'].includes(line) ? 2
         : line === 'revoked' || line === 'revoked-video-restarted' ? 4 : 3;
-      assert.equal(refreshes, expectedRefreshes, 'three explicit returns, then at most one rejected renewal after revocation');
+      assert.equal(refreshes, expectedRefreshes + (redraw ? 2 : 0),
+        'three ordinary returns plus exactly two explicit empty-DOM redraws, or one denied renewal');
       if (line === 'revoke-requested') {
         oldTarget = target; oldConnection = connectionId;
         removed = true; f.creators.removeConnection('alice', connectionId);
@@ -147,7 +166,8 @@ try {
     assert.equal(code, 0, errors); assert.equal(phase, phases.length);
   } finally { clearTimeout(deadline); }
   assert(f.store.find(other.lease.sessionToken), 'another creator approval is unchanged');
-  assert.equal(loginStarts, reapproved ? 4 : 1); assert.equal(refreshes, reapproved ? 5 : revoked ? 4 : 3);
+  assert.equal(loginStarts, reapproved ? 4 : 1);
+  assert.equal(refreshes, reapproved || redraw ? 5 : revoked ? 4 : 3);
   assert.equal(signouts, reapproved || !revoked ? 1 : 0); assert.equal(denials, revoked ? 1 : 0);
   assert.equal(freshApproval, reapproved); assert.equal(cancelled, reapproved ? 2 : 0);
   console.log(`companion chat/video ${mode}: independent video and exact chat authority passed`);

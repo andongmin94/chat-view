@@ -22,6 +22,7 @@ struct NativeChatConnectionTestAccess {
     static auto &surface(NativeChatConnection &c) { return c.surface_; }
     static auto &client(NativeChatConnection &c) { return c.client_; }
     static bool first_text(NativeChatConnection &c) { return c.first_text_rendered_; }
+    static bool retry_pending(NativeChatConnection &c) { return c.retry_first_display_pending_; }
     static void first_display_evidence(NativeChatConnection &c) {
         // Failure-only bounded phase flags: no URL, verifier, token or chat.
         std::cerr << "Companion first chat phase: active=" << c.active_
@@ -275,7 +276,8 @@ void reapprove(Flow &flow, const std::wstring &origin, const std::wstring &other
 }
 void run(const wchar_t *source_path, const std::wstring &origin, const std::wstring &other, std::wstring_view mode)
 {
-    const bool revoked = mode != L"return";
+    const bool revoked = mode == L"revoked" || mode == L"reapproved";
+    const bool redraw = mode == L"redraw";
     Source first(source_path), second(source_path);
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     chatview::HudWindow hud;
@@ -316,9 +318,80 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
     expect(Chat::surface(chat).ready() && Chat::membership(chat),
         "cancelled navigation retry preserves the first owned chat document");
     const auto empty_frames = Chat::surface(chat).rendered_frames();
-    std::cout << "chat-empty-ready\n" << std::flush; flow.received(L"initial-chat", empty_frames);
     const auto approved = Chat::membership(chat)->membership;
     HWND game = nullptr, replacement = nullptr;
+    if (redraw) {
+        // Do not publish a provider message yet. This deliberately reproduces
+        // an authenticated, subscribed empty DOM while independent WGC video
+        // is already running, then while the user keeps that output black.
+        flow.wait([&] { game = source_window(first.pid); replacement = source_window(second.pid); return game && replacement; },
+            "source windows ready before first text");
+        Video::pattern(video, game);
+        const HWND active_output = Video::output(video), active_cover = Video::cover(video);
+        expect(Video::accept(video), "explicit receiver confirmation starts video before any first chat text");
+        flow.wait([&] { return Video::capture(video).running() && !IsWindowVisible(active_cover) &&
+            pixels(RGB(20,100,180)); }, "WGC video is playing while first chat display remains empty", 10000);
+        const auto redraw_display = [&](const std::string &phase, bool playing) {
+            const auto epoch = Video::epoch(video);
+            const auto identifier = Video::check(video).identifier();
+            const auto before_frames = Video::capture(video).snapshot().frames;
+            const auto before_step = text(controls, 210), before_notice = text(controls, 207);
+            expect(Chat::membership(chat) && Chat::membership(chat)->membership == approved &&
+                !Chat::first_text(chat) && Chat::surface(chat).rendered_messages() == 0 &&
+                text(dialog, 112) == L"현재 승인으로 채팅 표시 다시 시도" &&
+                text(controls, 209) == L"채팅 표시 확인 · 연결창 열기",
+                "video status links to the protected manual redraw action without automatically restarting chat");
+            command(controls, 209);
+            expect(IsWindowVisible(dialog) && Chat::dialog(chat) == dialog,
+                "video chat opener reuses the protected connection window");
+            command(dialog, 112);
+            expect(Chat::retry_pending(chat) && !Chat::membership(chat) && !Chat::first_text(chat) &&
+                !Chat::surface(chat).ready(), "redraw clears the old owned DOM and socket summary synchronously");
+            expect(!IsWindowEnabled(GetDlgItem(dialog, 112)) &&
+                !Chat::client(chat).login_pending(), "pending one-shot redraw cannot start browser consent");
+            command(dialog, 112); command(dialog, 104);
+            expect(Chat::retry_pending(chat) && !Chat::membership(chat),
+                "duplicate redraw and Connect cannot substitute another account");
+            expect(Video::output(video) == active_output && Video::cover(video) == active_cover &&
+                Video::epoch(video) == epoch && Video::check(video).identifier() == identifier &&
+                Video::source(video) == game && Video::requested(video) == playing &&
+                text(controls, 210) == before_step && text(controls, 207) == before_notice,
+                "a chat-only retry never changes video selection, consent, output, or progress");
+            if (playing) expect(!IsWindowVisible(active_cover) && pixels(RGB(20,100,180)),
+                "chat retry cannot black out selected live WGC output");
+            else expect(IsWindowVisible(active_cover) && pixels(RGB(0,0,0)),
+                "chat retry cannot uncover the explicitly stopped video output");
+            flow.checkpoint(phase + "-redraw-started");
+            flow.wait([&] { return !Chat::retry_pending(chat) && Chat::membership(chat) &&
+                Chat::membership(chat)->membership == approved && Chat::surface(chat).rendered_frames() >= 1 &&
+                Chat::surface(chat).rendered_messages() == 0 && !Chat::first_text(chat); },
+                "explicit same-approval redraw creates a fresh empty owned document");
+            flow.state(Status::Receiving, controls);
+            expect(text(dialog, 112) == L"현재 승인으로 채팅 표시 다시 시도" &&
+                Video::output(video) == active_output && Video::cover(video) == active_cover &&
+                Video::source(video) == game && Video::requested(video) == playing &&
+                Video::epoch(video) == epoch && Video::check(video).identifier() == identifier &&
+                text(controls, 210) == before_step && text(controls, 207) == before_notice,
+                "fresh empty chat cannot start/stop video or consume a pattern");
+            if (playing) {
+                flow.wait([&] { return Video::capture(video).snapshot().frames > before_frames &&
+                    !IsWindowVisible(active_cover) && pixels(RGB(20,100,180)); },
+                    "the independent WGC worker continues rendering across chat redraw", 10000);
+            } else expect(!Video::capture(video).running() && IsWindowVisible(active_cover) &&
+                pixels(RGB(0,0,0)), "black stop remains effective after new chat DOM is ready");
+            flow.checkpoint(phase + "-redraw-ready");
+        };
+        redraw_display("live", true);
+        command(controls, 205);
+        flow.wait([&] { return !Video::capture(video).running() && IsWindowVisible(active_cover) &&
+            pixels(RGB(0,0,0)); }, "explicit black stop before second early chat redraw", 2000);
+        expect(!Video::accept(video), "black stop consumes the old visual receiver confirmation");
+        redraw_display("black", false);
+        expect(!Video::accept(video) && !Video::requested(video) &&
+            IsWindowVisible(active_cover) && pixels(RGB(0,0,0)),
+            "second chat redraw cannot restart black output without new receiver consent");
+    }
+    std::cout << "chat-empty-ready\n" << std::flush; flow.received(L"initial-chat", empty_frames);
     flow.wait([&] { game = source_window(first.pid); replacement = source_window(second.pid); return game && replacement; }, "two source fixtures ready");
     expect(SendMessageW(replacement, WM_APP + 43, MAKEWPARAM(400, 300), RGB(180,70,30)) != 0, "distinct replacement pixels");
     Video::pattern(video, game); const HWND output = Video::output(video), cover = Video::cover(video);
@@ -471,7 +544,8 @@ int wmain(int argc, wchar_t **argv)
     try {
         expect(argc == 3, "source fixture and explicit flow mode required");
         const std::wstring_view mode(argv[2]);
-        expect(mode == L"return" || mode == L"revoked" || mode == L"reapproved", "known flow mode");
+        expect(mode == L"return" || mode == L"revoked" || mode == L"reapproved" ||
+            mode == L"redraw", "known flow mode");
         std::string origin, auxiliary; std::getline(std::cin, origin); std::getline(std::cin, auxiliary);
         expect(origin.size() < 2048 && origin.starts_with("http://127.0.0.1:") && auxiliary.size() == 64, "bounded fixture input");
         std::wstring other(auxiliary.begin(), auxiliary.end());

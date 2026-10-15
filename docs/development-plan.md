@@ -1,26 +1,25 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-15 (Asia/Seoul). **이 문서가 유일한 현재 작업 목록이다.** 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다. 완료된 조사·중복 기록은 Git 이력에 남긴다.
+갱신: 2026-10-16 (Asia/Seoul). **이 문서가 유일한 현재 작업 목록이다.** 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다. 완료된 조사·중복 기록은 Git 이력에 남긴다.
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 첫 빈 채팅 화면에서 현재 승인으로 표시 다시 시도
+## 현재 흐름: 게임 PC의 게임 영상 출력/검정 중지 ↔ 첫 채팅 표시 명시적 재시도
 
-시작 OBS HEAD `7be71413de44a703a94eb6d9321164364f9cac8e`. AGENTS → PRODUCT → development-workflow → architecture → 이 문서를 순서대로 확인했다. 직전 CHZZK #75/run `38732738234`의 326/326·Chromium18/18 성공, Windows #406/run `38732738266`의 43/44·217.13초 실패(기존 WebView2 공개 광고 `NavigationCompleted` 미도착)를 재확인했다. 이전 SHA 통과를 새 SHA 성공으로 취급하지 않는다.
+시작 OBS HEAD `768492e745d7c0e05d3c29b3d3d8af915ba3adb4`에서 AGENTS → PRODUCT → development-workflow → architecture → 이 문서를 순서대로 읽었다. 직전 네이티브 #407/run `38735851151`에서 새 `early-retry` 포함 `native-chat-switch` 26.65초 통과, 전체 43/44·211.40초 실패(기존 D7 `public-ad-browser` WebView2 `started=1/completed=0`). CHZZK #76/run `38735851173`은 326/326·Chromium18/18 성공했다. 이번 커밋 성공으로 재사용하지 않는다.
 
 ### 구현
 
-- 기존 **현재 승인으로 자체 채팅 복귀** 버튼을 새 컨트롤 추가 없이 활용한다. 실제 역할·승인된 채팅 소켓 메타데이터가 있으면서 첫 자체 DOM 텍스트는 아직 확인하지 못한 `Connecting`/`Receiving` 상태에서는 **현재 승인으로 채팅 표시 다시 시도**로 변경·활성화한다. 실제 첫 글자 ACK 뒤에는 기존 이름으로 돌아가며 활성 채팅을 재시작하도록 유도하지 않는다. 단순히 "채팅 글자가 아직 안 온" 상태와 수신 영상/시청자 검증을 혼동하지 않는다.
-- 사용자 명시적 클릭 시 `NativeChatConnection`이 현재 WebView2 표시·실시간 세션 숫자를 지우고 기존 WinHTTP 작업자를 취소한다. UI/OBS 콜백에서 스레드 join이나 네트워크 요청을 하지 않는다. 작업자 종료 후에만 **기존 `DisplayClient::resume_current()`**로 정확한 원래 역할·동일 승인을 갱신하고 새 자체 DOM을 연다. 새 브라우저 동의, 저장된 다른 계정 선택, 송출 출력 변경, 게임 PC OBS 요구, 영상 대상/수신 승인/광고 재선택은 없다.
-- 숨겨진 연결창·WDA_EXCLUDEFROMCAPTURE 손실·HUD 보호 실패·미승인/첫 글자 완료·대기 중 중복 클릭을 거부한다. 중지·로그아웃·외부 페이지 전환·HUD 종료는 대기 중인 동일 승인 표시 다시 시도를 폐기하며, 철회된 승인을 자동으로 대체하지 않는다. 화면 보호/비공개 HUD 제외 조건은 완화하지 않는다.
-- 기존 네이티브 WinHTTP·실제 WebView2·서버 HTTP/SQLite/ws `native-chat-switch`에 `early-retry` 시나리오를 추가한다. 최초 subscribe 0-row ACK → 보호 손실/숨김 거부 → 사용자가 한 번 재시도 → 이전 DOM/카운트 초기화 → 종료·복귀 → **동일 역할·broadcast session·connection ID**의 새 0-row ACK → 실제 첫 글자 표시 → 외부 페이지 전환·현재 승인 복귀·중지·로그아웃까지 검증한다. 다른 저장 계정, 1회 브라우저 로그인, 정확한 갱신 횟수 및 단축키/기존 OBS 통합 검사를 유지한다. 기존 첫 글자/시간·픽셀 제한을 늘리지 않는다.
+- 게임 PC 영상 설정창의 **로컬 자체 채팅 상태**는 기존 `QueryNativeChat.v2`로만 조회한다. `Connecting/Receiving`에는 **채팅 표시 확인 · 연결창 열기**를 보여준다. 버튼은 기존 캡처 보호된 연결창으로 이동만 하고 채팅을 자동 재시작하거나 게임 대상, WGC, 검정 덮개, 광고 상태를 변경하지 않는다. 실제 승인/첫 글자 여부는 원래 채팅 연결창에서 검사한다.
+- 네이티브 기존 `NativeChatConnection`의 명시적 `현재 승인으로 채팅 표시 다시 시도` 동작을 별도 영상 제어와 교차시킨다. 기존 승인·게임 역할·연결 ID를 보존하고 옛 DOM과 연결 수를 지운 뒤 종료를 기다려 같은 승인으로 새 빈 수신 문서를 연다. **첫 글자가 도착하기 전에는 표시 완료/시청 노출로 인정하지 않는다.** 새 브라우저 동의, 다른 저장 계정 선택, 자동 WGC 시작/중단, 시험 패턴 승인 소비는 없다.
+- 기존 `tests/companion-chat-video-test.cpp`의 실제 HUD/WebView2/WinHTTP/WGC + 서비스 HTTP·SQLite/ws에 **`redraw` 사용자 흐름**을 추가한다. 첫 텍스트를 합성 제공자가 보내기 전 게임 영상 식별 패턴·별도 수신 확인을 **명시적으로** 거쳐 WGC 출력 중 1회, 사용자가 **중지 · 검은 화면**으로 중지한 뒤 1회 채팅 표시를 다시 요청한다.
+- 각각 재시도 전에 독립 영상 단계·선택 epoch·동일 WGC 출력/검정 HWND·원래 소스·확인 식별 번호와 실제 출력 픽셀/덮개를 보존하고, 재시도 후에는 동일한 승인 역할·membership과 새 0-row ACK를 검사한다. WGC 활성 상태는 새 프레임 및 게임 픽셀, 검정 중지는 별도 검정 덮개·검정 픽셀 및 **기존 확인 없는 시작 거부**로 점검한다. 게임 영상의 새 시작은 이후 사용자의 원래 패턴·수신 확인 경로로만 가능하다.
+- 서버 driver에서 새 승인/계정 전환·자동 로그인 없이 원래 1개 browser consent, **추가 2회 명시적 same-approval 갱신**, 원래 3회 일반 return, 게임 채팅 첫 글자/중지·영상 소스 변경/검정/로그아웃과 다른 owner 보존을 검증한다. 기존 3개 video/chat CTest는 보존하고 4번째 `chat-view-companion-chat-video-redraw`를 추가한다(기존 60초 한도, `RUN_SERIAL`). 실제 캡처카드·물리 모니터 topology는 fixture로 제한하며 실장치 HUD 제외 지원을 주장하지 않는다.
 
-### 검증 및 남은 범위
+### 검증과 범위
 
-- **코드 커밋 `52ef97826b4399773f6e03a11f1988fbaccb8565`**: CHZZK contract **#76/run `38735851173`: completed/success, 전체 5개 job 성공**. Ubuntu/Windows × Node22·24의 서비스 테스트·엄격 타입·audit/lock 통과, Ubuntu24 **326/326·실패/skip0**, Chromium 관리 브라우저 **18/18** 통과. 이번 SHA에는 별도의 공식 OBS 광고 합성 workflow가 실행되지 않았다.
-- **Windows development #407/run `38735851151`, job `116424885748`: MSVC 빌드 성공, routine CTest **43/44·211.40초 전체 실패**. 새 `early-retry`를 포함한 실제 WinHTTP/HTTP/SQLite/ws·WebView2 `native-chat-switch` **26.65초 통과**, `native-display-client` 47.55초, `native-logout` 28.84초, `companion-chat-video` 5.46초 통과. 기존 공개 광고 `public-ad-browser`는 **13.07초 실패**, WebView2 탐색 이벤트 `started=1, completed=0, id=2`로 #406과 같은 표면 증상이 반복됐다. 디스플레이 재시도 조건·첫 텍스트 ACK/렌더 제한과 모든 기존 CTest 한도는 유지했다.
-- 이번 변경으로 서버 승인·첫 DOM/첫 글자 간헐 실패 D1 또는 WebView2 광고 탐색 D7의 **근본 원인이 해결됐다고 주장하지 않는다**. routine 성공이나 배포 qualification/장기 반복·실계정·물리 수신 HUD 제외·유료 광고 노출을 확보하지 못했다. 
-- D1의 #390/#392/#400 최초 DOM/첫 글자 간헐 실패 원인은 **미확정**이며 이번 명시적 복귀는 오류 발생 가능성 자체를 없앤 것으로 주장하지 않는다. D7 #406 WebView2 공개 광고 탐색 미완료·OBS #23 첫 픽셀 실패, D2 자원, D4 OBS frontend, D6 WGC 장시간/물리 수신 등은 별도 미해결이다.
+- **원격 Windows 빌드·CTest 및 관련 테스트 결과는 아직 미확정**. 합성 제공자, 테스트 수신 동의 및 단일 PC 창 좌표는 물리 투컴 수신 영상 인증이 아니며 실제 CHZZK·유료 광고·HP/정산 검증과도 구분한다.
+- D1 최초 DOM/WebView2 첫 글자 간헐 실패, D2 자원, D4 OBS 종료, D6 실제 WGC/장시간 캡처, D7 WebView2/OBS CEF 간헐 초기화는 원인/실기기 검증 전 미해결로 유지한다. 신규 진단·한도 증가·변경 없는 재실행으로 결과를 미화하지 않는다.
 
 ## G1. 한 화면의 작업과 개인 채팅
 
@@ -84,6 +83,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-첫 화면 재표시의 Windows 실제 통합 결과를 확인한 뒤, **게임 PC의 영상 출력/검정 중지와 병행해 첫 채팅 표시를 다시 시도**하는 흐름을 연결한다. WGC 출력 대상·패턴·검정 덮개·수신 확인은 채팅 재표시와 독립적이어야 하며 사용자 명시적 동의 없이 비디오·광고를 켜지 않는다. 기존 D1/D7 간헐 실패는 원인/재현/실기기 검증 전 종결하지 않는다.
+이번 게임 영상 출력/검정 중지와 채팅 재표시가 동일 승인 아래서 독립적으로 움직이는 네이티브 CI를 먼저 확인한다. 통과 후에는 **첫 채팅 표시 실패 상태에서 사용자가 재표시를 직접 요청했는데, 그 사이 서버 승인이 철회된 경우**로 이어간다. 이전 DOM/카운트를 남기거나 저장된 다른 계정으로 바꾸지 않고, 영상 출력은 수신 동의/명시적 검정 중지 규칙대로 유지하며 재로그인을 요구해야 한다. D1/D7 반복 실패·실계정/장비 qualification을 완료로 취급하지 않는다.
 
 물리 수신 HUD 제외 전 G3 완료 금지. 실계정·장시간/배포·유료 노출·HP/보상 규격·인프라는 미완료다. 비밀은 대화/공개 저장소에 넣지 않는다. main·새 장기 브랜치·검증 태그·강제 push·옛 ZIP·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산은 사용하지 않는다.

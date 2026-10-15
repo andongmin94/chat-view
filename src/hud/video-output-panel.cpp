@@ -116,7 +116,10 @@ void VideoOutputPanel::show_chat_status() noexcept
     if (shown_chat_status_ == label) return;
     if (SetDlgItemTextW(panel_, kChatStatus, label)) shown_chat_status_ = label;
     SetDlgItemTextW(panel_, kChat, can_request_native_chat_return(status)
-        ? L"자체 채팅 복귀 · 연결창 열기" : L"자체 채팅 연결창 열기");
+        ? L"자체 채팅 복귀 · 연결창 열기"
+        : (status == NativeChatStatus::Connecting || status == NativeChatStatus::Receiving)
+            ? L"채팅 표시 확인 · 연결창 열기"
+            : L"자체 채팅 연결창 열기");
 }
 void VideoOutputPanel::show_step() noexcept
 {

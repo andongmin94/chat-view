@@ -51,7 +51,12 @@ class Fixture:
         assert self.process.stdin
         self.process.stdin.write(json.dumps({"op": op}) + "\n")
         self.process.stdin.flush()
-        return self.receive()
+        try:
+            return self.receive()
+        except AssertionError:
+            # A fixed parent opcode is not private provider/browser data.
+            # The child deliberately scrubs exception bodies and capabilities.
+            raise AssertionError(f"server fixture invariant during {op}") from None
 
     def close(self) -> None:
         if self.process.poll() is None:

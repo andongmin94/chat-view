@@ -44,7 +44,8 @@ export class DisplaySessionGateway {
 
   handle(request: IncomingMessage, response: ServerResponse): boolean {
     const polling = /^\/display\/login\/([a-f0-9]{32})$/u.exec(request.url ?? '');
-    const managed = polling || ['/display/login', '/display/exchange', '/display/refresh', '/display/signout'].includes(request.url ?? '');
+    const cancelling = /^\/display\/login\/([a-f0-9]{32})\/cancel$/u.exec(request.url ?? '');
+    const managed = polling || cancelling || ['/display/login', '/display/exchange', '/display/refresh', '/display/signout'].includes(request.url ?? '');
     if (!managed) return false;
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Referrer-Policy', 'no-referrer');
@@ -60,13 +61,14 @@ export class DisplaySessionGateway {
       const remember = request.headers['x-chatview-remember'];
       if (remember !== undefined && (request.url !== '/display/login' || remember !== '1'))
         throw new DisplayAccessError(400);
-      const result = polling ? this.login.poll(polling[1]!, authorization(request, 'ChatView-Login'))
+      const result = cancelling ? this.login.cancel(cancelling[1]!, authorization(request, 'ChatView-Login'))
+        : polling ? this.login.poll(polling[1]!, authorization(request, 'ChatView-Login'))
         : request.url === '/display/login' ? this.login.start(authorization(request, 'ChatView-Challenge'), remember === '1', requestedRole(request))
         : request.url === '/display/refresh' ? this.#access.resume(authorization(request, 'ChatView-Session'), requestedRole(request))
         : request.url === '/display/signout'
           ? (this.#access.signout(authorization(request, 'ChatView-Session')), { signedOut: true })
           : this.#access.exchange(authorization(request, 'ChatView-Ticket'));
-      this.#changed();
+      if (!cancelling) this.#changed();
       response.writeHead(200);
       response.end(JSON.stringify(result));
     } catch (error) {

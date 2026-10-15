@@ -254,7 +254,16 @@ LRESULT CALLBACK NativeChatConnection::procedure(HWND window, UINT message, WPAR
         if (LOWORD(wparam) == kDisconnect) {
             if (self->signing_out_) { self->notice(L"로그아웃 중입니다."); return 0; }
             self->auto_connect_pending_ = false;
-            self->end(L"연결을 종료했습니다. 서버 승인을 해제하려면 로그아웃을 선택하세요."); return 0;
+            if (self->active_ && self->awaiting_login_ && self->client_.cancel_pending_login()) {
+                // Stop private delivery immediately; the original worker alone
+                // can confirm or fail to confirm its server-side login cancel.
+                self->login_cancel_waiting_ = true;
+                self->clear_display();
+                self->notice(L"로그인 대기를 중지했습니다. 원래 서버 승인 요청의 취소를 확인 중입니다. 새 연결은 확인 뒤 직접 시작하세요.");
+            } else {
+                self->end(L"연결을 종료했습니다. 서버 승인을 해제하려면 로그아웃을 선택하세요.");
+            }
+            return 0;
         }
         if (LOWORD(wparam) == kResume) { self->resume_current(); return 0; }
         if (LOWORD(wparam) == kCompanionVideo) {
@@ -315,7 +324,7 @@ void NativeChatConnection::begin(std::wstring origin, std::wstring credential, b
     // new approval. Cancellation or a failed browser launch is not approval.
     // start() has validated the origin. This is a non-secret navigation target,
     // never an extra approval or a value read back from editable controls.
-    login_url_.clear(); service_origin_ = std::move(bound_origin);
+    login_cancel_waiting_ = false; login_url_.clear(); service_origin_ = std::move(bound_origin);
     awaiting_login_ = mode == DisplayAuthentication::Browser || mode == DisplayAuthentication::BrowserRemember;
     if (awaiting_login_) surface_.close();
     else if (!open_surface()) {
@@ -331,6 +340,9 @@ void NativeChatConnection::connect() noexcept
 {
     auto_connect_pending_ = false;
     try {
+        if (login_cancel_waiting_) {
+            notice(L"이전 로그인 요청의 서버 취소 결과를 확인 중입니다. 완료 후 다시 로그인하세요."); return;
+        }
         if (client_.running() || signing_out_) {
             notice(client_.login_pending()
                 ? L"같은 로그인 요청을 기다리고 있습니다. '브라우저 승인 페이지 다시 열기'에서 상태를 확인하세요."
@@ -360,7 +372,7 @@ void NativeChatConnection::connect() noexcept
 void NativeChatConnection::resume_current() noexcept
 {
     auto_connect_pending_ = false;
-    if (closed_ || !host_ || active_ || signing_out_ || client_.running()) {
+    if (closed_ || !host_ || active_ || signing_out_ || login_cancel_waiting_ || client_.running()) {
         notice(L"연결 또는 종료 처리 중입니다. 중복 복귀하지 않습니다."); return;
     }
     if (!hud_.webview_ready_ || hud_.shutting_down_ || hud_.system_suppressed() ||
@@ -449,6 +461,9 @@ void NativeChatConnection::forget() noexcept
 {
     auto_connect_pending_ = false;
     if (signing_out_) { notice(L"로그아웃 중입니다."); return; }
+    if (login_cancel_waiting_) {
+        notice(L"로그인 요청 취소 결과를 확인 중입니다. 승인 철회와는 다르므로 완료 후 다시 선택하세요."); return;
+    }
     // The client owns both in-run and remembered approvals. It cancels receipt,
     // clears only matching storage and revokes on its worker, never on this UI.
     signing_out_ = client_.sign_out();
@@ -487,6 +502,13 @@ void NativeChatConnection::tick() noexcept
             notice(confirmed ? L"현재 연결을 로그아웃했습니다. 서버 승인도 해제했습니다."
                 : L"로그아웃 미확인: 저장 정보 삭제 또는 서버 해제에 실패했습니다. 다시 로그아웃하거나 관리 화면에서 연결을 해제하세요.");
             return;
+        }
+        if (login_cancel_waiting_ && !client_.running()) {
+            const auto result = client_.take_login_cancel_outcome();
+            login_cancel_waiting_ = false;
+            notice(result == LoginCancelOutcome::Confirmed
+                ? L"원래 로그인 요청의 서버 취소를 확인했습니다. 열린 브라우저에서는 종료된 요청입니다. 새 연결은 로그인 / 연결에서 직접 시작하세요."
+                : L"로그인 대기는 중지됐지만 서버 취소는 확인되지 않았습니다. 열린 브라우저의 요청은 만료 또는 이미 수집됐을 수 있습니다. 새 로그인은 직접 시작하세요.");
         }
         if (auto_connect_pending_ && !approval_denied_ && !active_ && !client_.running() && hud_.webview_ready_ &&
             !hud_.system_suppressed() && !hud_.shutting_down_ && !hud_.capture_exclusion_failed_) {
@@ -611,7 +633,7 @@ void NativeChatConnection::tick() noexcept
 }
 void NativeChatConnection::close() noexcept
 {
-    closed_ = true; login_url_.clear(); service_origin_.clear();
+    closed_ = true; login_cancel_waiting_ = false; login_url_.clear(); service_origin_.clear();
     if (host_) { RemoveWindowSubclass(host_, host_procedure, kConnectHotkey); host_ = nullptr; }
     auto_connect_pending_ = false; client_.stop();
     connection_state_.reset();

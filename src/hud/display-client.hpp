@@ -9,6 +9,9 @@
 namespace chatview {
 enum class DisplayStatus { Idle, Connecting, AwaitingLogin, Receiving, Reconnecting, Denied, RoleMismatch, SignedOut, Ended, Failed };
 enum class DisplayAuthentication { OneTime, Remember, Saved, SignOut, Browser, BrowserRemember };
+// A local Stop is immediate; only a verified server reply proves the pending
+// browser request was cancelled. Unconfirmed includes already-collected grants.
+enum class LoginCancelOutcome { Confirmed, Unconfirmed };
 struct DisplayUpdate {
     DisplayStatus status = DisplayStatus::Idle;
     std::wstring envelope;
@@ -28,6 +31,10 @@ public:
                              DisplayAuthentication authentication = DisplayAuthentication::OneTime,
                              DisplayRole role = DisplayRole::Gaming) noexcept;
     void stop() noexcept;
+    // Explicitly cancel this running browser login (not an approved session).
+    // Starts bounded worker-side best-effort I/O and returns immediately.
+    [[nodiscard]] bool cancel_pending_login() noexcept;
+    [[nodiscard]] std::optional<LoginCancelOutcome> take_login_cancel_outcome() noexcept;
     // Explicit in-process return only: no disk lookup, login, role change or
     // persistence side effect. Refuses a running or logout-requested context.
     [[nodiscard]] bool can_resume_current() const noexcept;

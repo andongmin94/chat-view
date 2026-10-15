@@ -15,7 +15,7 @@ assert(executable, 'native test executable required');
 const snapshot = { state: 'subscribed', received: 1, messages: [
   { nickname: '검증 사용자', content: '안녕 😀 <img onerror=evil()>', messageTime: 1700000000000 },
 ] };
-for (const mode of ['gateway', 'gateway-gaming', 'login-cancel', 'login-expiry', 'login-denied', 'cancel', 'local-expiry', 'redirect', 'wrong-scope', 'wrong-role',
+for (const mode of ['gateway', 'gateway-gaming', 'login-cancel', 'login-cancel-unconfirmed', 'login-expiry', 'login-denied', 'cancel', 'local-expiry', 'redirect', 'wrong-scope', 'wrong-role',
   'wrong-session', 'bad-count', 'claimed-capture', 'missing-connection', 'invalid-json', 'binary', 'oversize', 'idle']) {
   const ui = mode === 'gateway' || mode === 'gateway-gaming' || mode.startsWith('login-');
   const role = mode === 'gateway-gaming' ? 'gaming' : 'streaming';
@@ -28,7 +28,7 @@ for (const mode of ['gateway', 'gateway-gaming', 'login-cancel', 'login-expiry',
   const frameConnection = { ...membership, gamingConnections: 1, streamingConnections: 0, captureState: 'unverified' as const };
   const gateway = new DisplayGateway(access, () => origin, () => snapshot);
   const sessionGateway = new DisplaySessionGateway(access, () => origin, () => gateway.changed());
-  let loginId = '', grantId = '', browserOpened = false, loginStarts = 0, loginPolls = 0;
+  let loginId = '', grantId = '', browserOpened = false, loginStarts = 0, loginPolls = 0, loginCancels = 0;
   let approved = false, denied = false;
   const ids: string[] = [];
   const startLogin = sessionGateway.login.start.bind(sessionGateway.login), pollLogin = sessionGateway.login.poll.bind(sessionGateway.login);
@@ -57,7 +57,16 @@ for (const mode of ['gateway', 'gateway-gaming', 'login-cancel', 'login-expiry',
       if (request.url === '/display/login') {
         assert.equal(request.headers['x-chatview-role'], role); loginStarts++;
       } else if (request.url === `/display/login/${loginId}`) loginPolls++;
-      else if (request.url === '/display/refresh') assert.equal(request.headers['x-chatview-role'], role);
+      else if (request.url === `/display/login/${loginId}/cancel`) {
+        loginCancels++;
+        assert(request.headers.authorization?.startsWith('ChatView-Login '));
+        if (mode === 'login-cancel-unconfirmed') {
+          // Apply the actual server cancellation but lose the HTTP response.
+          // The app must not interpret a transport failure as acknowledgement.
+          sessionGateway.login.cancel(loginId, request.headers.authorization!.slice('ChatView-Login '.length));
+          response.destroy(); return;
+        }
+      } else if (request.url === '/display/refresh') assert.equal(request.headers['x-chatview-role'], role);
       else assert.fail('native login must not submit a manual display ticket');
       assert(sessionGateway.handle(request, response)); return;
     }
@@ -140,8 +149,15 @@ for (const mode of ['gateway', 'gateway-gaming', 'login-cancel', 'login-expiry',
       assert(browserOpened && approved); assert.equal(loginStarts, mode.startsWith('login-') ? 2 : 1);
       assert.equal(new Set(ids).size, loginStarts, 'only explicit restarts create new requests');
       assert(loginPolls >= 1); assert.equal(requests, 0);
-      if (mode === 'login-cancel' || mode === 'login-expiry')
-        assert.equal(sessionGateway.login.view(ids[0]!).role, role, 'uncollected old request never acquired approval');
+      if (mode === 'login-cancel' || mode === 'login-cancel-unconfirmed') {
+        assert.equal(loginCancels, 1, 'exactly one server cancellation for the old browser request');
+        assert.throws(() => sessionGateway.login.view(ids[0]!), { status: 410 },
+          'old browser request remains closed after an explicit new login');
+      } else {
+        assert.equal(loginCancels, 0, 'hide, reopen, expiry and denial are not explicit cancel requests');
+        if (mode === 'login-expiry')
+          assert.equal(sessionGateway.login.view(ids[0]!).role, role, 'uncollected timed-out client has no approval');
+      }
       assert.equal(denied, mode === 'login-denied');
     } else assert.equal(requests, 1, `${mode}: no replay of the one-use exchange`);
     assert.equal(redirected, 0, 'credentials never follow a redirect');

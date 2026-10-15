@@ -23,6 +23,7 @@ struct NativeChatConnectionTestAccess {
     static HWND host(NativeChatConnection &c) { return c.host_; }
     static NativeChatSurface &surface(NativeChatConnection &c) { return c.surface_; }
     static bool active(NativeChatConnection &c) { return c.active_; }
+    static bool cancel_waiting(NativeChatConnection &c) { return c.login_cancel_waiting_; }
     static const std::optional<DisplayConnectionState> &connection(NativeChatConnection &c) { return c.connection_state_; }
 };
 struct NativeChatSurfaceTestAccess {
@@ -221,9 +222,17 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
         "original confirmation survives reopen, failure and edited controls");
 
     if (mode.starts_with("login-")) {
-        if (mode == "login-cancel") {
+        if (mode == "login-cancel" || mode == "login-cancel-unconfirmed") {
+            const auto before = GetTickCount64();
             SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(105, BN_CLICKED), 0);
-            expect(!client.login_pending(), "stop invalidates reopening before worker retirement");
+            expect(GetTickCount64() - before < 200U, "stop never waits for server cancel I/O");
+            expect(!client.login_pending() && !client.can_resume_current() &&
+                chatview::NativeChatConnectionTestAccess::cancel_waiting(connection),
+                "stop fences the old browser request locally without claiming server cancellation");
+            expect(control_text(dialog, 106).find(L"확인 중") != std::wstring::npos &&
+                control_text(dialog, 118).empty(), "pending cancellation clears confirmation code immediately");
+            SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(104, BN_CLICKED), 0);
+            expect(browser_probe.calls == 4U, "new login cannot start during asynchronous cancellation");
         } else {
             if (mode == "login-denied") std::cout << "deny-login\n" << std::flush;
             // No connection.tick(): test the client's request fence even when
@@ -233,7 +242,15 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
         }
         reopen(); expect(browser_probe.calls == 4U, "terminal request cannot be reopened before the next UI tick");
         await([&] { return !client.running() && !chatview::NativeChatConnectionTestAccess::active(connection); },
-            "old login ends without an automatic replacement", &connection, 2000U);
+            "old login ends without an automatic replacement", &connection,
+            mode == "login-cancel-unconfirmed" ? 5000U : 2000U);
+        if (mode == "login-cancel" || mode == "login-cancel-unconfirmed") {
+            const auto expected = mode == "login-cancel" ? L"서버 취소를 확인했습니다" : L"서버 취소는 확인되지 않았습니다";
+            await([&] { return control_text(dialog, 106).find(expected) != std::wstring::npos; },
+                "native panel reports confirmed or unconfirmed cancellation after worker retirement", &connection);
+            expect(!chatview::NativeChatConnectionTestAccess::cancel_waiting(connection),
+                "terminal cancel result is consumed only once");
+        }
         expect(!IsWindowEnabled(GetDlgItem(dialog, 117)) &&
             chatview::NativeChatConnectionTestAccess::login_url(connection).empty() && control_text(dialog, 118).empty() &&
             !client.can_resume_current(),

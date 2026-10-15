@@ -288,6 +288,10 @@ ${this.#form(b, `/login/${id}/deny`, '새 송출 요청 취소')}`, 409);
         empty(request);
         const remember = request.headers['x-chatview-remember'];
         if (remember !== undefined && (url.pathname !== '/display/login' || remember !== '1')) throw new DisplayAccessError(400);
+        const cancelling = /^\/display\/login\/([a-f0-9]{32})\/cancel$/u.exec(url.pathname);
+        if (cancelling) {
+          this.#json(response, this.login.cancel(cancelling[1]!, auth(request, 'ChatView-Login'))); return;
+        }
         const polling = /^\/display\/login\/([a-f0-9]{32})$/u.exec(url.pathname);
         if (url.pathname === '/display/login') {
           this.#json(response, this.login.start(auth(request, 'ChatView-Challenge'), remember === '1', requestedRole(request))); return;

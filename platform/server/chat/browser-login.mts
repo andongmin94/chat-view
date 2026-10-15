@@ -8,7 +8,7 @@ export const LOGIN_WINDOW_MS = 300_000;
 export const LOGIN_POLL_MS = 1000;
 const MAX_PENDING = 16;
 type Pending = { challenge: string; remember: boolean; role: ConnectionRole; expires: number; polled: number;
-  state: 'pending' | 'approved' | 'denied'; owner?: string; generation?: number; access?: DisplayAccess;
+  state: 'pending' | 'approved' | 'denied' | 'cancelled'; owner?: string; generation?: number; access?: DisplayAccess;
   retry?: boolean };
 
 // The URL id cannot poll or obtain display secrets. Bind the creator only after
@@ -31,6 +31,10 @@ export class BrowserLogin {
     if (!entry) throw new DisplayAccessError(410);
     return entry;
   }
+  #verify(entry: Pending, verifier: unknown) {
+    if (!validSecret(verifier) || !timingSafeEqual(Buffer.from(hashSecret(verifier)), Buffer.from(entry.challenge)))
+      throw new DisplayAccessError(401);
+  }
   start(challenge: unknown, remember: boolean, role: ConnectionRole = 'gaming') {
     this.#prune();
     if (!validSecret(challenge) || (role !== 'gaming' && role !== 'streaming')) throw new DisplayAccessError(400);
@@ -42,6 +46,7 @@ export class BrowserLogin {
   }
   view(id: string) {
     const entry = this.#get(id);
+    if (entry.state === 'cancelled') throw new DisplayAccessError(410);
     if (entry.state !== 'pending') throw new DisplayAccessError(409);
     return { remember: entry.remember, role: entry.role, code: id.slice(-6).toUpperCase() };
   }
@@ -58,6 +63,7 @@ export class BrowserLogin {
   }
   approve(id: string, access = this.#access) {
     const entry = this.#get(id);
+    if (entry.state === 'cancelled') throw new DisplayAccessError(410);
     if (entry.state !== 'pending') throw new DisplayAccessError(409);
     const owner = access?.ownerId();
     if (!access || !owner) throw new DisplayAccessError(401);
@@ -67,13 +73,27 @@ export class BrowserLogin {
   }
   deny(id: string) {
     const entry = this.#get(id);
+    if (entry.state === 'cancelled') throw new DisplayAccessError(410);
     if (entry.state !== 'pending') throw new DisplayAccessError(409);
     entry.state = 'denied';
   }
+  cancel(id: string, verifier: unknown) {
+    const entry = this.#get(id);
+    this.#verify(entry, verifier);
+    // Only an uncollected request is cancellable. Successful poll deletes it
+    // synchronously; its issued approval can only be revoked through signout.
+    // Keep a bounded proof-bound tombstone until the ORIGINAL deadline so a
+    // lost cancellation response can be retried without inventing completion
+    // for a missing, expired or already-collected request.
+    entry.state = 'cancelled';
+    entry.owner = undefined; entry.access = undefined; entry.generation = undefined;
+    entry.retry = false;
+    return { cancelled: true as const };
+  }
   poll(id: string, verifier: unknown) {
     const entry = this.#get(id);
-    if (!validSecret(verifier) || !timingSafeEqual(Buffer.from(hashSecret(verifier)), Buffer.from(entry.challenge)))
-      throw new DisplayAccessError(401);
+    this.#verify(entry, verifier);
+    if (entry.state === 'cancelled') throw new DisplayAccessError(410);
     const now = this.#now();
     if (now - entry.polled < LOGIN_POLL_MS) throw new DisplayAccessError(429);
     entry.polled = now;

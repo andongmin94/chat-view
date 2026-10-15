@@ -26,7 +26,7 @@ public:
         // Keep ticking only while a real panel still displays "Stopping";
         // otherwise its explicit return button may remain disabled forever.
         const bool pending_status = dialog_ && displayed_status_ == NativeChatStatus::Stopping;
-        return active_ || auto_connect_pending_ || signing_out_ || client_.running() ||
+        return active_ || auto_connect_pending_ || signing_out_ || login_cancel_waiting_ || client_.running() ||
             pending_status ? 100U : INFINITE;
     }
     void close() noexcept;
@@ -72,6 +72,7 @@ private:
     bool remembered_ = false;
     bool reconnecting_ = false;
     bool signing_out_ = false;
+    bool login_cancel_waiting_ = false; // Await worker evidence, not a server-side revocation.
     bool approval_denied_ = false; // Last server denial, not authority or a transport-error guess.
     bool pending_subscribed_ = false;
     bool in_flight_subscribed_ = false;

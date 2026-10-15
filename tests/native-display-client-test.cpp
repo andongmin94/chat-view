@@ -47,6 +47,13 @@ void expect_video_scope(HWND dialog)
     expect(scope && IsWindowVisible(scope) &&
         text == L"수신 영상의 HUD 제외: 미검증\n채팅 연결·OBS 활성 보고는 영상 검증이 아닙니다.",
         "video warning is independent of successful chat/role delivery");
+    RECT panel_client{}, scope_bounds{};
+    expect(GetClientRect(dialog, &panel_client) && GetWindowRect(scope, &scope_bounds),
+        "video warning has bounded real panel geometry");
+    MapWindowPoints(nullptr, dialog, reinterpret_cast<POINT *>(&scope_bounds), 2);
+    expect(scope_bounds.left >= 0 && scope_bounds.top >= 0 &&
+        scope_bounds.right <= panel_client.right && scope_bounds.bottom <= panel_client.bottom,
+        "video warning fits both the streaming and gaming panel client area");
     RECT client{};
     expect(GetClientRect(scope, &client) != FALSE, "video scope control bounds");
     const HDC dc = GetDC(scope);
@@ -251,7 +258,7 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
             "old login ends without an automatic replacement", &connection,
             mode == "login-cancel-unconfirmed" ? 5000U : 2000U);
         if (mode == "login-cancel" || mode == "login-cancel-unconfirmed") {
-            const auto expected = mode == "login-cancel" ? L"서버 취소를 확인했습니다" : L"서버 취소는 확인되지 않았습니다";
+            const auto expected = mode == "login-cancel" ? L"서버 취소를 확인했습니다" : L"서버 취소 미확인";
             await([&] { return control_text(dialog, 106).find(expected) != std::wstring::npos; },
                 "native panel reports confirmed or unconfirmed cancellation after worker retirement", &connection);
             expect(!chatview::NativeChatConnectionTestAccess::cancel_waiting(connection),

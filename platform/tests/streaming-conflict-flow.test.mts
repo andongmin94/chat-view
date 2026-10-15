@@ -161,7 +161,9 @@ for (const ending of ['deny', 'expire', 'clear'] as const) {
       const closed = await f.request(request.verificationPath, { headers: { Cookie: alice.b.cookie } });
       assert.equal(closed.status, ending === 'deny' ? 409 : 410);
       const html = await closed.text();
-      assert.match(html, /채팅 연결 요청 종료/u); assert.doesNotMatch(html, /\/approve|\/revoke|<form/u);
+      assert.match(html, ending === 'deny'
+        ? /data-login-request="unavailable"/u : /data-login-request="ended"/u);
+      assert.doesNotMatch(html, /\/approve|\/revoke|<form/u);
       assert(f.store.find(alice.lease.sessionToken));
       assert.equal((await f.post(`${request.verificationPath}/approve`, alice.b)).status, ending === 'deny' ? 409 : 410);
     } finally { await f.close(); }

@@ -19,6 +19,9 @@
 ### 검사 및 원격 상태
 
 - 이전 세션의 `chatview-obs-login-cancel.patch`에 포함된 서비스 변경·2개 신규 테스트는 로컬 Node 22.16.0 실제 SQLite 및 HTTP에서 기존5+신규14 **19/19 통과**했다. 서비스와 네이티브를 연결한 이번 조합의 Windows 컴파일·CTest 및 플랫폼 전체 CI는 **아직 미확정**이며 코드 반영 후 해당 SHA의 결과로 갱신한다. 로컬 합성 계정·HTTP·브라우저 콜백은 실계정 치지직 또는 물리 송출 증거가 아니다.
+- **원격 코드 `1aa2144b029765130c9f2edbc332470807d99e25` 검사:** CHZZK contract #70/run `38724246900` 완료·성공, 5개 job 전부 통과. Ubuntu24 Node 테스트 **326/326**, 실패·취소·skip 0, 엄격 타입·audit0건; Chromium **16/16**. 공식 OBS public ad flow #21/run `38724246919` 성공, OBS32.2.2 합성 PNG **13/13**; 실방송/유료 노출 근거는 아니다.
+- **Windows development #400/run `38724247103`, job `116386131562`: 빌드 성공, CTest **42/44 실패(208.04초)**. 신규 승인 취소/응답 유실을 포함한 `native-display-client` **통과 40.91초**. 기존 `native-logout`은 짧은 프로세스 실행 뒤 PID 기반 폴더가 이미 존재해 실패(11.09초), `companion-chat-video`는 최초 빈 DOM 표시 15초 실패(17.76초). #400 전체 성공이 아니며 두 실패를 취소 코드의 성공으로 대체하지 않는다.
+- **후속 수정:** 기존 `native-chat-switch`와 같은 고유 임시 경로 예약을 `native-logout`에 적용한다. companion 첫 표시 문제는 원인을 입증하지 못했으므로 **기존 검사/제한을 보존**하고 실패 시 비밀 없는 상태 플래그를 출력해 D1을 조사한다. Windows 후속 CI 결과는 아직 미확정이다. 변경 없는 재실행으로 성공을 주장하지 않는다.
 - D1/D2/D4/D6/D7·OBS #18 첫 CreateScene 실패, 장시간/실계정·물리 투컴 수신의 HUD 제외·유료 노출/HP/지급·설치/자원/배포 qualification은 계속 미완료다.
 
 ## G1. 한 화면의 작업과 개인 채팅
@@ -71,7 +74,7 @@ HUD가 보이면서 수신 영상에는 없어야 한다. HUD 숨김은 보호�
 
 | ID | 근거와 범위 |
 | --- | --- |
-| D1 | `82f36a6`/#294 반복3 첫 gateway frame 미확인; #366 첫 chat-switch render 실패; #390 native-logout unrelated 첫표시15초 실패(로그아웃·다른 계정 저장 전, 전체41/42·165.70초); #392 chat-switch revoked 최초 빈 표시15초 실패(철회 전, 전체43/44·189.48초). 실패 단계/타이머 인과는 미확정. #393 성공만으로 종료하지 않는다. G4/R-01·실계정 남음. |
+| D1 | `82f36a6`/#294 반복3 첫 gateway frame 미확인; #366 첫 chat-switch render 실패; #390 native-logout unrelated 첫표시15초 실패(로그아웃·다른 계정 저장 전, 전체41/42·165.70초); #392 chat-switch revoked 최초 빈 표시15초 실패(철회 전, 전체43/44·189.48초). 실패 단계/타이머 인과는 미확정. #400 companion-chat-video 첫 빈 DOM 표시15초 실패를 추가한다. #393 성공만으로 종료하지 않는다. G4/R-01·실계정 남음. |
 | D2 | #292 후반 핸들+104>64; #294 초기+284>256, 후반+8. R-02 한도 유지. [자원 조사](resource-growth-investigation.md). |
 | D4 | 동기 OBS UI-task/join·borrowed item `510f8e1`, 좌표#354, core queue `66fd5a6`/#355 보완/통과. 실제 frontend 종료/장면 전환·qualification 남음. Control Center에 Q4/Q5 시험 UI 없음. |
 | D6 | #339 첫 WGC픽셀10초 실패/#340 미재현; #353 resize/여백 인과 미확정. #359 burst9는 `4cbcc5e`/#361 같은12단계/강화 픽셀 통과. #365 sequence6 received601×201/surface600×500/pool601×500 Waiting·검정. #366 same-pool 재시작0x8000FFFF. `4b711c2`/#367 새 pool/session12단계·lifecycle 통과이나 첫표시/장시간/물리 수신 남음. |

@@ -90,8 +90,13 @@ void run(const std::wstring &origin, const std::wstring &auxiliary, const std::s
     const bool remembered = mode == "remembered" || mode == "storage-failure" || mode == "cancel";
     const bool stored_only = mode == "stored-only";
     wchar_t temporary[MAX_PATH]{}; expect(GetTempPathW(MAX_PATH, temporary) != 0, "temporary profile");
-    const auto profile = std::wstring(temporary) + L"ChatView-Logout-" + std::to_wstring(GetCurrentProcessId());
-    expect(CreateDirectoryW(profile.c_str(), nullptr) != FALSE, "isolated profile creation");
+    // Short-lived logout fixture processes may recycle a PID. Reserve a
+    // truly unique filesystem path before using it as a WebView2/DPAPI profile.
+    wchar_t unique[MAX_PATH]{};
+    expect(GetTempFileNameW(temporary, L"CVL", 0, unique) != 0, "allocate isolated profile path");
+    expect(DeleteFileW(unique) != FALSE && CreateDirectoryW(unique, nullptr) != FALSE,
+        "isolated profile creation");
+    const std::wstring profile(unique);
     expect(SetEnvironmentVariableW(L"LOCALAPPDATA", profile.c_str()) != FALSE, "isolated DPAPI storage");
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     chatview::HudWindow hud;

@@ -22,6 +22,17 @@ struct NativeChatConnectionTestAccess {
     static auto &surface(NativeChatConnection &c) { return c.surface_; }
     static auto &client(NativeChatConnection &c) { return c.client_; }
     static bool first_text(NativeChatConnection &c) { return c.first_text_rendered_; }
+    static void first_display_evidence(NativeChatConnection &c) {
+        // Failure-only bounded phase flags: no URL, verifier, token or chat.
+        std::cerr << "Companion first chat phase: active=" << c.active_
+            << " worker=" << c.client_.running() << " awaiting_login=" << c.awaiting_login_
+            << " surface_ready=" << c.surface_.ready()
+            << " frames=" << c.surface_.rendered_frames() << " rows=" << c.surface_.rendered_messages()
+            << " rejected=" << c.surface_.rejected_frames()
+            << " metadata=" << c.connection_state_.has_value()
+            << " pending_frame=" << !c.pending_.empty()
+            << " awaiting_render=" << (c.awaiting_frame_ != 0U) << '\n';
+    }
 };
 struct NativeChatSurfaceTestAccess {
     static ICoreWebView2 *core(NativeChatSurface &s) { return s.webview_.Get(); }
@@ -289,7 +300,13 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
         "new chat status fits inside the existing panel");
     SetDlgItemTextW(dialog, 101, origin.c_str()); SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
     command(dialog, 104);
-    flow.wait([&] { return Chat::surface(chat).rendered_frames() >= 1 && Chat::membership(chat).has_value(); }, "subscribed empty own DOM");
+    try {
+        flow.wait([&] { return Chat::surface(chat).rendered_frames() >= 1 && Chat::membership(chat).has_value(); },
+            "subscribed empty own DOM");
+    } catch (...) {
+        Chat::first_display_evidence(chat);
+        throw; // Preserve the original readiness condition and 15-second bound.
+    }
     expect(Chat::surface(chat).rendered_messages() == 0 && !Chat::first_text(chat), "empty subscription is not first text");
     flow.state(Status::Receiving, controls);
     // Model a retry notification already dequeued before the native owner

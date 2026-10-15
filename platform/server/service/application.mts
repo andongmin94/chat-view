@@ -345,8 +345,15 @@ ${this.#form(b, `/login/${id}/deny`, '새 송출 요청 취소')}`, 409);
         }
         catch (error) {
           if (!(error instanceof DisplayAccessError) || ![409, 410].includes(error.status)) throw error;
-          this.#page(response, '채팅 연결 요청 종료',
-            '<section data-login-request="ended"><p>이전 승인 요청이 취소·거부·수집 완료됐거나 만료됐습니다. 이 페이지에서 승인할 수 없습니다.</p><p>앱의 로그인 / 연결에서 새 요청을 시작하고, 새 브라우저 페이지의 확인 번호·역할을 현재 앱 화면과 대조하세요. 기존 연결은 자동으로 변경하지 않았습니다.</p></section><p><a href="/account">내 연결 관리</a></p>', error.status); return;
+          // A 409 is ambiguous to this browser: another browser may already
+          // have consented while the initiating app has yet to collect it.
+          // Only 410 proves cancellation, expiry or completed collection.
+          const ended = error.status === 410;
+          this.#page(response, ended ? '채팅 연결 요청 종료' : '이 페이지에서 동의할 수 없음',
+            ended
+              ? '<section data-login-request="ended"><p>이전 승인 요청이 취소·수집 완료됐거나 만료됐습니다. 이 페이지에서는 승인할 수 없습니다.</p><p>앱의 로그인 / 연결에서 새 요청을 시작하고, 새 브라우저 페이지의 확인 번호·역할을 현재 앱 화면과 대조하세요. 기존 연결은 자동으로 변경하지 않았습니다.</p></section><p><a href="/account">내 연결 관리</a></p>'
+              : '<section data-login-request="unavailable"><p>이 브라우저에서 더는 동의할 수 없습니다. 요청이 거부됐거나 다른 브라우저의 동의를 앱이 아직 수집하지 않았을 수 있습니다.</p><p>현재 앱의 확인 번호가 다르면 이전 페이지로 취급하세요. 여기서 다른 요청을 승인하거나 기존 PC 연결을 변경할 수는 없습니다. 앱에서 현재 승인 상태를 확인하세요.</p></section><p><a href="/account">내 연결 관리</a></p>',
+            error.status); return;
         }
         if (!b) { this.#createBrowser(response); this.#redirect(response, url.pathname); return; }
         const account = b.owner ? this.#creators.describe(b.owner) : undefined;

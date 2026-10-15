@@ -350,7 +350,9 @@ def run() -> None:
                             flow.page.get_by_role("button", name="이 요청 취소", exact=True).click()
                             expect(flow.page.locator("h1")).to_have_text("연결 요청 처리됨")
                             flow.page.goto(f.origin + old["path"])
-                            expect(flow.page.locator('[data-login-request="ended"]')).to_have_count(1)
+                            expect(flow.page.locator('[data-login-request="unavailable"]')).to_have_count(1)
+                            expect(flow.page.locator("body")).to_contain_text("동의를 앱이 아직 수집하지 않았을 수 있습니다")
+                            expect(flow.page.locator('form[action$="/approve"]')).to_have_count(0)
                         assert f.command("stale-check")["ok"]
                         flow.page.goto(f.origin + current["path"])
                         expect(flow.page.locator('[data-login-request="pending"]')).to_have_count(1)
@@ -369,7 +371,9 @@ def run() -> None:
                         expect(flow.page.locator("[data-login-code]")).to_have_text(current["code"])
                         assert f.command("stale-collect")["ok"]
                         flow.page.goto(f.origin + old["path"])
-                        expect(flow.page.locator('[data-login-request="ended"]')).to_have_count(1)
+                        expect(flow.page.locator('[data-login-request="' +
+                            ("ended" if server_cancelled else "unavailable") + '"]')).to_have_count(1)
+                        expect(flow.page.locator('form[action$="/approve"]')).to_have_count(0)
                         flow.image("old-closed-new-collected-" + ("reply-lost" if server_cancelled else "browser-cancel"))
                         assert f.command("check")["ok"]
                         results.append("old browser consent " + ("cancelled after lost reply" if server_cancelled

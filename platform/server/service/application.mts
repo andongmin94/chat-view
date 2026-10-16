@@ -166,8 +166,9 @@ export class PlatformApplication {
   }
   #confirmCampaignView(response: ServerResponse, b: Browser): boolean {
     const sender = this.#creators.describe(b.owner!).connections.find(c => c.role === 'streaming');
-    if (sender && b.campaignView?.owner === b.owner &&
-        b.campaignView.connectionId === sender.connectionId) return true;
+    const reviewed = b.campaignView;
+    if (sender && reviewed && reviewed.owner === b.owner &&
+        reviewed.connectionId === sender.connectionId) return true;
     // An old page, replaced sender role, expired browser identity or competing
     // campaign Stop is not new campaign consent. No silent replay/redirect.
     b.campaignView = undefined;

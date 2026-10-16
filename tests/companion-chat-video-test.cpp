@@ -278,6 +278,7 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
 {
     const bool revoked = mode == L"revoked" || mode == L"reapproved";
     const bool redraw = mode == L"redraw";
+    const bool revoke_during_redraw = mode == L"redraw-revoked-live" || mode == L"redraw-revoked-black";
     Source first(source_path), second(source_path);
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     chatview::HudWindow hud;
@@ -320,6 +321,112 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
     const auto empty_frames = Chat::surface(chat).rendered_frames();
     const auto approved = Chat::membership(chat)->membership;
     HWND game = nullptr, replacement = nullptr;
+    if (revoke_during_redraw) {
+        const bool playing = mode == L"redraw-revoked-live";
+        flow.wait([&] { game = source_window(first.pid); return game != nullptr; },
+            "chosen source ready for video and pending first chat display");
+        Video::pattern(video, game);
+        const HWND output = Video::output(video), cover = Video::cover(video);
+        expect(output && cover && Video::accept(video),
+            "explicit receiver consent starts the independent game-window WGC output");
+        flow.wait([&] { return Video::capture(video).running() && !IsWindowVisible(cover) &&
+            pixels(RGB(20,100,180)); }, "fresh game pixels before the pending chat redraw", 10000);
+        if (!playing) {
+            command(controls, 205);
+            flow.wait([&] { return !Video::capture(video).running() &&
+                IsWindowVisible(cover) && pixels(RGB(0,0,0)); },
+                "user-selected black output before the pending chat redraw", 2000);
+            expect(!Video::accept(video), "stopped video cannot reuse its consumed receiver confirmation");
+        }
+        expect(chatview::save_connection({origin, other, true}),
+            "another creator's remembered approval is available but may not replace the current one");
+        const auto epoch = Video::epoch(video), identifier = Video::check(video).identifier();
+        const auto frames = Video::capture(video).snapshot().frames;
+        expect(!Chat::first_text(chat) && Chat::surface(chat).rendered_messages() == 0 &&
+            Chat::membership(chat) && Chat::membership(chat)->membership == approved &&
+            text(dialog, 112) == L"현재 승인으로 채팅 표시 다시 시도",
+            "only the actual subscribed no-first-text document offers a same-approval redraw");
+        // The browser login and the socket metadata are present at this point;
+        // the real server waits for an explicit native click, not a timer.
+        flow.checkpoint("redraw-revoke-ready");
+        command(dialog, 112);
+        expect(Chat::retry_pending(chat) && !Chat::membership(chat) && !Chat::first_text(chat) &&
+            !Chat::surface(chat).ready() && Chat::surface(chat).rendered_messages() == 0 &&
+            !Chat::client(chat).login_pending(),
+            "the owner clears private DOM/socket status before any authorization retry");
+        expect(text(dialog, 110).find(L"서버 채팅 연결: 게임 1") == std::wstring::npos &&
+            !IsWindowEnabled(GetDlgItem(dialog, 112)),
+            "no stale peer count or duplicate redraw eligibility during retirement");
+        command(dialog, 112); command(dialog, 104); // No second consent or replacement account.
+        expect(Chat::retry_pending(chat) && !Chat::membership(chat),
+            "duplicate commands cannot revive the retiring display client");
+        expect(Video::output(video) == output && Video::cover(video) == cover &&
+            Video::source(video) == game && Video::epoch(video) == epoch &&
+            Video::check(video).identifier() == identifier && Video::requested(video) == playing,
+            "explicit redraw never changes the independently selected output or its consent");
+        expect(playing ? (!IsWindowVisible(cover) && pixels(RGB(20,100,180)))
+                       : (IsWindowVisible(cover) && pixels(RGB(0,0,0))),
+            "game-video or black-cover pixels remain unchanged before revoking chat approval");
+        // A deterministic server/worker race boundary: unlike Flow::checkpoint,
+        // this fixture-only read does not pump owner messages and therefore
+        // cannot renew a session before the test parent revokes its exact ID.
+        std::cout << "redraw-revoke-started\n" << std::flush;
+        std::string acknowledge; std::getline(std::cin, acknowledge);
+        expect(acknowledge == "continue", "fixture revoked the original server approval before retry");
+        flow.wait([&] {
+            const auto status = SendMessageW(hud_window, RegisterWindowMessageW(chatview::kQueryNativeChatMessageName), 0, 0);
+            return status == static_cast<LRESULT>(Status::Idle) && !Chat::retry_pending(chat) &&
+                !Chat::client(chat).running() && !Chat::client(chat).can_resume_current() &&
+                !Chat::membership(chat) && !Chat::first_text(chat) &&
+                !Chat::surface(chat).ready();
+        }, "server rejects the retired approval during the explicit first-display redraw");
+        flow.state(Status::Idle, controls);
+        const auto denied = [&] {
+            const auto summary = text(dialog, 110);
+            expect(summary.find(L"이전 채팅 승인: 서버 거부") != std::wstring::npos &&
+                summary.find(L"복귀 불가") != std::wstring::npos &&
+                summary.find(L"확인되지 않음") != std::wstring::npos &&
+                summary.find(L"서버 채팅 연결: 게임 1") == std::wstring::npos &&
+                !IsWindowEnabled(GetDlgItem(dialog, 112)) &&
+                text(dialog, 106).find(L"다시 승인") != std::wstring::npos,
+                "server denial refuses old return authority, removes prior socket counts and requires new consent");
+        };
+        denied();
+        command(controls, 209); // Only open the already protected dialog.
+        expect(IsWindowVisible(dialog) && Chat::dialog(chat) == dialog,
+            "video panel reopens the same native dialog without triggering another login");
+        command(dialog, 112);
+        expect(!Chat::client(chat).running() && !Chat::membership(chat) &&
+            browser_requests == 1, "a stale return click cannot exchange approval or open a browser");
+        denied();
+        auto saved = chatview::load_connection();
+        const bool unrelated = saved && saved->credential == other && saved->origin == origin;
+        if (saved) SecureZeroMemory(saved->credential.data(), saved->credential.size() * sizeof(wchar_t));
+        expect(unrelated, "revoked current approval does not read, overwrite or delete another creator's saved one");
+        expect(Video::output(video) == output && Video::cover(video) == cover &&
+            Video::source(video) == game && Video::epoch(video) == epoch &&
+            Video::check(video).identifier() == identifier && Video::requested(video) == playing,
+            "server revocation does not stop or reselect the independent WGC output");
+        if (playing) {
+            flow.wait([&] { return Video::capture(video).snapshot().frames > frames &&
+                !IsWindowVisible(cover) && pixels(RGB(20,100,180)); },
+                "game pixels and fresh WGC frames continue even after revoked chat redraw", 10000);
+        } else {
+            expect(!Video::capture(video).running() && IsWindowVisible(cover) &&
+                pixels(RGB(0,0,0)) && !Video::accept(video),
+                "a revoked chat redraw cannot uncover black output or silently reuse prior receiver consent");
+        }
+        expect(IsWindowVisible(hud_window) &&
+            !GetModuleHandleW(L"obs.dll") && !GetModuleHandleW(L"obs-frontend-api.dll"),
+            "OBS-free companion retains local HUD and never loads OBS after chat denial");
+        flow.checkpoint("redraw-revoke-validated");
+        command(controls, 205);
+        flow.wait([&] { return !Video::capture(video).running() &&
+            IsWindowVisible(cover) && pixels(RGB(0,0,0)); },
+            "explicit final video stop remains independent of rejected chat");
+        video.close(); chat.close(); hud.destroy();
+        return;
+    }
     if (redraw) {
         // Do not publish a provider message yet. This deliberately reproduces
         // an authenticated, subscribed empty DOM while independent WGC video
@@ -545,7 +652,8 @@ int wmain(int argc, wchar_t **argv)
         expect(argc == 3, "source fixture and explicit flow mode required");
         const std::wstring_view mode(argv[2]);
         expect(mode == L"return" || mode == L"revoked" || mode == L"reapproved" ||
-            mode == L"redraw", "known flow mode");
+            mode == L"redraw" || mode == L"redraw-revoked-live" ||
+            mode == L"redraw-revoked-black", "known flow mode");
         std::string origin, auxiliary; std::getline(std::cin, origin); std::getline(std::cin, auxiliary);
         expect(origin.size() < 2048 && origin.starts_with("http://127.0.0.1:") && auxiliary.size() == 64, "bounded fixture input");
         std::wstring other(auxiliary.begin(), auxiliary.end());

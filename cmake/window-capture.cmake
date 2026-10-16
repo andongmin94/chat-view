@@ -140,4 +140,17 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/companion-chat-video-test.mts"
         "$<TARGET_FILE:chat-view-companion-chat-video-test>" "$<TARGET_FILE:chat-view-window-capture-test>" redraw)
     set_tests_properties(chat-view-companion-chat-video-redraw PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+
+    # During explicit first-display redraw, server owner revokes exactly this
+    # gaming connection BEFORE its renewal. Live WGC and user-stopped black
+    # output must remain independent; no replacement browser approval.
+    foreach(redraw_mode IN ITEMS live black)
+        add_test(NAME chat-view-companion-chat-redraw-revoked-${redraw_mode}
+            COMMAND "${CHATVIEW_NODE_EXECUTABLE}" --experimental-strip-types
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/companion-chat-redraw-revocation-test.mts"
+            "$<TARGET_FILE:chat-view-companion-chat-video-test>" "$<TARGET_FILE:chat-view-window-capture-test>"
+            "redraw-revoked-${redraw_mode}")
+        set_tests_properties(chat-view-companion-chat-redraw-revoked-${redraw_mode}
+            PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+    endforeach()
 endif()

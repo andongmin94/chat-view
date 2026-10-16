@@ -4,24 +4,17 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 게임 PC의 게임 영상 출력/검정 중지 ↔ 첫 채팅 표시 명시적 재시도
+## 현재 흐름: 게임 PC 채팅 첫 표시 재시도 중 서버 승인 철회
 
-시작 OBS HEAD `768492e745d7c0e05d3c29b3d3d8af915ba3adb4`에서 AGENTS → PRODUCT → development-workflow → architecture → 이 문서를 순서대로 읽었다. 직전 네이티브 #407/run `38735851151`에서 새 `early-retry` 포함 `native-chat-switch` 26.65초 통과, 전체 43/44·211.40초 실패(기존 D7 `public-ad-browser` WebView2 `started=1/completed=0`). CHZZK #76/run `38735851173`은 326/326·Chromium18/18 성공했다. 이번 커밋 성공으로 재사용하지 않는다.
+시작 OBS HEAD `88b302b0284a5a7ef0ad3ac567b66292f13906df`에서 AGENTS → PRODUCT → development-workflow → architecture → 이 문서를 순서대로 확인했다. 직전 `c29044cbae71306716502a90fadc14a93c507a2c`/#408/run `38761837035`은 MSVC 빌드 성공·routine CTest **40/45 실패·255.48초**였지만 신규 `companion-chat-video-redraw` 14.36초와 기존 3개 영상/채팅 회귀 검사는 통과했다. 첫 HUD/채팅 준비·OBS 초기화·공개 광고 브라우저 5개 실패의 원인/공통성은 미확정이다. 단발 기능 통과를 release 또는 반복 안정성으로 확대하지 않는다.
 
-### 구현
+### 구현·상태 경계
 
-- 게임 PC 영상 설정창의 **로컬 자체 채팅 상태**는 기존 `QueryNativeChat.v2`로만 조회한다. `Connecting/Receiving`에는 **채팅 표시 확인 · 연결창 열기**를 보여준다. 버튼은 기존 캡처 보호된 연결창으로 이동만 하고 채팅을 자동 재시작하거나 게임 대상, WGC, 검정 덮개, 광고 상태를 변경하지 않는다. 실제 승인/첫 글자 여부는 원래 채팅 연결창에서 검사한다.
-- 네이티브 기존 `NativeChatConnection`의 명시적 `현재 승인으로 채팅 표시 다시 시도` 동작을 별도 영상 제어와 교차시킨다. 기존 승인·게임 역할·연결 ID를 보존하고 옛 DOM과 연결 수를 지운 뒤 종료를 기다려 같은 승인으로 새 빈 수신 문서를 연다. **첫 글자가 도착하기 전에는 표시 완료/시청 노출로 인정하지 않는다.** 새 브라우저 동의, 다른 저장 계정 선택, 자동 WGC 시작/중단, 시험 패턴 승인 소비는 없다.
-- 기존 `tests/companion-chat-video-test.cpp`의 실제 HUD/WebView2/WinHTTP/WGC + 서비스 HTTP·SQLite/ws에 **`redraw` 사용자 흐름**을 추가한다. 첫 텍스트를 합성 제공자가 보내기 전 게임 영상 식별 패턴·별도 수신 확인을 **명시적으로** 거쳐 WGC 출력 중 1회, 사용자가 **중지 · 검은 화면**으로 중지한 뒤 1회 채팅 표시를 다시 요청한다.
-- 각각 재시도 전에 독립 영상 단계·선택 epoch·동일 WGC 출력/검정 HWND·원래 소스·확인 식별 번호와 실제 출력 픽셀/덮개를 보존하고, 재시도 후에는 동일한 승인 역할·membership과 새 0-row ACK를 검사한다. WGC 활성 상태는 새 프레임 및 게임 픽셀, 검정 중지는 별도 검정 덮개·검정 픽셀 및 **기존 확인 없는 시작 거부**로 점검한다. 게임 영상의 새 시작은 이후 사용자의 원래 패턴·수신 확인 경로로만 가능하다.
-- 서버 driver에서 새 승인/계정 전환·자동 로그인 없이 원래 1개 browser consent, **추가 2회 명시적 same-approval 갱신**, 원래 3회 일반 return, 게임 채팅 첫 글자/중지·영상 소스 변경/검정/로그아웃과 다른 owner 보존을 검증한다. 기존 3개 video/chat CTest는 보존하고 4번째 `chat-view-companion-chat-video-redraw`를 추가한다(기존 60초 한도, `RUN_SERIAL`). 실제 캡처카드·물리 모니터 topology는 fixture로 제한하며 실장치 HUD 제외 지원을 주장하지 않는다.
-
-### 검증과 범위
-
-- **기능 커밋 `c29044cbae71306716502a90fadc14a93c507a2c`**의 Windows development **#408/run `38761837035`/job `116514894783`: MSVC 빌드 성공, CTest **40/45 통과·255.48초, 전체 실패**. 새 네이티브 **`chat-view-companion-chat-video-redraw` 14.36초 통과**: 실제 WGC 영상 재생 상태/명시적 검정 중지 상태에서 각각 자체 채팅 표시를 재시도하고 기존 게임 역할·원 승인·별도 영상 대상/덮개/시험 패턴 확인을 보존했다. 기존 `companion-chat-video` 5.61초, `companion-chat-revocation` 7.05초, `companion-chat-reapproval` 11.64초도 통과. Node/Chromium 서비스나 공식 OBS 광고 합성은 이번 SHA에서 별도 실행되지 않았다.
-- 같은 Windows #408의 다른 5개는 실패: `native-logout` 첫 승인 채팅에서 `surface_ready=0, frames=0, membership=1` (39.69초), `native-chat-switch` HUD startup(16.50초), `native-output` HUD ready(19.53초), `public-ad-browser` fixture 응답 대기 중 AbortError timeout(28.11초), `obs-capture-scene` 기존 10초 기한 초과(13.54초). 어느 것도 이번 새 `redraw` 검사 실패는 아니지만, **전체 CI 성공이라고 주장하지 않는다**. 환경/원인 동일성을 추정하지 않으며 기존 한도를 조정하거나 변경 없이 재실행하지 않는다.
-- 합성 제공자, 시험 수신 동의 및 단일 PC 창 좌표는 실계정 치지직·물리 투컴 수신 영상 인증이 아니며 실제 유료 광고 노출·HP/정산·배포 qualification과도 구분한다.
-- D1 최초 DOM/WebView2 첫 글자 간헐 실패, D2 자원, D4 OBS 종료, D6 실제 WGC/장시간 캡처, D7 WebView2/OBS CEF 간헐 초기화는 원인/실기기 검증 전 미해결로 유지한다. 신규 진단·한도 증가·변경 없는 재실행으로 결과를 미화하지 않는다.
+- 사용자가 **처음 채팅 글자가 표시되기 전** 기존 승인으로 채팅 화면을 다시 표시하도록 명시적으로 눌렀을 때, 네이티브 owner는 즉시 채팅 DOM과 서버 소켓 카운트를 지우고 별도 WinHTTP 작업자를 중단한다. 정상 갱신에서는 기존 승인·게임 역할로만 재사용한다. 이번 단계는 서버가 **바로 그 사이 동일 계정의 해당 게임 PC 연결 ID를 철회**하는 경쟁을 재현한다. 토큰을 UI, fixture 로그 또는 별도 저장 계정에 전달하지 않는다.
+- 원래 `NativeChatConnection`과 `DisplayClient`의 보안 경계는 이미 서버 갱신의 명시적 401/403을 **Denied**로 처리한다. 이 상태는 `approval_denied_`를 세워 이전 서버 접속 수/자체 DOM/첫 글자 ACK를 폐기하고 `현재 승인으로 자체 채팅 복귀`를 비활성화한다. 다른 저장 계정으로 자동 대체하거나 브라우저 로그인을 열지 않는다. 게임 영상은 별도 WGC 선택·명시적 수신 동의/검정 덮개 규칙을 그대로 따른다. 이 경로의 새 대체 인증 체계/재시도 타이머는 추가하지 않는다.
+- 실제 운영 코드를 별도 인터페이스로 감싸지 않고 기존 **`tests/companion-chat-video-test.cpp`**의 Win32 보호된 HWND·WebView2·WinHTTP·WGC를 사용한다. 새 `redraw-revoked-live`/ `redraw-revoked-black` 경계에서 owner thread의 명시적 redraw 클릭 직후 **테스트 부모가 정확히 그 승인 연결만 철회할 때까지 owner 메시지를 처리하지 않는다**(테스트 코드만). 이 조작은 원래 서버의 `Creators.removeConnection`으로 수행하며 앱 코드·시간 조건을 바꾸지 않는다.
+- 새 driver `tests/companion-chat-redraw-revocation-test.mts`에서 실제 HTTP/SQLite/ws·synthetic CHZZK 소유자/다른 계정의 승인 상태를 검사한다. 철회 전 owner 소켓 1·승인1 → 철회 뒤 0·0, 단 한 번의 401/403 갱신 거부, 새 로그인 0건, 다른 creator의 메모리/저장 승인 보존을 확인한다. 영상이 재생 중이면 새로운 WGC 프레임/픽셀·같은 출력/검정창, 검정 중지 상태면 검은 픽셀/덮개 및 기존 동의로 자동 재시작 불가를 검사한다. 앱 자체 첫 글자/물리 수신 영상/시청자 실적은 이 합성 경로에서 검증하지 않는다.
+- CMake `chat-view-companion-chat-redraw-revoked-live`, `-black` 2개를 기존 45개에 추가한다. **기존 60초 기한·직렬 RUN_SERIAL**과 기존 화면/UI·영상 테스트는 유지한다. 원격 Windows 네이티브 빌드·CTest 결과는 **실행 후 같은 SHA로만 기재**한다. 이전 CI의 D1/D2/D4/D6/D7과 공식 OBS #18/#23 실패는 해결로 처리하지 않는다.
 
 ## G1. 한 화면의 작업과 개인 채팅
 
@@ -85,6 +78,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-이번 게임 영상 출력/검정 중지와 채팅 재표시가 동일 승인 아래서 독립적으로 움직이는 네이티브 CI를 먼저 확인한다. 통과 후에는 **첫 채팅 표시 실패 상태에서 사용자가 재표시를 직접 요청했는데, 그 사이 서버 승인이 철회된 경우**로 이어간다. 이전 DOM/카운트를 남기거나 저장된 다른 계정으로 바꾸지 않고, 영상 출력은 수신 동의/명시적 검정 중지 규칙대로 유지하며 재로그인을 요구해야 한다. D1/D7 반복 실패·실계정/장비 qualification을 완료로 취급하지 않는다.
+서버 승인 철회 중 동일 승인 재표시가 차단되고 별도 영상/검정 출력이 유지되는 실제 Windows CI부터 확인한다. 이후 **철회로 채팅 재표시가 실패한 게임 PC 사용자가 연결창에서 새 브라우저 승인으로 돌아오더라도 선택된 별도 게임 영상은 그대로 유지하고, 중지된 영상은 새로운 시험 패턴·수신 확인을 요구**하는 복구 흐름을 연결한다. 실계정·물리 두 PC 수신 HUD 제외와 장시간 자원·실방송 품질·유료 노출/HP/지급 검증은 별도 자격 조건이며 완료로 주장하지 않는다.
 
-물리 수신 HUD 제외 전 G3 완료 금지. 실계정·장시간/배포·유료 노출·HP/보상 규격·인프라는 미완료다. 비밀은 대화/공개 저장소에 넣지 않는다. main·새 장기 브랜치·검증 태그·강제 push·옛 ZIP·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산은 사용하지 않는다.
+main, 장기 브랜치/검증 태그, 강제 push, 게임 PC OBS, 자동 장면 변경, 렌더 ACK 수익 환산, 비밀값 로그/커밋은 사용하지 않는다.

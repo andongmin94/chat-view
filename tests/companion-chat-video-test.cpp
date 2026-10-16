@@ -385,12 +385,16 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
         const auto denied = [&] {
             const auto summary = text(dialog, 110);
             expect(summary.find(L"이전 채팅 승인: 서버 거부") != std::wstring::npos &&
-                summary.find(L"복귀 불가") != std::wstring::npos &&
-                summary.find(L"확인되지 않음") != std::wstring::npos &&
-                summary.find(L"서버 채팅 연결: 게임 1") == std::wstring::npos &&
-                !IsWindowEnabled(GetDlgItem(dialog, 112)) &&
-                text(dialog, 106).find(L"다시 승인") != std::wstring::npos,
-                "server denial refuses old return authority, removes prior socket counts and requires new consent");
+                summary.find(L"복귀 불가") != std::wstring::npos,
+                "confirmed revocation leaves the persistent server-denied/no-return reason");
+            expect(summary.find(L"확인되지 않음") != std::wstring::npos &&
+                summary.find(L"서버 채팅 연결: 게임 1") == std::wstring::npos,
+                "revocation clears the old server socket counts instead of reporting them as live");
+            expect(summary.find(L"로그인 / 연결에서 다시 승인") != std::wstring::npos,
+                "the persistent status requires a fresh explicit browser consent");
+            expect(!IsWindowEnabled(GetDlgItem(dialog, 112)) &&
+                text(controls, 209).find(L"복귀") == std::wstring::npos,
+                "neither companion panel can return through a revoked approval");
         };
         denied();
         command(controls, 209); // Only open the already protected dialog.

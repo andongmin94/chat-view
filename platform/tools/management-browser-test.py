@@ -958,7 +958,7 @@ def run() -> None:
                 # does not. Only a new explicitly consented sender plus a
                 # separate campaign selection may render it again.
                 flow = Flow(browser, f, 390)
-                old_manager = Flow(browser, f, 390)
+                old_manager = None
                 try:
                     flow.identity("/account")
                     flow.confirm("/account")
@@ -968,13 +968,6 @@ def run() -> None:
                     campaign = flow.context.new_page()
                     campaign.goto(f.origin + "/campaigns")
                     original_url = campaign.locator("#source-url").input_value()
-                    # Independent authenticated management browser, not just
-                    # another tab sharing the same CSRF. Keep its old sender
-                    # campaign form through actual revocation and replacement.
-                    old_manager.identity("/campaigns")
-                    old_manager.confirm("/campaigns")
-                    assert old_manager.page.locator("#source-url").input_value() == original_url
-                    expect(old_manager.page.get_by_role("button", name="공개 배너 중지")).to_have_count(1)
                     stale_campaign = flow.context.new_page()
                     stale_campaign.goto(f.origin + "/campaigns")
                     public = flow.context.new_page()
@@ -1086,6 +1079,16 @@ def run() -> None:
                     expect(ad).to_have_attribute("data-account-ad-state", "not-selected")
                     expect(ad).to_have_attribute("data-account-ad-selected", "false")
                     assert f.command("sender-reapprove-report")["ok"]
+                    # The earlier expiry test advances the fixture browser
+                    # clock; authenticate this INDEPENDENT manager afterward.
+                    # It reviews the replacement sender before Alice selects
+                    # the ad, then keeps that form across her explicit choice.
+                    old_manager = Flow(browser, f, 390)
+                    old_manager.identity("/campaigns")
+                    old_manager.confirm("/campaigns")
+                    expect(old_manager.page.locator('[data-banner-manual-reselect="ready"]')).to_have_count(1)
+                    expect(old_manager.page.locator('[data-public-banner-state="not-selected"]')).to_have_count(1)
+                    assert old_manager.page.locator("#source-url").input_value() == original_url
                     campaign.goto(f.origin + "/campaigns")
                     expect(campaign.locator('[data-banner-manual-reselect="ready"]')).to_have_count(1)
                     expect(campaign.locator('[data-public-banner-state="not-selected"]')).to_have_count(1)
@@ -1105,9 +1108,9 @@ def run() -> None:
                     flow.image("sender-reapproved-game-preserved-manual-banner-mobile")
                     results.append("owner revokes only sender, preserves gaming chat, consents to fresh sender role and explicitly reselects unchanged public URL")
 
-                    # The old manager's Stop form was generated for the former
-                    # approval. It cannot undo the new sender's explicitly
-                    # reselected campaign, and a subsequent Bob browser switch
+                    # The independent manager reviewed the new sender before
+                    # the campaign was selected. Its outdated Stop cannot undo
+                    # the explicit selection, and a subsequent Bob switch
                     # never transfers Alice's source or its role authority.
                     with old_manager.page.expect_response(
                             lambda r: urlsplit(r.url).path == "/campaigns/stop") as old_stop:
@@ -1129,7 +1132,8 @@ def run() -> None:
                     old_manager.image("stale-other-manager-after-sender-reselection-mobile")
                     results.append("independent old manager Stop409 and Bob switch cannot undo new sender campaign, gaming chat or public URL")
                 finally:
-                    old_manager.close()
+                    if old_manager is not None:
+                        old_manager.close()
                     flow.close()
 
                 metadata = f.command("metadata")["metadata"]

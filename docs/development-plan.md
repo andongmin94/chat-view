@@ -19,7 +19,9 @@
 
 ### 실제 검증·미완료
 
-- 변경 커밋의 **CHZZK contract 전체 Node/Chromium 및 변경 범위·공식 OBS 흐름 결과는 실행 뒤 SHA에 맞춰 기록한다.** 네이티브/OBS/WGC/브라우저 관련 간헐 오류 D1/D2/D4/D6/D7, 실계정 치지직, 물리 두 PC HUD 제외 영상, 실제 관중 광고 노출·HP·지급·설치/반복 자원 qualification은 여전히 미완료다. 합성 report/서버 `visible`을 지급 또는 실방송 입증으로 취급하지 않는다. 타임아웃·보안 판정·제3자 권한은 완화하지 않는다.
+- **기능 커밋 `7c395b02867f7d5bd153e02614729ecc935593eb` 실 CI:** CHZZK contract **#82/run `38845382813` 전체 실패**. Ubuntu24 Node **330/330 통과, 실패/skip0**. 새 management fixture의 `senderReapproval.game` 타입 축소가 빠져 4개 OS/Node 엄격 TypeScript job이 TS18048로 실패했다. Chromium은 새 원래 송출 재승인 단계까지 진입했으나 실제 고정 역할 화면의 `송출 PC · OBS 관리 런타임`을 신규 테스트만 `송출 PC · OBS 역할`로 잘못 기대해 실패했다. 기존 실제 역할/보호 로직과 assertions를 완화하지 않고 fixture의 선행 gaming 승인 guard와 Chromium 표시 문구를 바로잡는다.
+- 공식 OBS public ad flow **#26/run `38845382854`: completed/success, OBS32.2.2 배너 합성 픽셀 **13/13** 통과(기능 커밋 `7c395b`). Windows development **#419/run `38845382851` scope job 성공, Windows x64 native skipped**(서비스/브라우저 변경).
+- 수정 SHA의 CHZZK Node/Chromium CI는 **아직 미확정**. 네이티브/OBS/WGC/브라우저 간헐 결함 D1/D2/D4/D6/D7, 실계정 치지직·물리 두 PC HUD 없는 수신·관중 광고 노출·HP·지급·설치/반복 자원 qualification은 미완료다. 합성 report/서버 `visible`을 실제 노출·지급으로 취급하지 않는다. 기존 CSRF·소유자/role·광고 선택·poll 타이머/보안 판정은 완화하지 않았다.
 
 ## G1. 한 화면의 작업과 개인 채팅
 

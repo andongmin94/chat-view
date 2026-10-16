@@ -801,7 +801,7 @@ def run() -> None:
                     flow.page.goto(f.origin + sender_request["path"])
                     expect(flow.page.locator('[data-login-request="pending"]')).to_have_count(1)
                     expect(flow.page.locator("[data-login-code]")).to_have_text(sender_request["code"])
-                    expect(flow.page.locator("body")).to_contain_text("송출 PC · OBS 역할")
+                    expect(flow.page.locator("body")).to_contain_text("송출 PC · OBS 관리 런타임")
                     flow.page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True).click()
                     expect(flow.page.locator('[data-login-collection="awaiting-app"]')).to_have_count(1)
                     renewed_sender = f.command("sender-reapprove-collected")

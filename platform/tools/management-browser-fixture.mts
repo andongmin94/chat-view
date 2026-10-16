@@ -481,7 +481,7 @@ try {
         code: senderReapproval.newRequest.id.slice(-6).toUpperCase() }); continue;
     }
     if (command.op === 'sender-reapprove-collected') {
-      assert(senderReapproval?.newRequest && !senderReapproval.sender);
+      assert(senderReapproval?.newRequest && senderReapproval.game && !senderReapproval.sender);
       const req = senderReapproval.newRequest;
       const response = await f.native(`/display/login/${req.id}`, 'ChatView-Login', req.verifier);
       assert.equal(response.status, 200);

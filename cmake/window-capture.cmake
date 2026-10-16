@@ -153,4 +153,18 @@ if(BUILD_TESTING)
         set_tests_properties(chat-view-companion-chat-redraw-revoked-${redraw_mode}
             PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
     endforeach()
+
+    # Reapproval is always a new explicit browser consent after server denial,
+    # not a fallback to another saved grant. Keep both the live WGC and black
+    # video state through new chat first-text ACK and manual logout. A stopped
+    # output may restart only after a fresh explicit receiver pattern/check.
+    foreach(reapproval_mode IN ITEMS live black)
+        add_test(NAME chat-view-companion-chat-redraw-reapproved-${reapproval_mode}
+            COMMAND "${CHATVIEW_NODE_EXECUTABLE}" --experimental-strip-types
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/companion-chat-redraw-revocation-test.mts"
+            "$<TARGET_FILE:chat-view-companion-chat-video-test>" "$<TARGET_FILE:chat-view-window-capture-test>"
+            "redraw-reapproved-${reapproval_mode}")
+        set_tests_properties(chat-view-companion-chat-redraw-reapproved-${reapproval_mode}
+            PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+    endforeach()
 endif()

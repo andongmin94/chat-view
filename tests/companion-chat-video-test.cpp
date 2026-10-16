@@ -278,7 +278,10 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
 {
     const bool revoked = mode == L"revoked" || mode == L"reapproved";
     const bool redraw = mode == L"redraw";
-    const bool revoke_during_redraw = mode == L"redraw-revoked-live" || mode == L"redraw-revoked-black";
+    const bool reapprove_after_redraw = mode == L"redraw-reapproved-live" ||
+        mode == L"redraw-reapproved-black";
+    const bool revoke_during_redraw = reapprove_after_redraw ||
+        mode == L"redraw-revoked-live" || mode == L"redraw-revoked-black";
     Source first(source_path), second(source_path);
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     chatview::HudWindow hud;
@@ -322,7 +325,7 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
     const auto approved = Chat::membership(chat)->membership;
     HWND game = nullptr, replacement = nullptr;
     if (revoke_during_redraw) {
-        const bool playing = mode == L"redraw-revoked-live";
+        const bool playing = mode == L"redraw-revoked-live" || mode == L"redraw-reapproved-live";
         flow.wait([&] { game = source_window(first.pid); return game != nullptr; },
             "chosen source ready for video and pending first chat display");
         Video::pattern(video, game);
@@ -425,6 +428,96 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
             !GetModuleHandleW(L"obs.dll") && !GetModuleHandleW(L"obs-frontend-api.dll"),
             "OBS-free companion retains local HUD and never loads OBS after chat denial");
         flow.checkpoint("redraw-revoke-validated");
+        if (reapprove_after_redraw) {
+            // Only the existing Login / Connect control can establish a new
+            // role approval after server rejection. Do not use another owner's
+            // saved credential, an old chat URL or a video consent token.
+            SetDlgItemTextW(dialog, 101, origin.c_str());
+            SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
+            SendDlgItemMessageW(dialog, 107, BM_SETCHECK, BST_UNCHECKED, 0);
+            const auto previous_browsers = browser_requests;
+            command(dialog, 104);
+            flow.wait([&] { return browser_requests == previous_browsers + 1U; },
+                "one explicit new browser login after a confirmed revoked redraw");
+            flow.state(Status::AwaitingApproval, controls);
+            expect(!Chat::membership(chat) && !Chat::first_text(chat) && !Chat::surface(chat).ready() &&
+                !Chat::client(chat).can_resume_current() && !IsWindowEnabled(GetDlgItem(dialog, 112)) &&
+                text(dialog, 110).find(L"새 로그인: 브라우저 승인 대기") != std::wstring::npos,
+                "pending new consent has no old server socket count or return authority");
+            command(dialog, 104); command(dialog, 112);
+            expect(browser_requests == previous_browsers + 1U &&
+                !Chat::membership(chat) && !Chat::first_text(chat),
+                "duplicate login/return controls do not silently authorize or substitute an account");
+            expect(Video::output(video) == output && Video::cover(video) == cover &&
+                Video::source(video) == game && Video::epoch(video) == epoch &&
+                Video::check(video).identifier() == identifier && Video::requested(video) == playing,
+                "the new browser login cannot change video target, selected output, or receiver consent");
+            if (playing) flow.wait([&] {
+                return Video::capture(video).snapshot().frames > frames &&
+                    !IsWindowVisible(cover) && pixels(RGB(20,100,180));
+            }, "fresh WGC game continues during new browser consent", 10000);
+            else expect(!Video::capture(video).running() && IsWindowVisible(cover) &&
+                pixels(RGB(0,0,0)) && !Video::accept(video),
+                "new browser consent cannot uncover stopped black video");
+            flow.checkpoint("redraw-reapproval-pending");
+            flow.wait([&] {
+                return Chat::membership(chat) && Chat::surface(chat).rendered_frames() >= 1U &&
+                    Chat::surface(chat).rendered_messages() == 0U && !Chat::first_text(chat);
+            }, "newly approved gaming session renders a fresh subscribed empty DOM");
+            const auto renewed = Chat::membership(chat)->membership;
+            expect(renewed.role == approved.role && renewed.connection_id != approved.connection_id,
+                "new browser approval has the same gaming role but a distinct server connection");
+            flow.state(Status::Receiving, controls);
+            expect(text(dialog, 110).find(L"이전 채팅 승인: 서버 거부") == std::wstring::npos &&
+                IsWindowEnabled(GetDlgItem(dialog, 114)),
+                "confirmed new membership replaces the persistent denied state");
+            expect(Video::output(video) == output && Video::cover(video) == cover &&
+                Video::source(video) == game && Video::epoch(video) == epoch &&
+                Video::check(video).identifier() == identifier && Video::requested(video) == playing,
+                "new empty chat document leaves the video session independent");
+            flow.checkpoint("redraw-reapproval-empty-ready");
+            flow.received(L"redraw-new-chat");
+            flow.state(Status::Receiving, controls);
+            expect(Chat::membership(chat)->membership == renewed &&
+                text(dialog, 113).find(L"첫 텍스트 렌더링 확인") != std::wstring::npos,
+                "new first text belongs only to the new authenticated gaming approval");
+            auto saved_after = chatview::load_connection();
+            const bool other_preserved = saved_after && saved_after->credential == other &&
+                saved_after->origin == origin;
+            if (saved_after) SecureZeroMemory(saved_after->credential.data(),
+                saved_after->credential.size() * sizeof(wchar_t));
+            expect(other_preserved, "new memory-only browser consent preserves the other saved owner");
+            expect(Video::output(video) == output && Video::cover(video) == cover &&
+                Video::source(video) == game && Video::requested(video) == playing &&
+                Video::epoch(video) == epoch,
+                "first new chat text cannot restart or stop WGC game video");
+            expect(playing ? (!IsWindowVisible(cover) && pixels(RGB(20,100,180)))
+                           : (IsWindowVisible(cover) && pixels(RGB(0,0,0))),
+                "new chat first text leaves independent game or black pixels unchanged");
+            flow.checkpoint("redraw-reapproved");
+            if (!playing) {
+                expect(!Video::accept(video) && !Video::requested(video) &&
+                    IsWindowVisible(cover) && pixels(RGB(0,0,0)),
+                    "fresh chat consent alone cannot reuse an expired video receiver check");
+                Video::pattern(video, game);
+                expect(Video::check(video).active() && !Video::requested(video) &&
+                    IsWindowVisible(cover), "only explicit new video identification creates a new check");
+                expect(Video::accept(video), "new explicit receiver confirmation starts the stopped video");
+                flow.wait([&] { return Video::capture(video).running() && !IsWindowVisible(cover) &&
+                    pixels(RGB(20,100,180)); }, "fresh video pixels after new receiver consent", 10000);
+                expect(Video::source(video) == game && Video::output(video) == output &&
+                    Video::cover(video) == cover && Chat::membership(chat)->membership == renewed,
+                    "explicit video restart retains the new chat approval and original game/output");
+                flow.checkpoint("redraw-reapproved-video-restarted");
+            }
+            command(dialog, 108);
+            flow.state(Status::Idle, controls);
+            expect(!Chat::membership(chat) && !Chat::first_text(chat) &&
+                !Chat::client(chat).can_resume_current() && Video::requested(video) &&
+                !IsWindowVisible(cover) && pixels(RGB(20,100,180)),
+                "explicit chat logout removes only new authority, never an independent live video");
+            flow.checkpoint("redraw-reapproved-signed-out");
+        }
         command(controls, 205);
         flow.wait([&] { return !Video::capture(video).running() &&
             IsWindowVisible(cover) && pixels(RGB(0,0,0)); },
@@ -658,7 +751,8 @@ int wmain(int argc, wchar_t **argv)
         const std::wstring_view mode(argv[2]);
         expect(mode == L"return" || mode == L"revoked" || mode == L"reapproved" ||
             mode == L"redraw" || mode == L"redraw-revoked-live" ||
-            mode == L"redraw-revoked-black", "known flow mode");
+            mode == L"redraw-revoked-black" || mode == L"redraw-reapproved-live" ||
+            mode == L"redraw-reapproved-black", "known flow mode");
         std::string origin, auxiliary; std::getline(std::cin, origin); std::getline(std::cin, auxiliary);
         expect(origin.size() < 2048 && origin.starts_with("http://127.0.0.1:") && auxiliary.size() == 64, "bounded fixture input");
         std::wstring other(auxiliary.begin(), auxiliary.end());

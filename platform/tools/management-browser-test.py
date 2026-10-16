@@ -1018,6 +1018,45 @@ def run() -> None:
                     expect(flow.page.locator('[data-banner-manual-reselect="sender-required"]')).to_have_count(1)
                     assert campaign.locator("#source-url").input_value() == original_url
 
+                    # The sender approval really was revoked (rather than
+                    # merely disconnected). Expiring the Alice manager cookie
+                    # must reject the old campaign Stop and explain why a new
+                    # sender alone cannot reselect the existing source.
+                    stale_campaign.goto(f.origin + "/campaigns")
+                    expect(stale_campaign.locator('[data-banner-manual-reselect="sender-required"]')).to_have_count(1)
+                    assert f.command("expire-browser")["ok"]
+                    with campaign.expect_response(
+                            lambda r: urlsplit(r.url).path == "/campaigns/stop") as expired_form:
+                        campaign.get_by_role("button", name="공개 배너 중지", exact=True).click()
+                    assert expired_form.value.status == 401
+                    expect(campaign.locator('[data-management-expired-action="blocked"]')).to_have_count(1)
+                    flow.page.goto(f.origin + "/account")
+                    expect(flow.page.locator('[data-management-revoked-sender="manual-reselect"]')).to_have_count(1)
+                    expect(flow.page.locator("body")).to_contain_text("광고 선택은 해제됩니다")
+                    expect(banner).to_be_hidden()
+                    flow.image("revoked-sender-expired-manager-mobile")
+                    results.append("expired Alice manager cannot replay old campaign form after actual sender revocation")
+
+                    # Bob is only the browser manager; he does not inherit
+                    # Alice's sender role, source URL or pending campaign.
+                    flow.identity("/campaigns", "bob")
+                    flow.confirm("/campaigns", "bob")
+                    expect(flow.page.locator('[data-campaign-selection-state="streaming-required"]')).to_have_count(1)
+                    expect(flow.page.locator("#source-url")).to_have_count(0)
+                    with stale_campaign.expect_response(
+                            lambda r: urlsplit(r.url).path == "/campaigns/stop") as switched_form:
+                        stale_campaign.get_by_role("button", name="공개 배너 중지", exact=True).click()
+                    assert switched_form.value.status == 403
+                    expect(banner).to_be_hidden()
+                    flow.page.get_by_role("button", name="브라우저 관리 계정 바꾸기").click()
+                    flow.identity("/campaigns", "alice")
+                    flow.confirm("/campaigns", "alice")
+                    expect(flow.page.locator('[data-campaign-selection-state="streaming-required"]')).to_have_count(1)
+                    expect(flow.page.locator('[data-banner-manual-reselect="sender-required"]')).to_have_count(1)
+                    assert flow.page.locator("#source-url").input_value() == original_url
+                    flow.image("revoked-sender-owner-reconfirmed-mobile")
+                    results.append("Bob management and old Alice form cannot take over sender reapproval or selection")
+
                     sender_request = f.command("sender-reapprove-request")
                     flow.page.goto(f.origin + sender_request["path"])
                     expect(flow.page.locator('[data-login-request="pending"]')).to_have_count(1)
@@ -1035,7 +1074,7 @@ def run() -> None:
                     expect(ad).to_have_attribute("data-account-ad-state", "not-selected")
                     expect(ad).to_have_attribute("data-account-ad-selected", "false")
                     assert f.command("sender-reapprove-report")["ok"]
-                    campaign.reload()
+                    campaign.goto(f.origin + "/campaigns")
                     expect(campaign.locator('[data-banner-manual-reselect="ready"]')).to_have_count(1)
                     expect(campaign.locator('[data-public-banner-state="not-selected"]')).to_have_count(1)
                     expect(banner).to_be_hidden()

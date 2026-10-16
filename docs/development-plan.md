@@ -4,17 +4,13 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 송출 승인 복귀 중 브라우저 관리 세션 만료·다른 계정 전환
+## 현재 흐름: 관리 세션 만료·계정 전환 중 송출 승인 실제 철회와 수동 광고 재선택
 
-시작 원격 `OBS` HEAD `da32837258a27dca161b2bbf8f54dadcbeafc5f8`와 CHZZK contract #89 (Node **335/335**, Chromium **24/24**), 공식 OBS 배너 #31 (**13/13**) 성공을 확인하고, AGENTS → PRODUCT → development-workflow → architecture → 이 개발 계획 순서대로 검토했다. `main`을 수정하지 않는다.
+시작 원격 OBS HEAD `eb60f17d234cc66d6fbd11436f903c23ab02954d`와 직전 CHZZK contract **#91(337/337·Chromium26/26)**, Windows #428 scope 성공 및 기존 OBS public ad #32의 **CreateScene 8초 무응답/픽셀 0건**을 확인했다. AGENTS → PRODUCT → development-workflow → architecture → 이 문서 순으로 확인했으며 `main`은 그대로 둔다.
 
-- **사용자 동선:** Alice 게임 PC 채팅 및 송출 PC의 정확한 역할 승인을 유지한 채 **송출 채팅 WebSocket만 일시 단절**한다. 그동안 Alice 관리 브라우저의 쿠키/캠페인 폼이 만료되거나 **관리 브라우저만 Bob 계정으로 전환**돼도, 이전 쿠키·폼은 광고 선택/중지·송출 역할 변경을 실행할 수 없다. 송출 PC는 기존 승인으로 명시적 복귀하고 **새 유효한 출력 보고 후에만** Alice의 같은 공개 시험 광고 URL이 다시 준비된다. Bob 화면에 Alice의 공개 URL이나 송출 승인 제어를 노출하지 않는다. Alice로 새 브라우저 관리 동의를 마쳐도 PC 재승인·광고 자동 재선택은 없다.
-- **사용자 안내:** 관리 브라우저 로그인/만료·오래된 POST의 401 화면에 PC 역할 승인과 선택된 시험 광고·공개 URL은 유지되지만, 소켓 단절 중 배너는 투명 대기이며 **현재 승인 복귀 + 새 보고**가 필요하다는 설명을 추가한다. 401 요청을 자동 재실행하거나 OBS/게임 영상·다른 계정·광고를 원격 제어하지 않는다. 기존 쿠키·CSRF·Origin·rate limit을 유지하고 새 관리 API/DB/마이그레이션/호환 경로는 만들지 않는다.
-- **통합 검증:** `browser-recovery.test.mts`에서 실제 HTTP·SQLite·WebSocket, 합성 치지직 계정으로 만료된 쿠키의 Select/Stop 401, 익명 새 쿠키와 과거 CSRF 403, 브라우저 재동의 전 POST 불허, Bob 관리 계정 전환과 Alice 광고 격리, sender 기존 승인 ID/FK/공개 URL 보존 및 old report 무효·fresh report 후 복귀, Alice gaming 채팅 및 타 creator 권한 유지와 OAuth grant/upstream 불변을 확인한다. `management-browser-test.py`는 실제 Chromium 390px에서 만료된 Stop → 브라우저 재로그인, Alice→Bob 관리 계정 전환→이전 탭 Select 거부→Alice로 재확인 동선을 클릭하고 공개 시험 배너의 투명/복귀를 점검한다. **실제 CI 및 보정 결과:**
-  - 최초 기능 `80e20af649c13157b4c1596747ceb88f7b4ff527`: CHZZK contract **#90/run `38857915158` 전체 실패**, Ubuntu24 HTTP/SQLite/WebSocket Node **337/337·fail0·skip0**, 다른 3개 Node job도 성공. Chromium 동선의 새 만료·계정 전환 2건은 완료됐지만 뒤따른 기존 banner-recovery fixture가 이전 시나리오의 **유효한 출력 보고를 물려받아**, 초기 투명 배너 기대와 충돌했다. 실제 Chromium 전체 실패이며 테스트 제한 완화 없이 기존 `expire-output-report` 명령으로 *그 합성 출력 보고만* 만료시켜 보정했다. Windows development **#427/run `38857915144` scope 성공·native x64 skipped**.
-  - 공식 OBS public ad flow **#32/run `38857915188` 실패**: 공식 OBS 32.2.2 설치형 fixture의 첫 `CreateScene` RPC가 기존 8초 한도를 초과했고, **배너 픽셀 검사 시행 전 실패(0/13)**. 광고·브라우저가 아닌 기존 **D7/OBS scene control 간헐 실패**로 기록하며 원인 미확정; 제한 연장·오류 무시·동일 작업 재실행으로 성공 처리하지 않는다. 다음 Python 테스트 fixture 보정 SHA는 OBS workflow를 새로 실행하지 않았다.
-  - 최종 시험 보정 `372b120b69127eb4fe72f930bdca204250de3b71`: **CHZZK contract #91/run `38858301525` completed/success, 5개 작업 성공**. Ubuntu/Windows × Node22/24의 실제 HTTP/SQLite/ws·엄격 TypeScript·locked dependency 검사 통과; Ubuntu24 **337/337·fail0·skip0**, 취약점 0건. **실제 Chromium 390px 26/26 통과**, synthetic provider/관리 쿠키/실제 선택·중지와 sender return, 증빙 artifact `12028066430`. **Windows development #428/run `38858301486` scope 성공·native x64 skipped**(server/browser only). 광고 FK·기존 URL·게임 채팅·타 채널 불변은 합성 검사의 결과일 뿐 실제 시청자 노출/물리 투컴 증거가 아니다.
-  - D1/D2/D4/D6/D7은 유지한다. 실계정 치지직, 게임 PC OBS 없는 물리 두 PC의 HUD 제외, 실제 광고 노출, 유료·HP·정산 및 배포 qualification은 미완료.
+- **동작:** 같은 Alice 채널의 게임 PC 채팅을 유지한 채 송출 PC가 **실제 승인 철회**(`/display/signout` 또는 소유자 연결 해제)를 수행하면 송출 WebSocket/출력 보고·선택 캠페인의 정확한 FK가 종료된다. 브라우저 관리 쿠키 만료나 Bob 관리 계정 전환은 별개다. 이전 Alice 쿠키/CSRF·광고 폼 또는 Bob 관리 세션으로 Alice 송출 승인을 대신 복귀시키거나 광고를 선택할 수 없다. 공개 URL은 보존되고 송출 역할을 Alice로 **다시 직접 승인**한 뒤 새 출력 보고를 받아도 광고는 **계속 투명·미선택**이며, Alice 관리 브라우저에서 현 채널·승인을 확인해 시험 광고를 **직접 재선택**한 경우에만 같은 URL의 공개 시험 배너가 복귀한다. 기존 게임 채팅·타 creator·별도 영상·OBS 장면은 유지한다.
+- **최소 UI 개선:** 익명 관리 로그인/만료 401 안내를 **단순 송출 소켓 단절(기존 승인+선택 유지, 복귀 후 새 보고)**과 **송출 역할 승인 자체 철회(선택 해제, 새 역할 동의+수동 선택)**로 분리 설명한다. 브라우저 로그인·계정 전환이 승인 자체를 바꿨다고 단정하지 않는다. 인증·Origin·CSRF/서버 제한·송출 역할 검사·캠페인 FK·공개 소스 자격과 기존 화면 구조는 그대로다.
+- **실제 회귀:** `browser-recovery.test.mts`에 관리 만료+실제 sender signout, Bob으로 브라우저 전환+Alice sender signout 2개 end-to-end를 추가한다. 실제 HTTP/SQLite/WebSocket·합성 CHZZK로 만료 쿠키 Select/Stop401, 익명/타계정 CSRF403, Bob의 Alice 소스 비노출, 오래된 sender refresh/report 거부, 새 송출 승인 ID, 광고 FK 삭제·새 보고 후 미선택·기존 공개 URL 보존·명시적 재선택, 게임 채팅/타 creator/OAuth grant/upstream 불변을 확인한다. `management-browser-test.py`에서는 390px 실제 브라우저에서 이미 존재하는 sender-reapproval 동선에 만료·Bob 전환·이전 Alice 폼 차단·Alice 재동의·직접 재선택을 연결한다. 실제 CI 결과만 이 문서에 후속으로 기록한다.
 
 ## 직전 완료 흐름: 송출 단절·기존 승인 복귀 중 복수 관리 탭 동선
 
@@ -122,6 +118,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-현재 관리 브라우저가 만료되거나 다른 계정으로 전환된 사이 송출 PC **기존 승인 자체가 실제로 철회**된 경우, 새 송출 역할을 직접 승인하더라도 선택된 광고가 자동 복원되지 않고 기존 공개 URL만 유지되는 흐름을 확인한다. 이전 브라우저 폼과 Bob 관리 세션은 Alice의 새 송출 역할·광고 선택에 개입하지 못해야 한다. 실제 치지직/물리 투컴의 HUD 제외, D1/D2/D4/D6/D7, 실제 광고 노출·유료/HP·정산·배포 qualification은 미완료다.
+**게임 PC 채팅은 유지하면서 송출 PC 새 승인/출력 보고/시험 광고 재선택을 끝냈을 때**, 서로 다른 브라우저의 이전 선택·중지 폼이나 계정 전환이 그 새 선택을 덮지 못하는 마지막 교차 흐름을 확인한다. 이후 G4 실제 치지직 앱 승인·수신과 D1 첫 표시 신뢰성, G3 물리 투컴 HUD 없는 영상 수신을 우선한다. D2/D4/D6/D7 및 실제 광고 시청, 유료·HP·정산·배포 qualification은 여전히 별도 미완료다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

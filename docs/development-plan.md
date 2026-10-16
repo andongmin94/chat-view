@@ -14,7 +14,7 @@
 - 원래 `NativeChatConnection`과 `DisplayClient`의 보안 경계는 이미 서버 갱신의 명시적 401/403을 **Denied**로 처리한다. 이 상태는 `approval_denied_`를 세워 이전 서버 접속 수/자체 DOM/첫 글자 ACK를 폐기하고 `현재 승인으로 자체 채팅 복귀`를 비활성화한다. 다른 저장 계정으로 자동 대체하거나 브라우저 로그인을 열지 않는다. 게임 영상은 별도 WGC 선택·명시적 수신 동의/검정 덮개 규칙을 그대로 따른다. 이 경로의 새 대체 인증 체계/재시도 타이머는 추가하지 않는다.
 - 실제 운영 코드를 별도 인터페이스로 감싸지 않고 기존 **`tests/companion-chat-video-test.cpp`**의 Win32 보호된 HWND·WebView2·WinHTTP·WGC를 사용한다. 새 `redraw-revoked-live`/ `redraw-revoked-black` 경계에서 owner thread의 명시적 redraw 클릭 직후 **테스트 부모가 정확히 그 승인 연결만 철회할 때까지 owner 메시지를 처리하지 않는다**(테스트 코드만). 이 조작은 원래 서버의 `Creators.removeConnection`으로 수행하며 앱 코드·시간 조건을 바꾸지 않는다.
 - 새 driver `tests/companion-chat-redraw-revocation-test.mts`에서 실제 HTTP/SQLite/ws·synthetic CHZZK 소유자/다른 계정의 승인 상태를 검사한다. 철회 전 owner 소켓 1·승인1 → 철회 뒤 0·0, 단 한 번의 401/403 갱신 거부, 새 로그인 0건, 다른 creator의 메모리/저장 승인 보존을 확인한다. 영상이 재생 중이면 새로운 WGC 프레임/픽셀·같은 출력/검정창, 검정 중지 상태면 검은 픽셀/덮개 및 기존 동의로 자동 재시작 불가를 검사한다. 앱 자체 첫 글자/물리 수신 영상/시청자 실적은 이 합성 경로에서 검증하지 않는다.
-- CMake `chat-view-companion-chat-redraw-revoked-live`, `-black` 2개를 기존 45개에 추가한다. **기존 60초 기한·직렬 RUN_SERIAL**과 기존 화면/UI·영상 테스트는 유지한다. 원격 Windows 네이티브 빌드·CTest 결과는 **실행 후 같은 SHA로만 기재**한다. 이전 CI의 D1/D2/D4/D6/D7과 공식 OBS #18/#23 실패는 해결로 처리하지 않는다.
+- CMake `chat-view-companion-chat-redraw-revoked-live`, `-black` 2개를 기존 45개에 추가한다. **기존 60초 기한·직렬 RUN_SERIAL**과 기존 화면/UI·영상 테스트는 유지한다. `dde4c8cb502e4a6e050d5768f2a3380e8b41ab04`의 **Windows #409/run `38828578861`/job `116741779219`은 MSVC 빌드 실패**, `tests/companion-chat-video-test.cpp:343`의 다른 정수형을 같은 `auto` 선언으로 묶은 테스트 전용 **C3538**이었다. **CTest 2개는 실행되지 않았으며 통과로 계산하지 않는다.** 서로 다른 선언으로 고치고 같은 범위의 새 코드 SHA에 대해 Windows 빌드·CTest 결과를 별도로 기재한다. 이전 CI D1/D2/D4/D6/D7과 공식 OBS #18/#23 실패는 해결로 처리하지 않는다.
 
 ## G1. 한 화면의 작업과 개인 채팅
 

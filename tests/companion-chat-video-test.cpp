@@ -340,7 +340,8 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
         }
         expect(chatview::save_connection({origin, other, true}),
             "another creator's remembered approval is available but may not replace the current one");
-        const auto epoch = Video::epoch(video), identifier = Video::check(video).identifier();
+        const auto epoch = Video::epoch(video);
+        const auto identifier = Video::check(video).identifier();
         const auto frames = Video::capture(video).snapshot().frames;
         expect(!Chat::first_text(chat) && Chat::surface(chat).rendered_messages() == 0 &&
             Chat::membership(chat) && Chat::membership(chat)->membership == approved &&

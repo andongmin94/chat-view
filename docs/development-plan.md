@@ -4,7 +4,15 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 새 송출 승인·광고 수동 재선택 이후 오래된 관리 폼 차단
+## 현재 흐름: D1 첫 네이티브 채팅 문서 준비와 첫 텍스트 표시
+
+시작 원격 OBS HEAD `fd157b1bbde60df1720367af0f98345c785ac353`, 직전 CHZZK contract #96 Node **340/340·Chromium29/29** 및 Windows #433 scope 성공과 공식 OBS 공개 배너 #34 합성 픽셀 **13/13**을 확인했다. AGENTS → PRODUCT → development-workflow → architecture → 이 문서 순서로 읽었다. 이번 작업은 게임 PC에 OBS를 요구하지 않는 기존 네이티브 HUD 수신 경계에 한정된다.
+
+- **확인한 실제 실패:** Windows development #408/run `38761837035`의 native logout 첫 승인 화면 로그는 `active=1, worker=1, metadata=1, pending_frame=1, surface_ready=0, frames=0`이다. 서버 승인/채팅 연결이 있었고 프레임도 대기 중이었으나 WebView2 소유 문서가 준비 완료로 인정되지 않았다. 같은 run의 native chat-switch HUD startup 실패 및 기존 D1 첫 표시 실패들은 원인 확정 전으로 유지한다. 이 증상은 `NativeChatSurface::ready()`가 마지막 `NavigationCompleted` 성공과 nonce handshake 둘 다를 요구하는 코드와 부합하지만, 이벤트 누락이 모든 D1 실패의 유일한 원인이라고 단정하지 않는다.
+- **좁은 기능 수정:** 같은 UI 스레드의 **기존 WebView2**에서 문서 탐색 ID가 일치하는 **main-document `DOMContentLoaded`**도 로드 완료의 근거로 사용한다. 최종 `NavigationCompleted`가 오기 전이라도 정확한 현재 로컬 문서 소유권·`NavigationStarting` ID·문서가 보낸 **nonce-bound `chat-ready`**가 모두 충족될 때만 최초 메시지를 게시한다. 실제 NavigationCompleted 실패, 예전 setup/다른 URL, 프로세스 실패는 이전대로 즉시 무효화한다. 새 브라우저/타이머/재로그인·권한·자동 복구·OBS/영상 변경이나 완화된 테스트 제한은 없다.
+- **검증:** `tests/native-chat-surface-test.cpp`에서 **실제 WebView2** 현재 문서의 `NavigationCompleted` **표면 수신 콜백만 해제**한 첫 로드 뒤 `DOMContentLoaded+nonce`로 준비 완료, PostWebMessage, Unicode 첫 DOM 텍스트와 렌더 ACK, 잘못된 문서/탐색 차단을 검증한다. 기존 companion-chat-video 및 native display/logout/switch/output 경로는 Windows native routine의 동일 검사 그대로 둔다. 변경 컴파일·테스트의 실제 SHA/성공·실패는 확인 뒤 기록한다. 통과하더라도 실계정 치지직·실기기 첫 표시 장시간 신뢰성·D1 전체 해결은 별도다.
+
+## 직전 완료 흐름: 새 송출 승인·광고 수동 재선택 이후 오래된 관리 폼 차단
 
 시작 원격 OBS HEAD `702b2bfcb3b5e1e617e56624bb894d9981658bbe`; CHZZK contract #93 Node **339/339**, 실제 Chromium **28/28**, Windows #430 scope 성공을 확인했다. 공식 OBS 공개 배너 #33은 이전 결함 D7의 **CreateScene 8초 무응답, 픽셀 검사 0/13**이며 통과로 간주하지 않는다. AGENTS → PRODUCT → development-workflow → architecture → 이 문서 순서로 읽고 작업 브랜치 OBS 외에는 변경하지 않는다.
 
@@ -135,6 +143,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-개별 관리 권한 교차 검사를 마친 뒤에는 **게임 PC companion의 첫 채팅 메시지가 실제 자체 HUD에 안정적으로 표시되는 흐름(D1)**을 우선한다. 첫 표시 실패의 관측된 증상과 실구현을 대조해 기존 native 렌더러·수신 경계를 수정하고 관련 Windows routine으로 검증한다. 치지직 실계정 연결·장시간 운영(G4-06), OBS 없는 물리 투컴의 HUD 제외(G3), D2/D4/D6/D7 및 유료 광고·HP·정산·배포 qualification은 여전히 별도 미완료다.
+Windows native routine에서 첫 **DOMContentLoaded+nonce** 로드 및 실제 companion 첫 메시지 결과를 확인한 뒤, 남은 D1 실패가 있다면 그 **실제 실패 단계(WebView2 host startup / navigation / handshake / ACK)**에서 원인을 좁혀 수정한다. 그다음 G4 실제 치지직 로그인→구독→자체 HUD 첫 표시와 G3 게임 PC OBS 없는 물리 투컴 HUD 분리 영상 검증을 진행한다. D2/D4/D6/D7, 실제 광고 시청·HP/정산·배포 qualification은 미완료다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

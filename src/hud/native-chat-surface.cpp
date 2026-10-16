@@ -30,6 +30,8 @@ struct NativeChatSurface::State {
     bool saw_navigation = false;
     // Old setup navigation can dispatch before the fresh URL is installed.
     bool opening = true;
+    // The owned DOM can be ready before WebView2's final navigation event.
+    // Both load signals are scoped to the exact NavigationStarting ID.
     bool loaded = false;
     bool handshake = false;
     UINT64 navigation = 0U;
@@ -80,6 +82,7 @@ bool NativeChatSurface::open(WebViewHost &host) noexcept
         state->rendered_prefix = L"chat-rendered:" + nonce + L":";
         state->invalid_message = L"chat-invalid:" + nonce;
         state_ = state; webview_ = host.webview_;
+        if (FAILED(webview_.As(&webview2_))) { close(); return false; }
         HRESULT result = webview_->add_NavigationStarting(
             Callback<ICoreWebView2NavigationStartingEventHandler>(
                 [state](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
@@ -119,6 +122,21 @@ bool NativeChatSurface::open(WebViewHost &host) noexcept
                     else state->loaded = true;
                     return S_OK;
                 }).Get(), &completed_token_);
+        if (FAILED(result)) { close(); return false; }
+        // A successfully parsed own document and its nonce-bound script do
+        // not depend on onload/NavigationCompleted arriving. A matching
+        // DOMContentLoaded navigation ID is an independent main-frame signal;
+        // NavigationCompleted failure still invalidates this surface.
+        result = webview2_->add_DOMContentLoaded(
+            Callback<ICoreWebView2DOMContentLoadedEventHandler>(
+                [state](ICoreWebView2 *, ICoreWebView2DOMContentLoadedEventArgs *args) -> HRESULT {
+                    UINT64 id = 0U;
+                    if (state->attached() && state->saw_navigation &&
+                        SUCCEEDED(args->get_NavigationId(&id)) && id == state->navigation) {
+                        state->loaded = true;
+                    }
+                    return S_OK;
+                }).Get(), &dom_loaded_token_);
         if (FAILED(result)) { close(); return false; }
         result = webview_->add_ProcessFailed(
             Callback<ICoreWebView2ProcessFailedEventHandler>(
@@ -183,6 +201,7 @@ void NativeChatSurface::close() noexcept
     if (webview_) {
         if (navigation_token_.value) webview_->remove_NavigationStarting(navigation_token_);
         if (completed_token_.value) webview_->remove_NavigationCompleted(completed_token_);
+        if (dom_loaded_token_.value && webview2_) webview2_->remove_DOMContentLoaded(dom_loaded_token_);
         if (message_token_.value) webview_->remove_WebMessageReceived(message_token_);
         if (process_token_.value) webview_->remove_ProcessFailed(process_token_);
         if (clear_document && host && host->owner) {
@@ -192,8 +211,9 @@ void NativeChatSurface::close() noexcept
                     document_url)) host->owner->post_failure(E_FAIL);
         }
     }
-    navigation_token_ = {}; completed_token_ = {}; message_token_ = {}; process_token_ = {};
-    state_.reset(); webview_.Reset();
+    navigation_token_ = {}; completed_token_ = {}; dom_loaded_token_ = {};
+    message_token_ = {}; process_token_ = {};
+    state_.reset(); webview2_.Reset(); webview_.Reset();
 }
 unsigned long long NativeChatSurface::rendered_frames() const noexcept { return state_ ? state_->frames : 0U; }
 unsigned int NativeChatSurface::rendered_messages() const noexcept { return state_ ? state_->messages : 0U; }

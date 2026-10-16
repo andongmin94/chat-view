@@ -31,8 +31,10 @@ private:
     struct State;
     std::shared_ptr<State> state_;
     Microsoft::WRL::ComPtr<ICoreWebView2> webview_;
+    Microsoft::WRL::ComPtr<ICoreWebView2_2> webview2_;
     EventRegistrationToken navigation_token_{};
     EventRegistrationToken completed_token_{};
+    EventRegistrationToken dom_loaded_token_{};
     EventRegistrationToken message_token_{};
     EventRegistrationToken process_token_{};
 };

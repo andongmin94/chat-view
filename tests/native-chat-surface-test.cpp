@@ -13,6 +13,12 @@
 namespace chatview {
 struct NativeChatSurfaceTestAccess {
     static ICoreWebView2 *core(NativeChatSurface &surface) { return surface.webview_.Get(); }
+    static bool omit_completed_for_current_document(NativeChatSurface &surface) {
+        if (!surface.webview_ || !surface.completed_token_.value ||
+            FAILED(surface.webview_->remove_NavigationCompleted(surface.completed_token_))) return false;
+        surface.completed_token_ = {};
+        return true;
+    }
 };
 }
 
@@ -120,7 +126,12 @@ int main()
         expect(host.initialize(window), "initialize production host");
         await([&] { return host.ready(); }, "WebView2 startup");
         expect(surface.open(host), "open embedded own chat");
-        await([&] { return surface.ready(); }, "own document handshake");
+        // Reproduce a missing completion callback on the REAL WebView2.
+        // The current owned DOM and nonce handshake must still render first
+        // text; neither an unowned page nor a navigation error gets authority.
+        expect(chatview::NativeChatSurfaceTestAccess::omit_completed_for_current_document(surface),
+            "omit first native NavigationCompleted notification");
+        await([&] { return surface.ready(); }, "own DOMContentLoaded and nonce handshake");
         ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(surface);
         const std::wstring first_url = source(core.Get());
         expect(first_url.starts_with(L"https://chatview.invalid/"), "host-owned memory document");

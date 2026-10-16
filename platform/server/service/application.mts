@@ -181,7 +181,10 @@ export class PlatformApplication {
       : reason === 'sender-changed'
         ? '이 페이지에서 확인했던 송출 PC 승인이 다른 승인으로 교체됐습니다. 새로운 송출 승인이 생겨도 기존 광고 선택은 자동 복구되지 않습니다.'
         : '브라우저 뒤로가기·오래된 탭 또는 다른 관리 화면에서 확인한 상태와 이 폼의 확인 시점이 다릅니다. 실제 송출 승인 철회를 뜻하지는 않습니다.';
-    b.campaignView = undefined;
+    // A rejected older tab must not retire a newer, still-valid review
+    // within the same browser session. A revoked/replaced sender does.
+    if (!sender || !reviewed || reviewed.owner !== b.owner ||
+        reviewed.connectionId !== sender.connectionId) b.campaignView = undefined;
     this.#page(response, '시험 캠페인 상태 다시 확인', `${this.#accountNotice(b)}
 <section data-campaign-action="review-required" data-campaign-review-reason="${reason}">
 <p>${explanation}</p><p>이전 페이지의 선택·중지 요청을 실행하지 않았습니다.</p>

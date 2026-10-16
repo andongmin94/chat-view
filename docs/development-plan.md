@@ -4,7 +4,15 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 브라우저 뒤로가기·오래된 탭과 실제 송출 승인 철회 구분
+## 현재 흐름: 송출 단절·기존 승인 복귀 중 복수 관리 탭 동선
+
+시작 원격 OBS HEAD `9cfe9b7434c4a864c8b24e1eec0bcfd9ee9c5e1c` 및 CHZZK contract #88 (Node 334/334, Chromium 24/24), 공식 OBS #30 (합성 13/13)을 확인했다. AGENTS → PRODUCT → development-workflow → architecture → 이 계획 순서로 읽었고 `main`은 변경하지 않는다.
+
+- **사용자 흐름:** 게임 PC의 기존 자체 채팅/WebSocket과 별도 creator를 유지한 상태에서 송출 PC WebSocket만 끊긴다. 두 관리 탭은 같은 로그인 쿠키로 현재 캠페인 상태를 확인하지만, 이전 탭이 기억한 선택·중지 버튼은 최신 화면을 덮지 못한다. 송출 PC는 **기존 송출 승인으로 명시적으로 복귀**하고 새 출력 보고 전까지 공개 배너가 투명하다. 보고가 들어오면 동일 connection ID/FK/공개 URL의 배너가 다시 준비된다. 관리 GET, 브라우저 뒤로가기, 잘못된 POST는 광고 재선택·다른 계정 전환·게임 영상·OBS 장면을 실행하지 않는다.
+- **좁은 수정:** 유효한 최신 브라우저 캠페인 화면이 별도로 있는 경우, 오래된 탭의 409는 *그 최신 확인값을 취소하지 않는다*. 반면 송출 역할 승인 자체가 철회·교체됐다면 확인값을 무효화한다. 기존 소유자/송출 승인 ID·CSRF·Origin·rate limit·유효한 명시적 Select/Stop 조건은 그대로 유지한다. 새 DB/마이그레이션/클라이언트 API/자동 송출 조작은 없다.
+- **통합 검증:** `stale-campaign-management.test.mts`의 실제 HTTP/SQLite/WebSocket은 동일 쿠키 다중 탭의 오래된 Select·Stop 409, 송출 소켓 단절·기존 승인 갱신·새 보고, 게임 채팅 수신·타 creator 격리, 광고 FK·공개 URL 불변, 이전 보고 무효, 이후 최신 탭의 명시적 Stop/Select를 확인한다. Chromium 390px 브라우저에서는 게임 재승인 중 실제 두 탭 폼 클릭으로 세 단계의 409·상태 확인·동일 공개 URL 복귀를 확인한다. CI 결과는 해당 코드 커밋의 실제 완료 상태로 기록한다.
+
+## 직전 완료 흐름: 브라우저 뒤로가기·오래된 탭과 실제 송출 승인 철회 구분
 
 - 이미 완료된 **게임 PC 재승인 중 송출 WebSocket 단절→기존 승인으로 직접 복귀→새 유효 보고** 경로는 `streaming-return-during-game-reapproval.test.mts` 및 Chromium 동선에 있다. 동일 송출 connection ID/광고 FK/공개 URL 보존, 게임 채팅 유지, 옛 보고 무효화, 실제 승인 철회 시 수동 재선택까지 회귀로 확인했다. 본 흐름은 이를 재구현하지 않는다.
 - **이번 변경:** 관리 브라우저의 `/campaigns` 조회마다 해당 브라우저 전용 일회성 화면 확인값을 발급하고 선택·중지 폼에 싣는다. 기존 세션 쿠키·CSRF·Origin 검사를 그대로 통과해야 하며, 같은 쿠키의 다른 탭이 최신 화면을 읽었다면 **옛 탭/뒤로가기 폼은 409**로 차단된다. 캠페인 선택·중지 성공은 이전처럼 같은 owner의 다른 관리 브라우저 확인 자격도 무효화한다. 보고·송출 승인·채팅·공개 URL을 조회/409로 바꾸지 않는다. DB/마이그레이션/새 외부 API나 자동 광고 실행은 추가하지 않는다.
@@ -14,7 +22,7 @@
   - 시험 도우미 보정 `ad3e845a37c5c96823ecc742332d4892ede26718`의 **CHZZK contract #88/run `38853722605` completed/success, 전체 5개 job 통과**. Ubuntu·Windows × Node22·24 플랫폼 검사 모두 성공; Ubuntu24 **334/334, fail0, skip0**·locked dependency 취약점 **0건**·strict TypeScript 통과. 실제 Chromium **24/24 통과**, 증빙 artifact `12026580663`. Windows development **#425/run `38853722530` scope 성공, native x64 skipped**. 해당 시험 도우미 후속 커밋에는 공식 OBS 합성을 재실행하지 않았으며 #30은 바로 앞 기능 SHA의 확인 결과다.
   - 전부 단일 서비스·합성 CHZZK·HTTP/SQLite/WebSocket/Chromium/공식 OBS 개발 fixture의 근거다. **D1/D2/D4/D6/D7**, 실계정 치지직, 물리 투컴·개인 HUD 송출 제외, 실제 광고 시청, 유료·HP·정산·반복/설치/배포 qualification은 미완료. 새 구조·부당한 광고/OBS 동작·게임 PC OBS·검증 한도 완화는 없다.
 
-## 직전 완료 흐름: 복수 관리 브라우저의 오래된 캠페인 선택/중지 요청 차단
+## 이전 완료 흐름: 복수 관리 브라우저의 오래된 캠페인 선택/중지 요청 차단
 
 시작 OBS HEAD `386c9db6e8b3d1f3db671011b306b2c8f74dbc0b`에서 AGENTS → PRODUCT → development-workflow → architecture → 이 문서를 순서대로 읽었다. 직전 `827fa97b1ad617524fb66526561f490a258d6a95`의 CHZZK contract #83/run `38845683296`은 Node **330/330·Chromium21/21 성공**, 공식 OBS public ad flow #26/run `38845382854`의 13/13 PNG 합성은 기능 커밋 `7c395b02`의 결과였다. 이번 SHA 검증으로 대체하지 않는다.
 
@@ -99,6 +107,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-새 화면 확인값 경계와 실제 송출 승인 철회/교체를 CI에서 확인한 뒤, **송출 WebSocket 단절→기존 승인 복귀→새 출력 보고** 중 관리 브라우저의 여러 탭이 열려 있어도 채팅·광고 FK·기존 공개 URL을 변경하지 않고, 옛 폼만 안전하게 차단하는 결합 동선을 검증한다. 게임 PC에 OBS를 요구하거나 송출 장면·광고를 자동 제어하지 않는다. 실계정 치지직, 물리 투컴 HUD 제외, 유료 노출·HP·정산·D1/D2/D4/D6/D7 및 배포 qualification은 여전히 미완료다.
+이 결합 흐름의 CI가 완료되면 **관리 브라우저 로그인 만료·다른 관리 계정 전환 중 송출 PC가 기존 승인으로 복귀하는 경우**를 연결한다. 기존 게임 PC 승인과 선택된 공개 URL은 그대로 두고, 이전 관리 쿠키/폼이나 타 creator가 송출 승인·광고를 바꾸지 못하게 한다. 물리 투컴의 HUD 제외와 실계정 치지직, D1/D2/D4/D6/D7, 광고 실제 노출·유료/HP·정산 및 배포 qualification은 별도 미완료다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

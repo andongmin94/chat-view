@@ -408,6 +408,11 @@ def run() -> None:
                     setup = flow.context.new_page()
                     setup.goto(f.origin + "/campaigns")
                     same_source_url = setup.locator("#source-url").input_value()
+                    # A second tab uses the SAME authenticated browser cookie.
+                    # Its campaign form will become obsolete as setup reloads.
+                    previous_tab = flow.context.new_page()
+                    previous_tab.goto(f.origin + "/campaigns")
+                    expect(previous_tab.locator('[data-campaign-form-guidance="fresh-review"]')).to_have_count(1)
                     public = flow.context.new_page()
                     public.goto(same_source_url)
                     banner = public.locator("#banner")
@@ -434,6 +439,16 @@ def run() -> None:
                     expect(ad).to_have_attribute("data-account-ad-selected", "true")
                     expect(ad).to_contain_text("현재 승인으로 자체 채팅 복귀")
                     expect(ad).to_contain_text("같은 승인으로 복귀할 때 광고 재선택·URL 교체는 필요하지 않습니다")
+                    expect(banner).to_be_hidden()
+                    setup.reload()
+                    expect(setup.locator('[data-banner-recovery-state="streaming-disconnected"]')).to_have_count(1)
+                    assert setup.locator("#source-url").input_value() == same_source_url
+                    with previous_tab.expect_response(
+                            lambda r: urlsplit(r.url).path.endswith("/select")) as stale_offline:
+                        previous_tab.get_by_role("button", name="이 시험 캠페인 다시 선택").click()
+                    assert stale_offline.value.status == 409
+                    expect(previous_tab.locator('[data-campaign-review-reason="stale-page"]')).to_have_count(1)
+                    expect(previous_tab.locator("body")).to_contain_text("실제 송출 승인 철회를 뜻하지는 않습니다")
                     expect(banner).to_be_hidden()
                     flow.image("sender-offline-game-awaiting-consent-mobile")
 
@@ -464,6 +479,15 @@ def run() -> None:
                     expect(ad).to_have_attribute("data-account-ad-state", "waiting-report")
                     expect(ad).to_contain_text("새 보고를 기다리는 동안 공개 소스는 투명합니다")
                     expect(banner).to_be_hidden()
+                    previous_tab.goto(f.origin + "/campaigns")
+                    expect(previous_tab.locator('[data-banner-recovery-state="waiting-report"]')).to_have_count(1)
+                    assert previous_tab.locator("#source-url").input_value() == same_source_url
+                    with setup.expect_response(
+                            lambda r: urlsplit(r.url).path == "/campaigns/stop") as stale_waiting:
+                        setup.get_by_role("button", name="공개 배너 중지", exact=True).click()
+                    assert stale_waiting.value.status == 409
+                    expect(setup.locator('[data-campaign-review-reason="stale-page"]')).to_have_count(1)
+                    expect(banner).to_be_hidden()
                     assert f.command("game-role-sender-returned")["ok"]
                     flow.image("sender-returned-waiting-for-report-mobile")
 
@@ -471,8 +495,15 @@ def run() -> None:
                     flow.page.reload()
                     expect(ad).to_have_attribute("data-account-ad-state", "report-ready")
                     expect(banner).to_be_visible()
-                    setup.reload()
+                    setup.goto(f.origin + "/campaigns")
+                    expect(setup.locator('[data-banner-recovery-state="report-ready"]')).to_have_count(1)
+                    with previous_tab.expect_response(
+                            lambda r: urlsplit(r.url).path.endswith("/select")) as stale_returned:
+                        previous_tab.get_by_role("button", name="이 시험 캠페인 다시 선택").click()
+                    assert stale_returned.value.status == 409
+                    expect(previous_tab.locator('[data-campaign-review-reason="stale-page"]')).to_have_count(1)
                     assert setup.locator("#source-url").input_value() == same_source_url
+                    expect(banner).to_be_visible()
                     assert f.command("game-role-sender-restored")["ok"]
                     assert f.command("game-role-check")["ok"]
                     flow.image("same-sender-ad-restored-mobile")
@@ -491,7 +522,7 @@ def run() -> None:
                     expect(ad).to_have_attribute("data-account-ad-state", "waiting-report")
                     expect(ad).to_have_attribute("data-account-ad-selected", "true")
                     assert f.command("check")["ok"]
-                    results.append("sender websocket outage during game reapproval hides public banner; same sender approval and fresh report restore original URL without reselecting")
+                    results.append("two same-cookie manager tabs reject old Select/Stop through sender outage, return and fresh report; gaming chat and selected URL persist")
                 finally:
                     flow.close()
 

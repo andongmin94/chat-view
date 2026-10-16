@@ -191,3 +191,125 @@ test('revoked sender has its own review-required explanation, distinct from old 
     assert.equal(selected(f, 'alice'), undefined, 'the read and rejected action never reselect an ad');
   } finally { await f.close(); }
 });
+
+test('same-browser tabs across sender outage keep gaming chat, selection and URL; only the latest reviewed form may act', async () => {
+  const f = await fixture({ createDisplay: (access, origin, snapshot) =>
+    new DisplayGateway(access, origin, snapshot) });
+  const peers: WebSocket[] = [];
+  try {
+    const sender = await f.connect('alice', 'streaming');
+    const gamer = await f.approve(await f.start('gaming'), 'gaming', sender.b);
+    const other = await f.connect('bob', 'gaming');
+    const open = async (token: string) => {
+      const ws = new WebSocket(f.origin.replace('http:', 'ws:') + '/display/events',
+        { headers: { Authorization: 'Bearer ' + token }, handshakeTimeout: 3000 });
+      ws.on('error', () => {}); peers.push(ws);
+      await once(ws, 'message', { signal: AbortSignal.timeout(3000) });
+      return ws;
+    };
+    const senderPeer = await open(sender.lease.token);
+    const gamePeer = await open(gamer.token);
+    await open(other.lease.token);
+    const senderId = sender.lease.membership.connectionId;
+    const selectPath = '/campaigns/' + TEST_CAMPAIGN.id + '/select';
+    await f.page('/campaigns', sender.b);
+    assert.equal((await f.post(selectPath, sender.b)).status, 303);
+    const initial = await f.page('/campaigns', sender.b);
+    const source = /\/public\/ads\/([a-f0-9]{32})/u.exec(initial)?.[1]; assert(source);
+    const url = f.origin + '/public/ads/' + source;
+    const state = async () => (await f.request('/public/ads/' + source + '/state')).json();
+    const report = (token: string) => f.request('/broadcast/output', {
+      method: 'POST', headers: { Authorization: 'ChatView-Output ' + token,
+        'Content-Type': 'application/json' },
+      body: JSON.stringify({ sequence: 1, streaming: false, recording: false, sampleAgeMs: 0 }),
+    });
+    assert.equal((await report(sender.lease.outputToken!)).status, 200);
+    assert.equal((await state() as { state: string }).state, 'visible');
+    const reviewed = async () => {
+      const html = await f.page('/campaigns', sender.b);
+      assert(html.includes(url), 'original public URL is retained on every read');
+      assert(sender.b.view);
+      return { html, view: sender.b.view };
+    };
+    const tabPost = (path: string, view: string) => f.request(path, {
+      method: 'POST', headers: { Cookie: sender.b.cookie, Origin: f.origin,
+        'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ csrf: sender.b.csrf, view }),
+    });
+    const selectionUnchanged = () =>
+      assert.equal(selected(f, 'alice'), senderId, 'the selected campaign remains bound to the same streaming approval');
+    const changes = () => f.store.database.prepare('SELECT total_changes() AS n').get()!.n;
+
+    // Two real HTTP page reads share the SAME authenticated browser cookie.
+    // The second one is current; the first holds an earlier form in another tab.
+    const first = await reviewed(), second = await reviewed();
+    assert.notEqual(first.view, second.view);
+    selectionUnchanged();
+    const disconnect = once(senderPeer, 'close', { signal: AbortSignal.timeout(3000) });
+    senderPeer.close(); await disconnect;
+    const offline = await reviewed();
+    assert.match(offline.html, /data-banner-recovery-state="streaming-disconnected"/u);
+    assert.match(offline.html, /캠페인 재선택이나 URL 교체는 필요하지 않습니다/u);
+    assert.equal(f.creators.describe('alice').presence.streamingConnections, 0);
+    assert.equal(f.creators.describe('alice').presence.gamingConnections, 1);
+    assert.deepEqual(await state(), HIDDEN_AD, 'the prior report cannot remain valid after socket loss');
+    assert.equal(f.creators.describe('alice').output.state, 'unknown');
+    const beforeOffline = changes();
+    await stale(await tabPost(selectPath, first.view), 'stale-page');
+    assert.equal(changes(), beforeOffline, 'old selected form never writes while streaming is offline');
+    selectionUnchanged();
+    const gameChat = once(gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
+    f.chats.get('alice')!.publish('game chat during manager-tab sender outage');
+    assert.match(String((await gameChat)[0]), /game chat during manager-tab sender outage/u);
+    assert.equal(f.store.find(gamer.sessionToken)?.membership?.role, 'gaming');
+    assert(f.store.find(other.lease.sessionToken), 'another creator stays authorized');
+
+    // Explicit return preserves the original streaming connection ID but
+    // rotates short display/output tokens. An old report is never replayed.
+    const renewed = await f.native('/display/refresh', 'ChatView-Session',
+      sender.lease.sessionToken, 'streaming');
+    assert.equal(renewed.status, 200);
+    const returned = await renewed.json() as typeof sender.lease;
+    assert.deepEqual(returned.membership, sender.lease.membership);
+    const returnedPeer = await open(returned.token);
+    const waiting = await reviewed();
+    assert.match(waiting.html, /data-banner-recovery-state="waiting-report"/u);
+    assert.equal(f.creators.describe('alice').presence.streamingConnections, 1);
+    assert.deepEqual(await state(), HIDDEN_AD);
+    const beforeWaiting = changes();
+    await stale(await tabPost('/campaigns/stop', offline.view), 'stale-page');
+    assert.equal(changes(), beforeWaiting);
+    selectionUnchanged();
+
+    assert.equal((await report(returned.outputToken!)).status, 200);
+    assert.equal((await state() as { state: string }).state, 'visible');
+    const ready = await reviewed();
+    assert.match(ready.html, /data-banner-recovery-state="report-ready"/u);
+    const beforeReady = changes();
+    await stale(await tabPost('/campaigns/stop', waiting.view), 'stale-page');
+    assert.equal(changes(), beforeReady, 'the obsolete form cannot stop a restored public banner');
+    selectionUnchanged();
+
+    // An old tab's 409 must NOT invalidate the more recently reviewed tab.
+    // These two writes are explicit user actions, not report/GET side effects.
+    assert.equal((await f.post('/campaigns/stop', sender.b)).status, 303,
+      'the newest management tab retains its valid manual Stop after an old tab was rejected');
+    assert.equal(selected(f, 'alice'), undefined);
+    assert.deepEqual(await state(), HIDDEN_AD);
+    await stale(await tabPost(selectPath, ready.view), 'stale-page');
+    assert.equal(selected(f, 'alice'), undefined, 'old Select cannot undo a manually stopped campaign');
+    const stopped = await reviewed();
+    assert.match(stopped.html, /data-banner-manual-reselect="ready"/u);
+    assert.equal((await f.post(selectPath, sender.b)).status, 303,
+      'only a fresh explicit selection restores the prior public URL');
+    selectionUnchanged();
+    assert.equal((await state() as { state: string }).state, 'visible');
+    assert((await f.page('/campaigns', sender.b)).includes(url), 'source address is unchanged');
+    const response = once(returnedPeer, 'message', { signal: AbortSignal.timeout(3000) });
+    const gameResponse = once(gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
+    f.chats.get('alice')!.publish('game and sender chat survive manual campaign controls');
+    assert.match(String((await response)[0]), /game and sender chat survive manual campaign controls/u);
+    assert.match(String((await gameResponse)[0]), /game and sender chat survive manual campaign controls/u);
+    assert(f.store.find(other.lease.sessionToken), 'other creator was not modified');
+  } finally { for (const ws of peers) ws.terminate(); await f.close(); }
+});

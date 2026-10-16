@@ -16,7 +16,8 @@
 - 두 번째 테스트는 선택 전 `not-selected` → 송출 선택 후 보고 없을 때 `waiting-report` → 송출 WebSocket 단절 시 `streaming-disconnected` → 사용자가 직접 공개 광고 중지한 뒤 `not-selected`와 동일 URL 잔존을 확인한다. 게임 소켓은 유지하며 송출 소켓 단절이나 게임 역할 승인만으로 광고를 재선택/노출했다고 계산하지 않는다.
 - 기존 Chromium management fixture/Playwright 390px에 하나의 creator가 직접 **게임 PC 기존 연결만 해제 → 새 게임 역할·확인 번호 승인 → 수집/실제 소켓 연결 → 동일 송출 역할·광고 상태와 공개 주소 확인 → 새 게임 연결만 해제** 동선을 추가한다. 실제 브라우저 CSRF 폼으로 철회·승인하고 메타데이터/계정 격리·기존 송출 테스트 배너 선택이 초기 상태로 복원됐는지 확인한다. 게임 PC에 OBS를 설치하거나 실행하지 않는다.
 - **기능 커밋 `105e2510e73217c03411fe7d01feed0d643936fa` 실제 CI:** CHZZK contract **#77/run `38835792246` 전체 실패**(Node 22/24 Ubuntu·Windows 서비스 검사). Ubuntu24 **327/328 통과**, 기존 326개 및 신규 `account ad summary` 테스트 통과, 신규 `owner revokes and reapproves only gaming chat` 테스트는 SQLite `DatabaseSync`의 **null-prototype row 객체**와 일반 `{ connection_id }`를 `deepStrictEqual`로 비교해 데이터가 같아도 실패했다. 결과의 정확한 **connection_id 필드만 비교**하도록 검사 코드를 수정하며 광고 선택/CSRF/소켓/계정/보고 조건은 유지한다. Chromium **19/19 통과**(동일 sender 유지·게임 단독 개별 철회→새 동의→수집→개별 해제, 390px), 공식 OBS public ad flow **#24/run `38835792158` 성공·13/13 합성 픽셀 검사 통과**. Windows development **#414/run `38835792164` native impact scope 성공, Windows x64 빌드 skipped**(서버/브라우저만 변경).
-- 이번 HTTP 테스트 비교 수정 SHA의 CHZZK contract/Chromium 결과는 **아직 미확정**. 게임 PC OS 창·물리 캡처카드·실제 치지직/시청자·유료 광고·지급/HP·설치 qualification을 의미하지 않는다. 기존 타입/CSRF/SameSite, 재시도·출력 시간·픽셀 한도·기존 테스트를 완화하지 않는다.
+- **후속 `afbc31ed3fa9d0c459eb39671396da4ca07b0e05`, CHZZK contract #78/run `38836053021`: 전체 실패**. Ubuntu24 기준 **327/328 통과** 및 Chromium **19/19 성공**. 새 HTTP 테스트에서 일부러 네이티브 pending poll을 조회한 직후 동의 승인 수집 poll을 시작해 서버의 정상 `LOGIN_POLL_MS` 429 rate gate에 걸렸다. 실제 게임 PC는 이 간격을 지키므로, 테스트도 **기존 production poll cadence가 지난 뒤** 수집하도록 수정한다. 서버의 429 검사·실행 한도는 변경하지 않는다.
+- 이번 polling cadence 수정 SHA의 CHZZK contract/Chromium 결과는 **아직 미확정**. 게임 PC OS 창·물리 캡처카드·실제 치지직/시청자·유료 광고·지급/HP·설치 qualification을 의미하지 않는다. 기존 타입/CSRF/SameSite, 재시도·출력 시간·픽셀 한도·기존 테스트를 완화하지 않는다.
 
 ### 미완료
 

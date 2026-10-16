@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { WebSocket } from 'ws';
 import { fixture } from './fixtures/service.mts';
 import { DisplayGateway } from '../server/chat/display-gateway.mts';
+import { LOGIN_POLL_MS } from '../server/chat/browser-login.mts';
 import { HIDDEN_AD, TEST_CAMPAIGN } from '../server/ads/campaigns.mts';
 
 const accountRole = (html: string, role: 'gaming' | 'streaming', approved: number, online: number) => {
@@ -101,6 +102,10 @@ test('owner revokes and reapproves only gaming chat; sender and its selected pub
       'no automatic consent or session transfer while the game client awaits browser approval');
     assert.equal((await publicState() as { state: string }).state, 'visible');
 
+    // A pending native poll has already consumed the current cadence slot.
+    // Respect the production LOGIN_POLL_MS before the post-consent collect;
+    // never adjust the server rate limiter to make the fixture green.
+    await new Promise<void>(resolve => setTimeout(resolve, LOGIN_POLL_MS));
     const replacement = await f.approve(newRequest, 'gaming', sender.b);
     assert.notEqual(replacement.sessionToken, original.lease.sessionToken);
     assert.notEqual(replacement.membership.connectionId, original.lease.membership.connectionId);

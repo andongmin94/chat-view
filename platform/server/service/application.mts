@@ -435,11 +435,13 @@ ${this.#form(b, '/account/cancel', '취소')}
           : account.presence.streamingConnections === 0 ? 'streaming-disconnected'
           : adReady ? 'report-ready' : 'waiting-report';
         const adText = adState === 'not-selected'
-          ? '시험 캠페인 미선택 · 게임 PC 채팅 재승인이나 송출 PC 재접속만으로 광고가 선택되지 않습니다.'
+          ? streamingApproved === 0
+            ? '송출 PC 역할 승인이 없습니다. 같은 채널의 송출 PC에서 역할을 새로 승인한 뒤 시험 광고를 직접 다시 선택하세요. 이전 공개 URL은 유지돼도 광고 선택은 자동 복구되지 않습니다.'
+            : '시험 캠페인 미선택 · 게임 PC 채팅 재승인이나 송출 PC 재접속만으로 광고가 선택되지 않습니다. 송출 승인이 유효해도 직접 선택해야 합니다.'
           : adState === 'streaming-disconnected'
-            ? '시험 캠페인 선택 유지 · 송출 PC의 열린 채팅 연결이 없어 공개 소스는 투명하게 대기합니다.'
+            ? '시험 캠페인 선택과 송출 PC 승인은 유지됐지만 열린 송출 채팅 연결이 없습니다. 공개 소스는 투명하게 대기합니다. 송출 PC의 ChatView 연결창에서 현재 승인으로 자체 채팅 복귀를 직접 선택하고 새 출력 보고를 확인하세요. 같은 승인으로 복귀할 때 광고 재선택·URL 교체는 필요하지 않습니다.'
             : adState === 'waiting-report'
-              ? '시험 캠페인 선택 유지 · 유효한 송출 PC 출력 보고가 없어 공개 소스는 투명하게 대기합니다.'
+              ? '시험 캠페인 선택 유지 · 송출 PC 채팅 연결은 열렸지만 유효한 출력 보고가 없습니다. 새 보고를 기다리는 동안 공개 소스는 투명합니다. 게임 PC 채팅 복귀나 브라우저 새로고침으로 출력 보고를 만들 수 없으며, 광고 재선택도 필요하지 않습니다.'
               : '시험 캠페인 선택 유지 · 서버의 공개 시험 배너 표시 조건 충족 (OBS 화면·시청자 노출 미검증).';
         const outputText = account.output.state === 'unknown' ? '최근 유효한 송출 PC 출력 보고 없음'
           : account.output.streaming ? '최근 송출 활성 보고 수신 (실제 영상 미검증)'

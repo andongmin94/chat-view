@@ -134,6 +134,55 @@ try {
       gamingReturn.gamePeer = await openCollectionPeer(gamingReturn.lease.token);
       reply({ connectionId: gamingReturn.lease.membership.connectionId }); continue;
     }
+    if (command.op === 'game-role-offline-check') {
+      assert(gamingReturn?.lease && gamingReturn.gamePeer?.readyState === WebSocket.OPEN);
+      assert(peer?.readyState === WebSocket.CLOSED && f.store.find(alice.lease.sessionToken));
+      assert.equal(f.creators.describe('alice').presence.gamingConnections, 1);
+      assert.equal(f.creators.describe('alice').presence.streamingConnections, 0);
+      assert.equal(selection()?.connection_id, alice.lease.membership.connectionId,
+        'sender disconnect never changes the selected campaign FK');
+      const state = await f.request(`/public/ads/${sourceId}/state`);
+      assert.equal(state.status, 200);
+      assert.deepEqual(await state.json(), { type: 'ad-snapshot', version: 1,
+        mode: 'test', state: 'hidden', expiresInMs: 0 });
+      const controller = new AbortController();
+      const messages = on(gamingReturn.gamePeer, 'message',
+        { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]) });
+      try {
+        const marker = 'gaming-chat-while-sender-offline';
+        f.chats.get('alice')!.publish(marker);
+        let received = false;
+        for await (const [frame] of messages) if (String(frame).includes(marker)) { received = true; break; }
+        assert(received, 'gaming HUD still gets creator chat while the sender is offline');
+      } finally { controller.abort(); }
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'game-role-sender-returned') {
+      assert(gamingReturn?.lease && gamingReturn.gamePeer?.readyState === WebSocket.OPEN);
+      assert(peer?.readyState === WebSocket.OPEN);
+      const account = f.creators.describe('alice');
+      assert.equal(account.presence.gamingConnections, 1);
+      assert.equal(account.presence.streamingConnections, 1);
+      assert.equal(account.output.state, 'unknown',
+        'a same-approval streaming return is not a new valid output report');
+      assert.equal(selection()?.connection_id, alice.lease.membership.connectionId);
+      const state = await f.request(`/public/ads/${sourceId}/state`);
+      assert.deepEqual(await state.json(), { type: 'ad-snapshot', version: 1,
+        mode: 'test', state: 'hidden', expiresInMs: 0 });
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'game-role-sender-restored') {
+      assert(gamingReturn?.lease && gamingReturn.gamePeer?.readyState === WebSocket.OPEN);
+      assert(peer?.readyState === WebSocket.OPEN && f.store.find(alice.lease.sessionToken));
+      assert.equal(selection()?.connection_id, alice.lease.membership.connectionId);
+      assert.equal(f.creators.describe('alice').presence.gamingConnections, 1);
+      assert.equal(f.creators.describe('alice').presence.streamingConnections, 1);
+      assert.equal(f.creators.describe('alice').output.state, 'reported');
+      const state = await f.request(`/public/ads/${sourceId}/state`);
+      assert.equal((await state.json() as { state: string }).state, 'visible',
+        'only the returned sender new output report restores the prior selected banner');
+      reply({ ok: true }); continue;
+    }
     if (command.op === 'game-role-check') {
       assert(gamingReturn?.lease && gamingReturn.gamePeer?.readyState === WebSocket.OPEN);
       assert(peer?.readyState === WebSocket.OPEN && f.store.find(alice.lease.sessionToken));

@@ -307,6 +307,98 @@ def run() -> None:
                 finally:
                     flow.close()
 
+                # A separate Alice gamer is explicitly reauthorized while
+                # the already-selected sender loses just its websocket.
+                # Opening and browsing the original public URL never creates a
+                # report. Only the returned sender's fresh report restores it.
+                flow = Flow(browser, f, 390)
+                try:
+                    flow.identity("/account")
+                    flow.confirm("/account")
+                    gamer = flow.page.locator('[data-pc-role="gaming"]')
+                    sender = flow.page.locator('[data-pc-role="streaming"]')
+                    ad = flow.page.locator('#account-public-banner')
+                    setup = flow.context.new_page()
+                    setup.goto(f.origin + "/campaigns")
+                    same_source_url = setup.locator("#source-url").input_value()
+                    public = flow.context.new_page()
+                    public.goto(same_source_url)
+                    banner = public.locator("#banner")
+
+                    old = f.command("game-role-start")
+                    assert f.command("sender-report")["ok"]
+                    expect(banner).to_be_visible()
+                    flow.page.reload()
+                    expect(gamer.locator('[data-approved-count]')).to_have_attribute("data-approved-count", "1")
+                    expect(sender.locator('[data-online-count]')).to_have_attribute("data-online-count", "1")
+                    expect(ad).to_have_attribute("data-account-ad-state", "report-ready")
+
+                    flow.page.locator(
+                        f'form[action="/connections/{old["connectionId"]}/revoke"] button').click()
+                    expect(gamer.locator('[data-approved-count]')).to_have_attribute("data-approved-count", "0")
+                    assert f.command("game-role-revoked")["ok"]
+                    pending_game = f.command("game-role-new")
+                    assert f.command("sender-disconnect")["ok"]
+                    flow.page.reload()
+                    expect(gamer.locator('[data-online-count]')).to_have_attribute("data-online-count", "0")
+                    expect(sender.locator('[data-approved-count]')).to_have_attribute("data-approved-count", "1")
+                    expect(sender.locator('[data-online-count]')).to_have_attribute("data-online-count", "0")
+                    expect(ad).to_have_attribute("data-account-ad-state", "streaming-disconnected")
+                    expect(ad).to_have_attribute("data-account-ad-selected", "true")
+                    expect(ad).to_contain_text("현재 승인으로 자체 채팅 복귀")
+                    expect(ad).to_contain_text("같은 승인으로 복귀할 때 광고 재선택·URL 교체는 필요하지 않습니다")
+                    expect(banner).to_be_hidden()
+                    flow.image("sender-offline-game-awaiting-consent-mobile")
+
+                    flow.page.goto(f.origin + pending_game["path"])
+                    expect(flow.page.locator('[data-login-request="pending"]')).to_have_count(1)
+                    expect(flow.page.locator("[data-login-code]")).to_have_text(pending_game["code"])
+                    expect(flow.page.locator("body")).to_contain_text("게임 PC · 개인 HUD")
+                    expect(flow.page.locator("body")).to_contain_text("channel <alice>")
+                    flow.page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True).click()
+                    expect(flow.page.locator('[data-login-collection="awaiting-app"]')).to_have_count(1)
+                    current_game = f.command("game-role-collect")
+                    assert current_game["connectionId"] != old["connectionId"]
+                    flow.page.goto(f.origin + "/account")
+                    expect(gamer.locator('[data-approved-count]')).to_have_attribute("data-approved-count", "1")
+                    expect(gamer.locator('[data-online-count]')).to_have_attribute("data-online-count", "1")
+                    expect(sender.locator('[data-online-count]')).to_have_attribute("data-online-count", "0")
+                    expect(ad).to_have_attribute("data-account-ad-state", "streaming-disconnected")
+                    expect(banner).to_be_hidden()
+                    assert f.command("game-role-offline-check")["ok"]
+
+                    # Native sender selects its existing renewal/role, not a
+                    # new browser login or campaign selection. The old report
+                    # was cleared on disconnect; mere socket return stays hidden.
+                    assert f.command("sender-return")["ok"]
+                    flow.page.reload()
+                    expect(sender.locator('[data-online-count]')).to_have_attribute("data-online-count", "1")
+                    expect(gamer.locator('[data-online-count]')).to_have_attribute("data-online-count", "1")
+                    expect(ad).to_have_attribute("data-account-ad-state", "waiting-report")
+                    expect(ad).to_contain_text("새 보고를 기다리는 동안 공개 소스는 투명합니다")
+                    expect(banner).to_be_hidden()
+                    assert f.command("game-role-sender-returned")["ok"]
+                    flow.image("sender-returned-waiting-for-report-mobile")
+
+                    assert f.command("sender-report")["ok"]
+                    flow.page.reload()
+                    expect(ad).to_have_attribute("data-account-ad-state", "report-ready")
+                    expect(banner).to_be_visible()
+                    setup.reload()
+                    assert setup.locator("#source-url").input_value() == same_source_url
+                    assert f.command("game-role-sender-restored")["ok"]
+                    assert f.command("game-role-check")["ok"]
+                    flow.image("same-sender-ad-restored-mobile")
+                    flow.page.locator(
+                        f'form[action="/connections/{current_game["connectionId"]}/revoke"] button').click()
+                    expect(gamer.locator('[data-approved-count]')).to_have_attribute("data-approved-count", "0")
+                    expect(sender.locator('[data-online-count]')).to_have_attribute("data-online-count", "1")
+                    assert f.command("game-role-released")["ok"]
+                    assert f.command("check")["ok"]
+                    results.append("sender websocket outage during game reapproval hides public banner; same sender approval and fresh report restore original URL without reselecting")
+                finally:
+                    flow.close()
+
                 flow = Flow(browser, f)
                 try:
                     flow.identity("/campaigns")

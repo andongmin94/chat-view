@@ -52,20 +52,23 @@ async function fixture(enabled=true) {
   const address=server.address();assert(address&&typeof address!=='string');origin=`http://127.0.0.1:${address.port}`;
   app=new PlatformApplication(creators,origin,state=>`https://chzzk.naver.com/account-interlock?state=${state}`);
   const request=(path:string,init:RequestInit={})=>fetch(origin+path,{...init,redirect:'manual',signal:AbortSignal.timeout(5000)});
-  type Browser={cookie:string;csrf:string};
+  type Browser={cookie:string;csrf:string;view?:string};
   const get=async(path:string,b:Browser)=>{
     const res=await request(path,{headers:{Cookie:b.cookie}});assert.equal(res.status,200);
-    const html=await res.text();b.csrf=/name="csrf" value="([a-f0-9]{64})"/u.exec(html)?.[1]??b.csrf;return html;
+    const html=await res.text();b.csrf=/name="csrf" value="([a-f0-9]{64})"/u.exec(html)?.[1]??b.csrf;
+    if(path==='/campaigns') b.view=/name="view" value="([a-f0-9]{64})"/u.exec(html)?.[1];
+    return html;
   };
   const post=(path:string,b:Browser)=>request(path,{method:'POST',headers:{Cookie:b.cookie,Origin:origin,
-    'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrf:b.csrf})});
+    'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrf:b.csrf,
+      ...(/^\/campaigns\/(?:stop|[a-z0-9-]{1,64}\/select)$/u.test(path)&&b.view?{view:b.view}:{})})});
   const native=(path:string,scheme:string,token:string)=>request(path,{method:'POST',headers:{Authorization:`${scheme} ${token}`,'X-ChatView-Role':'streaming'}});
   async function connect(owner:string) {
     const verifier=randomBytes(32).toString('hex');
     const started=await native('/display/login','ChatView-Challenge',hashSecret(verifier));assert.equal(started.status,200);
     const {id,verificationPath}=await started.json() as {id:string;verificationPath:string};
     const landing=await request(verificationPath);assert.equal(landing.status,303);
-    const b={cookie:landing.headers.get('set-cookie')!.split(';')[0]!,csrf:''};await get(verificationPath,b);
+    const b:Browser={cookie:landing.headers.get('set-cookie')!.split(';')[0]!,csrf:''};await get(verificationPath,b);
     const login=await post(`/login/${id}/connect`,b);assert.equal(login.status,303);
     const state=new URL(login.headers.get('location')!).searchParams.get('state');
     const callback=await request(`/callback?state=${state}&code=${owner}`,{headers:{Cookie:b.cookie}});

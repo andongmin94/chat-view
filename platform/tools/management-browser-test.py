@@ -962,7 +962,7 @@ def run() -> None:
                 try:
                     flow.identity("/account")
                     flow.confirm("/account")
-                    gamer = flow.page.locator('[data-pc-role="gaming"]
+                    gamer = flow.page.locator('[data-pc-role="gaming"]')
                     sender = flow.page.locator('[data-pc-role="streaming"]')
                     ad = flow.page.locator("#account-public-banner")
                     campaign = flow.context.new_page()

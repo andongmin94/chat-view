@@ -19,7 +19,9 @@
 
 ### 남은 범위
 
-- 이번 SHA의 실제 원격 CI는 **검증 전**. 로그인·광고 선택/중지 경쟁의 서버 단일 인스턴스 경계를 실서비스 다중 프로세스·백업/실계정 운영과 동일시하지 않는다. D1/D2/D4/D6/D7 기존 간헐 오류, 실계정 CHZZK, 물리 투컴 HUD 제외·광고 실제 시청, 유료 광고·HP·정산·자원/설치 qualification은 미완료다.
+- **기능 `3eb5caf8773609bff5e33aef8bc8c39c3d4347a5` 실제 CI:** CHZZK contract **#84/run `38849739788` 전체 실패**. Ubuntu24 Node **330/332 통과·skip0**, Chromium **22/22 성공**(390px 두 인증된 관리자 화면에서 Stop→stale Select 409→새로 확인해 Select→stale Stop 409→관리 계정 전환/격리). 기존 `campaign-flow`에서 알 수 없는 캠페인 ID의 404가 새 stale-form 확인의 409보다 우선해야 하므로 실제 고정 `TEST_CAMPAIGN.id`와 일치하지 않으면 404로 유지한다. 기존 `streaming-conflict-flow`의 철회된 sender 화면에서 새 송출 승인으로 옮긴 뒤 stale Select가 303일 것이라는 기대는 새 정책과 불일치한다. **409 차단 → 실제 /campaigns 다시 읽기 → 현재 송출 승인에 명시적 Select**를 기존 회귀에 추가해 서버의 auto-reselect를 허용하지 않는다.
+- 공식 OBS public ad flow **#27/run `38849739759` 전체 실패**: 공식 OBS32.2.2 합성 픽셀 **placed-960·scaled-480·local-hide·return-after-stop 4건은 통과**했고, 그 뒤 기존 synthetic driver가 새로 확인하지 않은 광고 선택을 직접 POST해 **409**를 받았다. `platform/tools/obs-ad-scene-test.mts`는 최초 선택/중지·복귀 뒤 재선택·최종 중지 **각각의 명시적 폼 동작 전에** 현재 `/campaigns`를 읽도록 고친다. 새로운 409 정책과 무관한 OBS 배너 픽셀 성능 한도·scene 제어는 바꾸지 않는다. Windows development **#421/run `38849739740` scope 성공, Windows native x64 skipped**(service/browser).
+- 이 세 수정의 새로운 CI 결과는 **아직 미확정**이다. 로그인·광고 선택/중지 경쟁의 단일 인스턴스 관리 경계를 분산 서버·실계정 운영으로 확대하지 않는다. D1/D2/D4/D6/D7 간헐 오류, 실계정 CHZZK, 물리 투컴 HUD 제외·광고 실제 시청, 유료 광고·HP·정산·자원/설치 qualification은 미완료다.
 
 ## G1. 한 화면의 작업과 개인 채팅
 

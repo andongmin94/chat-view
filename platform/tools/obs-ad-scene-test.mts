@@ -144,8 +144,16 @@ try {
   }
   await call('SetCurrentProgramScene', { sceneName: main });
   const alice = await f.connect('obs-ad-fixture', 'streaming');
-  await f.page('/campaigns', alice.b);
-  const select = async () => assert.equal((await f.post(`/campaigns/${TEST_CAMPAIGN.id}/select`, alice.b)).status, 303);
+  const select = async () => {
+    // Real creator workflow: confirm current same-owner sender and campaign
+    // page before every manual select, never replaying a stale form.
+    await f.page('/campaigns', alice.b);
+    assert.equal((await f.post(`/campaigns/${TEST_CAMPAIGN.id}/select`, alice.b)).status, 303);
+  };
+  const stop = async () => {
+    await f.page('/campaigns', alice.b);
+    assert.equal((await f.post('/campaigns/stop', alice.b)).status, 303);
+  };
   await select();
   const page = await f.page('/campaigns', alice.b);
   const id = /\/public\/ads\/([a-f0-9]{32})/u.exec(page)?.[1]; assert(id);
@@ -209,7 +217,7 @@ try {
   const loadedDocuments = documents;
   await setPlacement(60, 50, 0.5); await capture('scaled-480', main, [60, 50, 480, 90]);
   await enabled(false); await stableHiddenReads(); await capture('local-hide', main);
-  assert.equal((await f.post('/campaigns/stop', alice.b)).status, 303);
+  await stop();
   const beforeReturn = reads;
   await enabled(true);
   const freshDeadline = performance.now() + 3000;
@@ -235,7 +243,7 @@ try {
   await capture('shutdown-mode-visible', main, [60, 50, 480, 90]);
   await enabled(false); await stableHiddenReads(); await capture('shutdown-mode-hidden', main);
   await enabled(true); await capture('shutdown-mode-return', main, [60, 50, 480, 90]);
-  assert.equal((await f.post('/campaigns/stop', alice.b)).status, 303);
+  await stop();
   await capture('campaign-stop', main);
   const nextFrame = once(peer, 'message'); f.chats.get('obs-ad-fixture')!.publish('private channel stays separate');
   await nextFrame; assert.equal(peer.readyState, WebSocket.OPEN);

@@ -117,7 +117,14 @@ test('streaming conflict returns through owner connection removal and original c
       for await (const [frame] of messages) if (String(frame).includes(marker)) { received = true; break; }
       assert(received); assert.equal(gamePeer.readyState, WebSocket.OPEN);
     } finally { controller.abort(); }
-    assert.equal((await f.post(select, game.b)).status, 303);
+    const outdated = await f.post(select, game.b);
+    assert.equal(outdated.status, 409, 'old form from revoked sender cannot select on the new streaming grant');
+    assert.match(await outdated.text(), /data-campaign-action="review-required"/u);
+    assert.deepEqual(await state(), HIDDEN_AD, 'stale browser form cannot bring back a removed campaign');
+    const current = await f.page('/campaigns', game.b);
+    assert.match(current, /data-banner-manual-reselect="ready"/u);
+    assert.equal((await f.post(select, game.b)).status, 303,
+      'explicit new page confirmation selects the existing OBS URL for the fresh sender');
     assert.equal(sourceId(await f.page('/campaigns', game.b)), source);
     assert.equal((await state()).state, 'visible');
   } finally { for (const peer of peers) peer.terminate(); await f.close(); }

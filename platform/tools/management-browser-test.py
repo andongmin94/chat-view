@@ -236,6 +236,60 @@ def run() -> None:
                     finally:
                         flow.close()
 
+                # Two independent manager browsers share Alice's selected
+                # sender campaign. B stops it while A displays the old selected
+                # form; A's outdated click must not undo B's decision.
+                left = Flow(browser, f, 390)
+                right = Flow(browser, f, 390)
+                try:
+                    left.identity("/campaigns")
+                    left.confirm("/campaigns")
+                    right.identity("/campaigns")
+                    right.confirm("/campaigns")
+                    expect(left.page.locator('[data-public-banner-state="waiting-report"]')).to_have_count(1)
+                    expect(left.page.get_by_role("button", name="이 시험 캠페인 다시 선택")).to_have_count(1)
+                    address = left.page.locator("#source-url").input_value()
+                    right.page.locator('form[action="/campaigns/stop"] button').click()
+                    expect(right.page.locator('[data-public-banner-state="not-selected"]')).to_have_count(1)
+                    with left.page.expect_response(
+                            lambda r: urlsplit(r.url).path.endswith("/select")) as blocked:
+                        left.page.get_by_role("button", name="이 시험 캠페인 다시 선택").click()
+                    assert blocked.value.status == 409
+                    expect(left.page.locator('[data-campaign-action="review-required"]')).to_have_count(1)
+                    expect(left.page.get_by_role("button", name="이 시험 캠페인 선택")).to_have_count(0)
+                    expect(left.page.locator("body")).to_contain_text(
+                        "이전 페이지의 선택·중지 요청을 실행하지 않았습니다")
+                    left.image("stale-campaign-manager-blocked-mobile")
+                    left.page.get_by_role("link", name="현재 시험 캠페인 상태 다시 확인").click()
+                    expect(left.page).to_have_url(f.origin + "/campaigns")
+                    expect(left.page.locator('[data-public-banner-state="not-selected"]')).to_have_count(1)
+                    assert left.page.locator("#source-url").input_value() == address
+                    left.page.get_by_role("button", name="이 시험 캠페인 선택").click()
+                    expect(left.page.locator('[data-public-banner-state="waiting-report"]')).to_have_count(1)
+                    assert left.page.locator("#source-url").input_value() == address
+                    with right.page.expect_response(
+                            lambda r: urlsplit(r.url).path == "/campaigns/stop") as stale_stop:
+                        right.page.locator('form[action="/campaigns/stop"] button').click()
+                    assert stale_stop.value.status == 409
+                    expect(right.page.locator('[data-campaign-action="review-required"]')).to_have_count(1)
+                    right.page.get_by_role("link", name="현재 시험 캠페인 상태 다시 확인").click()
+                    expect(right.page.locator('[data-public-banner-state="waiting-report"]')).to_have_count(1)
+                    assert f.command("check")["ok"]
+                    right.page.get_by_role("button", name="브라우저 관리 계정 바꾸기").click()
+                    expect(right.page.locator("h1")).to_have_text("브라우저 관리 로그인")
+                    right.identity("/campaigns", "bob")
+                    right.confirm("/campaigns", "bob")
+                    expect(right.page.locator('[data-campaign-selection-state="streaming-required"]')).to_have_count(1)
+                    expect(right.page.locator("#source-url")).to_have_count(0)
+                    left.page.reload()
+                    expect(left.page.locator('[data-public-banner-state="waiting-report"]')).to_have_count(1)
+                    assert left.page.locator("#source-url").input_value() == address
+                    left.image("campaign-after-other-manager-switch-mobile")
+                    results.append("stale campaign selection/stop blocked; current manager review and switched owner preserve sender")
+                finally:
+                    right.close()
+                    left.close()
+
                 # Alice already has one live sender and a manually selected
                 # banner. Revoke and reapprove only a gaming peer through the
                 # real account CSRF form and one fresh same-role browser consent.

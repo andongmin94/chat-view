@@ -28,6 +28,10 @@ type Browser = { key: string; csrf: string; expires: number; controller: AbortCo
   landing?: { path: string; expires: number };
   // Navigation only, scoped to this authenticated browser. Never a capability.
   streamingConflict?: string;
+  // Only the account and exact streaming grant the user reviewed on this
+  // browser's current campaign page. Any campaign write invalidates all same-
+  // owner browser views, so an old tab cannot undo another browser's Stop.
+  campaignView?: { owner: string; connectionId: string };
   attempt?: Attempt; pending?: { identity: BrowserIdentity; page: ManagementPage; expires: number } };
 const managementPage = (path: string): path is ManagementPage =>
   MANAGEMENT_PAGES.some(page => page === path);
@@ -155,6 +159,25 @@ export class PlatformApplication {
   }
   #form(b: Browser, path: string, label: string) {
     return `<form method="post" action="${path}"><input type="hidden" name="csrf" value="${b.csrf}"><button>${label}</button></form>`;
+  }
+  #retireCampaignViews(owner: string) {
+    for (const browser of this.#browsers.values())
+      if (browser.owner === owner) browser.campaignView = undefined;
+  }
+  #confirmCampaignView(response: ServerResponse, b: Browser): boolean {
+    const sender = this.#creators.describe(b.owner!).connections.find(c => c.role === 'streaming');
+    if (sender && b.campaignView?.owner === b.owner &&
+        b.campaignView.connectionId === sender.connectionId) return true;
+    // An old page, replaced sender role, expired browser identity or competing
+    // campaign Stop is not new campaign consent. No silent replay/redirect.
+    b.campaignView = undefined;
+    this.#page(response, '시험 캠페인 상태 다시 확인', `${this.#accountNotice(b)}
+<section data-campaign-action="review-required"><p>이 브라우저가 확인했던 송출 PC 승인이나 광고 선택 상태가 변경됐습니다.
+이전 페이지의 선택·중지 요청을 실행하지 않았습니다.</p>
+<p>현재 관리 채널과 송출 역할 승인, 광고 선택 상태를 다시 확인한 뒤 시험 캠페인을 선택하거나 중지할지 직접 결정하세요.</p>
+<p><a href="/campaigns">현재 시험 캠페인 상태 다시 확인</a> · <a href="/account#two-pc-status">현재 PC 역할 확인</a></p>
+</section>`, 409);
+    return false;
   }
   #beginAuthorization(b: Browser, destination: Destination): string {
     b.attempt?.controller.abort();
@@ -409,6 +432,9 @@ ${this.#form(b, '/account/cancel', '취소')}
         // proves actual rendering or audience exposure.
         const previewReady = !!(status.selected && status.sourceId &&
           this.#campaigns.snapshot(status.sourceId).state === 'visible');
+        b.campaignView = selectionState === 'ready' && account.authorized
+          ? { owner: b.owner, connectionId: account.connections.find(c => c.role === 'streaming')!.connectionId }
+          : undefined;
         if (status.sourceId) {
           // Only this authenticated page permits the exact fixed copy helper.
           // All other management routes remain default-src 'none', no script.
@@ -546,15 +572,25 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
       const campaign = /^\/campaigns\/([a-z0-9-]{1,64})\/select$/u.exec(url.pathname);
       if (campaign) {
         if (!this.#creators.describe(b.owner).authorized) throw new DisplayAccessError(401);
-        try { this.#campaigns.select(b.owner, campaign[1]!); this.#creators.activity.clear(b.owner); }
-        catch (error) {
+        if (!this.#confirmCampaignView(response, b)) return;
+        try {
+          this.#campaigns.select(b.owner, campaign[1]!);
+          this.#creators.activity.clear(b.owner);
+        } catch (error) {
           if (!(error instanceof CampaignError) || error.status !== 409) throw error;
           this.#page(response, '송출 연결 필요', '<p>먼저 이 계정의 OBS 관리 런타임에서 로그인해 송출 역할을 승인하세요.</p><p><a href="/campaigns">캠페인으로 돌아가기</a></p>', 409); return;
         }
+        this.#retireCampaignViews(b.owner);
         this.#redirect(response, '/campaigns'); return;
       }
       if (url.pathname === '/campaigns/stop') {
-        this.#campaigns.stop(b.owner); this.#creators.activity.clear(b.owner); this.#redirect(response, '/campaigns'); return;
+        // An empty campaign has nothing to stop; a selected campaign must be
+        // stopped from a page that reviewed the current streaming approval.
+        if (this.#campaigns.status(b.owner).selected &&
+            !this.#confirmCampaignView(response, b)) return;
+        this.#campaigns.stop(b.owner); this.#creators.activity.clear(b.owner);
+        this.#retireCampaignViews(b.owner);
+        this.#redirect(response, '/campaigns'); return;
       }
       const revoke = /^\/connections\/([a-f0-9-]{36})\/revoke$/u.exec(url.pathname);
       if (revoke) { this.#creators.removeConnection(b.owner, revoke[1]!); this.#redirect(response, '/account'); return; }

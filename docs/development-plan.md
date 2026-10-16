@@ -4,25 +4,22 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 송출 PC 승인 직접 철회 → 게임 PC 채팅 유지 → 새 송출 승인 후 기존 시험 배너 직접 재선택
+## 현재 흐름: 복수 관리 브라우저의 오래된 캠페인 선택/중지 요청 차단
 
-시작 OBS HEAD `705f76d6ad37c2f8ad47e7fbea58604317f0e456`에서 AGENTS → PRODUCT → development-workflow → architecture → development-plan 순서로 확인했다. 직전 `a056a596ac0f22c0ee6d0c35446baa36532bb57a`/CHZZK contract **#81/run `38838932680`의 Node 330/330·Chromium20/20 성공**, 공식 OBS 공개 합성 #25의 13/13은 **직전 기능 SHA `f3022b65`**에서 실행됐다. Windows native #418은 scope만 성공, x64 빌드는 skipped. 이들 이전 결과를 새 SHA의 통과로 계산하지 않는다.
+시작 OBS HEAD `386c9db6e8b3d1f3db671011b306b2c8f74dbc0b`에서 AGENTS → PRODUCT → development-workflow → architecture → 이 문서를 순서대로 읽었다. 직전 `827fa97b1ad617524fb66526561f490a258d6a95`의 CHZZK contract #83/run `38845683296`은 Node **330/330·Chromium21/21 성공**, 공식 OBS public ad flow #26/run `38845382854`의 13/13 PNG 합성은 기능 커밋 `7c395b02`의 결과였다. 이번 SHA 검증으로 대체하지 않는다.
 
-### 사용자 흐름과 보존하는 경계
+### 현재 사용자 동선 및 보안 경계
 
-- 동일 creator의 게임 PC companion이 **실제 열린 채팅 WebSocket을 유지하는 상태**에서, 소유자가 관리 브라우저의 기존 송출 PC 연결만 CSRF 보호된 `이 연결 해제`로 명시적으로 철회한다. 서버는 원래 송출 `connection_id`의 광고 선택 FK를 연쇄 삭제하고 오래된 단기 영상/출력 보고는 무효화한다. 게임 PC 역할·소켓·치지직 upstream·다른 creator 승인과 OBS 없는 게임 PC 영상 제어는 변경하지 않는다.
-- `/account` 관리 화면은 게임 PC 승인/열린 채팅과 송출 PC 0/0 상태를 구분한다. **게임 PC가 연결되어 있고 송출 승인이 0건일 때만** `data-sender-reapproval="required"` 안내와 `/campaigns#campaign-selection-title` 링크를 표시해, **송출 PC에서 원래 역할 새 승인 → 기존 공개 시험 캠페인 직접 재선택** 순서를 설명한다. 기존 광고 선택이 사라졌을 때 실제 공개 URL 자체가 사라졌다고 표현하지 않는다. 읽기 GET은 승인을/광고를 자동 재개하지 않는다.
-- `/campaigns`는 기존 `sourceId`가 있지만 광고 선택이 없는 때 `data-banner-manual-reselect="sender-required" | "ready"`로 상황을 구분한다. 송출 승인이 0이면 새 송출 역할 동의만 안내하고, 새 송출 승인이 생기면 **기존 광고가 아직 미선택**임을 표시한다. 동일 owner의 새 송출 승인·새 WebSocket·신선한 `broadcast:report`만으로는 광고를 표시하지 않는다. **브라우저에서 캠페인을 새로 직접 선택**한 뒤에만 기존 URL의 공개 시험 배너가 나타난다. 이는 서버 공개 TEST 판정이며 OBS 시청자 노출/HP/지급이 아니다.
-- 기존 서버 `SessionStore`·`Campaigns`·`DisplayGateway`의 역할/카드 광고 FK, `connection_id`, refresh, WebSocket 및 CSRF 권한을 재사용한다. 새 API/DB schema/플랫폼 의존성·재로그인 자동화·게임 PC OBS·송출 장면 자동 변경을 도입하지 않는다.
-- 기존 HTTP/SQLite/ws `platform/tests/streaming-return-during-game-reapproval.test.mts`의 **실제 송출 승인 철회/재승인** 검사를 확장한다. 동작 전후 1 게임/0 송출 → 1 게임/1 송출, 읽기 전용 상태 및 `sender-required`→`ready` 안내, 기존 URL·선택 FK 삭제/재선택, 게임 소켓 유지/메시지 수신, 새 역할만 출력 권한 취득을 확인한다.
-- Chromium 390px `management-browser-fixture.mts` + `management-browser-test.py`에 별도 **게임 연결 유지 상태의 송출 승인 직접 철회/재승인/광고 수동 재선택** 동선을 추가한다. 브라우저가 소유자 권한·고정 role·6자리 확인 번호를 실제 확인/동의하고, fixture stdio는 앱 native 요청 시작·승인 수집·송출 보고만 맡는다. 원래 Alice 게임 소켓은 송출 철회 중 계속 합성 제공자 메시지를 수신한다. 공개 소스는 old sender revoke 직후 hidden, 새 sender consent/보고 직후에도 hidden, 기존 URL의 캠페인 수동 선택 후에만 visible. 다른 owner Bob 및 기존 제공자 upstream/쿠키·CSRF/광고 선택의 비결정적 자동 복원은 차단한다.
+- 채팅 중인 게임 PC를 유지하고 새 송출 역할을 명시적으로 승인한 뒤 광고를 직접 재선택하는 도중, 서로 다른 **관리 브라우저 A·B**가 같은 채널의 광고 상태를 보게 된다. B가 광고를 중지하거나 재선택한 뒤 A의 **오래된 폼**을 그대로 제출해 B의 결정을 무단으로 덮지 못하도록 한다. 다른 브라우저가 자기 **관리 계정을 전환**한 경우 이전 쿠키/CSRF/채널로 캠페인을 다시 실행하지 않는다.
+- 기존 `Browser` 레코드에 캠페인 화면을 읽었을 당시의 **소유자 채널·송출 승인 connection ID**만 저장한다. 실제 `/campaigns`를 확인한 브라우저에서만 POST 선택을 허용하며, `Campaigns.select/stop`이 성공하면 같은 owner의 모든 관리 브라우저가 갖고 있던 캠페인 화면의 실행 자격을 즉시 무효화한다. 따라서 다른 브라우저의 Stop 뒤 stale Select와 새 Select 뒤 stale Stop은 **409 안내 화면**으로 끝난다. POST를 자동 replay하거나 서버 권한·광고 선택을 변경하지 않는다. 이 상태는 별도 DB 테이블/마이그레이션/단기 토큰/새 외부 API가 아니고 현재 single-instance 관리자 세션의 보수적 확인 장치다.
+- 송출 PC 승인 자체가 해제/교체됐으면 기존 화면이 기억한 **connection ID와 현재 송출 승인 ID가 다르므로** 선택을 거부한다. 최신 채널·송출 승인·광고 선택을 관리 브라우저에서 새로 읽고 사용자가 직접 버튼을 눌러야 기존 공개 URL의 시험 배너를 다시 선택한다. 브라우저에 저장된 원래 계정과 CSRF는 기존 쿠키/Origin·SameSite 검사에 맡기며 타 브라우저 계정 전환이 다른 브라우저의 로그인까지 철회하지 않는다.
+- `platform/tests/stale-campaign-management.test.mts`의 실제 HTTP/SQLite/owner cookie 검사에서 두 브라우저의 Stop→stale Select 차단→재확인/Select→stale Stop 차단→재확인/Stop과 오래된 계정 전환 쿠키의 POST 거부, 송출 승인 교체 뒤 stale form 재선택 거부를 확인한다. 기존 sender chat/공개 source/다른 creator 권한·조회 불변성·CSRF를 유지한다.
+- 실제 Chromium 390px 두 관리 브라우저 컨텍스트에서 B가 중지 → A stale 재선택 차단 화면과 새로고침 → A 직접 재선택 → B stale 중지 차단 → B 계정 전환 후 다른 채널의 상태 확인을 클릭으로 수행한다. 새로고침은 그 자체로 광고·송출 보고·게임 영상/OBS 장면을 바꾸지 않는다.
+- 수정은 플랫폼 서비스/브라우저·검사와 유일한 이 개발 계획에 한정한다. CHZZK contract Node/Chromium CI와 해당 SHA의 Windows scope만 검증하며 기존 native 빌드와 공식 OBS 합성은 **새로 실행된 경우만** 보고한다. 실패를 숨기는 timeout/보안 판정 완화·오래된 호환 경로 추가·게임 PC OBS 요구는 없다.
 
-### 실제 검증·미완료
+### 남은 범위
 
-- **기능 커밋 `7c395b02867f7d5bd153e02614729ecc935593eb` 실 CI:** CHZZK contract **#82/run `38845382813` 전체 실패**. Ubuntu24 Node **330/330 통과, 실패/skip0**. 새 management fixture의 `senderReapproval.game` 타입 축소가 빠져 4개 OS/Node 엄격 TypeScript job이 TS18048로 실패했다. Chromium은 새 원래 송출 재승인 단계까지 진입했으나 실제 고정 역할 화면의 `송출 PC · OBS 관리 런타임`을 신규 테스트만 `송출 PC · OBS 역할`로 잘못 기대해 실패했다. 기존 실제 역할/보호 로직과 assertions를 완화하지 않고 fixture의 선행 gaming 승인 guard와 Chromium 표시 문구를 바로잡는다.
-- 공식 OBS public ad flow **#26/run `38845382854`: completed/success, OBS32.2.2 배너 합성 픽셀 **13/13** 통과(기능 커밋 `7c395b`). Windows development **#419/run `38845382851` scope job 성공, Windows x64 native skipped**(서비스/브라우저 변경).
-- **최종 코드 `827fa97b1ad617524fb66526561f490a258d6a95`의 CHZZK contract #83/run `38845683296`: completed/success, 5개 job 모두 통과.** Ubuntu/Windows × Node22·24 서비스/엄격 타입/의존성 검사 성공, Ubuntu24 **330/330·fail/skip0**, audit 0건. Chromium 실제 관리 브라우저 **21/21 통과**(390px Alice 게임 채팅 유지 → 기존 sender 역할만 owner CSRF 철회 → 계정 1게임/0송출 → 동일 소유자의 새 송출 역할 브라우저 동의/수집 → 새 출력 보고 뒤에도 원래 URL 광고 hidden → 브라우저에서 캠페인 직접 재선택 후에만 visible, 다른 Bob 승인/원래 채널 upstream 보존). Chromium artifact `12023545353`. **공식 OBS public ad flow #26/run `38845382854` 13/13 PNG 합성 픽셀 성공은 앞선 기능 커밋 `7c395b02`에서 실행**됐고 최종 fixture 수정 SHA의 실행은 아니다. Windows development #419/run `38845382851`은 scope 성공, Windows native x64 **skipped**(service/browser 변경), 새 네이티브 빌드 성공으로 간주하지 않는다. #82의 TS18048 fixture game guard 미비와 Chromium 역할 문구 기대값 불일치는 고친 뒤 #83에서 해소됐다.
-- 기존 D1/D2/D4/D6/D7 간헐 결함, 실계정 치지직·물리 두 PC HUD 없는 수신 영상·관중 광고 노출·HP·지급·설치/반복 자원/배포 qualification은 미완료다. 합성 report/서버 `visible`과 OBS 합성 PNG를 실제 송출 시청 실적·지급으로 취급하지 않는다. 기존 CSRF·소유자/role·광고 선택·poll 타이머/보안 판정은 완화하지 않았다.
+- 이번 SHA의 실제 원격 CI는 **검증 전**. 로그인·광고 선택/중지 경쟁의 서버 단일 인스턴스 경계를 실서비스 다중 프로세스·백업/실계정 운영과 동일시하지 않는다. D1/D2/D4/D6/D7 기존 간헐 오류, 실계정 CHZZK, 물리 투컴 HUD 제외·광고 실제 시청, 유료 광고·HP·정산·자원/설치 qualification은 미완료다.
 
 ## G1. 한 화면의 작업과 개인 채팅
 
@@ -86,6 +83,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-이번 **게임 PC 채팅 유지 + 송출 승인만 명시적 철회/새 역할 동의 + 새 보고로는 광고 미복구 + 브라우저 수동 캠페인 선택 후 동일 URL 복귀**를 실제 Node·Chromium 및 공식 OBS 테스트 결과로 확정한다. 그 다음에는 **송출 PC 승인 재발급과 캠페인 재선택 사이에 다른 관리 브라우저가 계정을 바꾸거나 광고를 중지한 경우**, 기존 광고 선택을 무단 재실행하지 않고 현재 소유자/요청의 확인을 다시 요구하는 사용자 동선으로 간다. 실계정/물리 수신 HUD 제외, 간헐 WebView2·OBS 결함, 시청/HP/보상/배포 검증은 별도 미완료다.
+이번 stale 캠페인 폼·브라우저 전환 409 안내의 HTTP/Chromium CI를 확인한다. 다음에는 **서버 승인·광고 선택을 바꾸지 않은 단순 브라우저 뒤로가기/오래된 탭 복귀와, 실제 송출 승인 철회로 광고 FK가 삭제된 경우를 관리 화면에서 명확히 구분**하고 사용자가 재승인·수동 재선택을 끝까지 완료하는 흐름을 연결한다. 게임 PC 채팅·별도 WGC 영상은 그대로 두고 OBS 장면 자동 변경이나 수익 추정은 만들지 않는다. 실계정·물리 수신 HUD 제외/지속 안정성, D1/D7, 유료/HP/지급·배포 qualification은 별도 미완료다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

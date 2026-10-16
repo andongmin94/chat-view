@@ -666,6 +666,10 @@ def run() -> None:
                     assert f.command("check")["ok"]
                     flow.image("switched-manager-sender-return-mobile")
                     results.append("Alice sender returns while manager switches to Bob; stale Alice tab 403 and no source/approval transfer")
+                    # The next independent recovery scenario starts with no
+                    # fresh output report. Retire this synthetic observation,
+                    # not the native sender, its campaign, or the public URL.
+                    assert f.command("expire-output-report")["ok"]
                 finally:
                     flow.close()
 

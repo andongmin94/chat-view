@@ -4,7 +4,15 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: D1 첫 채팅 글자 표시를 정확한 소유 문서 nonce에 직접 연결
+## 현재 흐름: 게임 PC companion 승인 순간 이미 도착한 첫 채팅의 실제 표시
+
+시작 원격 OBS HEAD `601b8e7678df87821e8faaa136b8e3d8a651aa01`; Windows development #438 `38875923202`의 **실제 네이티브 49/49 통과**, CHZZK #97의 기존 `collection-recollect` Chromium 실패를 확인했다. AGENTS → PRODUCT → development-workflow → architecture → 이 계획을 순서대로 읽었다. OBS만 변경하며 `main`과 게임 PC OBS 금지는 그대로 유지한다.
+
+- **사용자 동선:** 게임 PC에서 OBS 없는 companion을 시작해 치지직 계정/역할을 브라우저에서 명시 승인하는 동안 첫 메시지가 이미 들어올 수 있다. 서버가 게임 역할 승인을 반환하기 **직전에** 공급자 채팅 첫 글자가 도착해도, native WinHTTP→자체 WebView2 HUD가 **빈 구독 화면을 한 번 먼저 보여주기를 요구하지 않고** 그 첫 글자를 표시해야 한다. 실제 첫 DOM 글자와 네이티브 상태 라벨·동일 세션 게임 역할/채팅 소켓을 확인하고, **사용자가 로컬 Stop을 누르면 글자는 즉시 사라지되 서버 승인은 철회되지 않아** 해당 승인으로만 복귀가 가능해야 한다.
+- **구현·검증:** 기존 production `NativeChatConnection`·`DisplayClient`와 테스트 fixture를 재사용한다. `tests/companion-chat-video-test.mts`에서 브라우저 승인 후 **native 앱에 lease를 되돌려주기 전에** 실제 합성 CHZZK 채팅의 최초 글자를 게시하며, `tests/companion-chat-video-test.cpp`에서 현 게임 PC native UI/WebView2/WinHTTP가 첫 자체 DOM 글자·렌더 ACK를 확인하는 **early-first** 동선을 신규 CTest `chat-view-companion-chat-early-first`로 묶는다. 서버가 보낸 text snapshot의 실제 native DOM과 보호된 패널, 게임 역할, 로컬 Stop/동일 승인 보존을 검사한다. 테스트 한도, 개인정보 출력, 로그인 권한, 영상/OBS·WebView2 source/nonce 보호는 바꾸지 않는다. 실패한다면 확인된 원인 경계에만 제품 코드를 수정한다. 해당 기능 SHA에 대해 실제 Windows routine 결과를 기록한다.
+- **한계:** synthetic provider/로컬 WebView2/단일 PC 운영 검사이므로 **실계정 치지직·장시간 첫 표시·물리 투컴 HUD 없는 방송 영상**을 검증하지 않는다. 기존 D1의 간헐 시작 장애가 모두 해결됐다고 주장하지 않는다. D2/D4/D6/D7, 유료 광고·시청 실적·HP/정산 및 배포 qualification은 미완료다.
+
+## 직전 완료 흐름: D1 첫 채팅 글자 표시를 정확한 소유 문서 nonce에 직접 연결
 
 시작 원격 `OBS` HEAD `f9baeaf4da70e1712f01f3e67f75b9715e7eca16`, Windows development #437/run `38874011246` **49/49 routine 네이티브 성공**(초기 호스트 부트스트랩 한 번 등록 + 첫 WebView2 문서/오버레이/채팅)과 기존 CHZZK #97의 독립 Chromium `collection-recollect` 합성 fixture 실패를 확인했다. AGENTS → PRODUCT → development-workflow → architecture → 이 계획 순서로 검토. 게임 PC에 OBS 없이 쓰는 기존 companion 및 main 원본을 유지하고 OBS만 작업한다.
 
@@ -167,6 +175,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-첫 텍스트를 현재 WebView2 문서의 실제 source/nonce handshake로 전달하는 경로의 Windows 네이티브 검증 뒤, **실제 companion의 브라우저 승인 → 첫 구독 프레임 → 첫 텍스트 표시**에서 아직 실패하는 단계가 있는지 확인해 남은 D1을 고친다. 로컬 채팅 renderer 완료와 별개로 **실계정 치지직 인증·구독·장시간 수신(G4-06)**, 게임 PC에 OBS 없는 실제 투컴 HUD 없는 영상(G3) 검증을 우선한다. D2/D4/D6/D7, 광고 실노출·유료/HP·정산 및 배포 qualification은 남는다.
+브라우저 승인 직후 선도착한 첫 글자의 실제 게임 PC companion HUD 결과를 확인한 뒤 **현재 웹뷰 소유 문서의 첫 채팅 상태**와 **실제 접속/첫 패킷 확인** 사이 남은 D1 실패가 있다면 그 단계만 개선한다. 기술 채무를 늘리는 새로운 진단 파일/별도 프레임워크는 만들지 않는다. 이후 실계정 치지직 로그인·장시간 수신(G4-06), 게임 PC OBS 없는 물리 두 PC의 HUD 제외(G3)를 우선 검증한다. D2/D4/D6/D7 및 광고 실노출/유료·HP·정산·배포 qualification은 미완료다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

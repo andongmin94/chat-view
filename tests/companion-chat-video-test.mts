@@ -8,8 +8,8 @@ import { DisplayGateway } from '../platform/server/chat/display-gateway.mts';
 import { fixture } from '../platform/tests/fixtures/service.mts';
 
 const executable = process.argv[2], source = process.argv[3], mode = process.argv[4];
-assert(executable && source && ['return', 'revoked', 'reapproved', 'redraw'].includes(mode ?? ''), 'native flow, source and explicit mode required');
-const reapproved = mode === 'reapproved', redraw = mode === 'redraw';
+assert(executable && source && ['early-first', 'return', 'revoked', 'reapproved', 'redraw'].includes(mode ?? ''), 'native flow, source and explicit mode required');
+const earlyFirst = mode === 'early-first', reapproved = mode === 'reapproved', redraw = mode === 'redraw';
 const revoked = mode === 'revoked' || reapproved;
 const f = await fixture({ createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot) });
 let child: ReturnType<typeof spawn> | undefined;
@@ -39,6 +39,12 @@ try {
         freshApproval = true;
       }
       target = result.lease.sessionToken; connectionId = result.lease.membership!.connectionId;
+      if (earlyFirst) {
+        // Publish BEFORE returning the approved lease to the native worker:
+        // its very first authenticated WebSocket snapshot must include text.
+        const chat = f.chats.get('alice'); assert(chat, 'authorized provider subscription is live');
+        chat.publish('initial-chat');
+      }
     }
     return result;
   };
@@ -74,7 +80,7 @@ try {
   const exited = once(child, 'exit'); child.stdin!.write(`${f.origin}\n${other.lease.sessionToken}\n`);
   let errors = '', phase = 0;
   child.stderr!.on('data', chunk => { errors = (errors + String(chunk)).slice(-4096); });
-  const phases = ['browser-opened',
+  const phases = earlyFirst ? ['browser-opened', 'early-first-visible', 'early-stopped'] : ['browser-opened',
     ...(redraw ? ['live-redraw-started', 'live-redraw-ready', 'black-redraw-started', 'black-redraw-ready'] : []),
     'chat-empty-ready', 'pattern-paused', 'pattern-returned',
     'capture-paused', 'capture-returned', 'video-stopped', 'black-paused', 'black-returned', 'reselected',
@@ -93,6 +99,14 @@ try {
           assert.equal((await f.post(`/login/${pending.id}/approve`)).status, 200);
         } else assert(reapproved && removed, 'new consent remains pending until explicitly approved');
         continue;
+      }
+      if (earlyFirst && (line === 'early-first-visible' || line === 'early-stopped')) {
+        assert.equal(loginStarts, 1, 'the initial first chat needs only one browser approval');
+        assert.equal(refreshes, 0, 'initial chat display must not trigger renewal');
+        assert.equal(signouts, 0, 'local Stop is not approval revocation');
+        assert.equal(denials, 0);
+        await account(line === 'early-first-visible' ? 1 : 0);
+        child!.stdin!.write('continue\n'); continue;
       }
       if (line.startsWith('reapproval-') || line.startsWith('reapproved')) {
         assert(reapproved && removed && !f.store.find(oldTarget));
@@ -166,6 +180,12 @@ try {
     assert.equal(code, 0, errors); assert.equal(phase, phases.length);
   } finally { clearTimeout(deadline); }
   assert(f.store.find(other.lease.sessionToken), 'another creator approval is unchanged');
+  if (earlyFirst) {
+    assert(f.store.find(target), 'local Stop retains the exact gaming approval');
+    assert.equal(loginStarts, 1); assert.equal(refreshes, 0); assert.equal(signouts, 0);
+    console.log('companion early first chat: real native approval -> first text DOM -> local Stop passed');
+    return;
+  }
   assert.equal(loginStarts, reapproved ? 4 : 1);
   assert.equal(refreshes, reapproved || redraw ? 5 : revoked ? 4 : 3);
   assert.equal(signouts, reapproved || !revoked ? 1 : 0); assert.equal(denials, revoked ? 1 : 0);

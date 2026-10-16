@@ -306,6 +306,33 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
         "new chat status fits inside the existing panel");
     SetDlgItemTextW(dialog, 101, origin.c_str()); SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
     command(dialog, 104);
+    if (mode == L"early-first") {
+        // The synthetic provider sends the first real text during browser
+        // collection, BEFORE the native lease and private WebView2 document
+        // exist. A subscribed-empty frame is not a prerequisite for first text.
+        try {
+            flow.wait([&] { return Chat::membership(chat).has_value() &&
+                Chat::first_text(chat) && Chat::surface(chat).rendered_messages() == 1U; },
+                "first chat text already present at native approval");
+        } catch (...) {
+            Chat::first_display_evidence(chat);
+            throw;
+        }
+        flow.received(L"initial-chat");
+        flow.state(Status::Receiving, controls);
+        expect(browser_requests == 1 && !GetModuleHandleW(L"obs.dll") &&
+            !GetModuleHandleW(L"obs-frontend-api.dll"),
+            "first chat from exact gaming approval uses no OBS or extra login");
+        flow.checkpoint("early-first-visible");
+        command(dialog, 105); // Stop local display; keep exact server approval.
+        flow.wait([&] { return !Chat::client(chat).running() &&
+            !Chat::membership(chat) && !Chat::surface(chat).ready() &&
+            !Chat::first_text(chat) && Chat::client(chat).can_resume_current(); },
+            "local Stop clears the early text but preserves same-role return authority");
+        flow.checkpoint("early-stopped");
+        video.close(); chat.close(); hud.destroy();
+        return;
+    }
     try {
         flow.wait([&] { return Chat::surface(chat).rendered_frames() >= 1 && Chat::membership(chat).has_value(); },
             "subscribed empty own DOM");
@@ -761,7 +788,7 @@ int wmain(int argc, wchar_t **argv)
     try {
         expect(argc == 3, "source fixture and explicit flow mode required");
         const std::wstring_view mode(argv[2]);
-        expect(mode == L"return" || mode == L"revoked" || mode == L"reapproved" ||
+        expect(mode == L"early-first" || mode == L"return" || mode == L"revoked" || mode == L"reapproved" ||
             mode == L"redraw" || mode == L"redraw-revoked-live" ||
             mode == L"redraw-revoked-black" || mode == L"redraw-reapproved-live" ||
             mode == L"redraw-reapproved-black", "known flow mode");

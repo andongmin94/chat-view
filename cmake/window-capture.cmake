@@ -125,6 +125,14 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/companion-chat-video-test.mts"
         "$<TARGET_FILE:chat-view-companion-chat-video-test>" "$<TARGET_FILE:chat-view-window-capture-test>" return)
     set_tests_properties(chat-view-companion-chat-video PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+    # A viewer message already exists when browser consent returns. The very
+    # first own WebView2 chat frame must show it without waiting for an empty
+    # subscription render; local Stop must clear it without revoking authority.
+    add_test(NAME chat-view-companion-chat-early-first
+        COMMAND "${CHATVIEW_NODE_EXECUTABLE}" --experimental-strip-types
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/companion-chat-video-test.mts"
+        "$<TARGET_FILE:chat-view-companion-chat-video-test>" "$<TARGET_FILE:chat-view-window-capture-test>" early-first)
+    set_tests_properties(chat-view-companion-chat-early-first PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
     add_test(NAME chat-view-companion-chat-revocation COMMAND "${CHATVIEW_NODE_EXECUTABLE}" --experimental-strip-types
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/companion-chat-video-test.mts"
         "$<TARGET_FILE:chat-view-companion-chat-video-test>" "$<TARGET_FILE:chat-view-window-capture-test>" revoked)

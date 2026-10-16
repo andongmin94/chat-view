@@ -607,10 +607,13 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
         this.#redirect(response, '/campaigns'); return;
       }
       if (url.pathname === '/campaigns/stop') {
-        // An empty campaign has nothing to stop; a selected campaign must be
-        // stopped from a page that reviewed the current streaming approval.
-        if (this.#campaigns.status(b.owner).selected &&
-            !this.#confirmCampaignView(response, b, view)) return;
+        // An already-unselected campaign is a genuine no-op. An obsolete
+        // Stop after sender revocation must not clear activity or invalidate
+        // another browser's fresh review of the replacement sender.
+        if (!this.#campaigns.status(b.owner).selected) {
+          this.#redirect(response, '/campaigns'); return;
+        }
+        if (!this.#confirmCampaignView(response, b, view)) return;
         this.#campaigns.stop(b.owner); this.#creators.activity.clear(b.owner);
         this.#retireCampaignViews(b.owner);
         this.#redirect(response, '/campaigns'); return;

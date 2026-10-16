@@ -669,3 +669,133 @@ test('switching management to Bob cannot transfer a revoked Alice streaming gran
     assert.match(String((await senderFrame)[0]), /Alice gaming chat survives Bob management and sender replacement/u);
   } finally { for (const ws of peers) ws.terminate(); await f.close(); }
 });
+
+
+test('a stale manager Stop after sender revocation cannot invalidate the new sender review or reverse manual reselection', { timeout: 15000 }, async () => {
+  const f = await fixture({ createDisplay: (access, origin, snapshot) =>
+    new DisplayGateway(access, origin, snapshot) });
+  const peers: WebSocket[] = [];
+  try {
+    const sender = await f.connect('alice', 'streaming');
+    const gamer = await f.approve(await f.start('gaming'), 'gaming', sender.b);
+    const bob = await f.connect('bob', 'gaming');
+    const open = async (token: string) => {
+      const ws = new WebSocket(f.origin.replace('http:', 'ws:') + '/display/events', {
+        headers: { Authorization: 'Bearer ' + token }, handshakeTimeout: 3000 });
+      peers.push(ws); ws.on('error', () => {});
+      await once(ws, 'message', { signal: AbortSignal.timeout(3000) });
+      return ws;
+    };
+    const oldPeer = await open(sender.lease.token);
+    const gamePeer = await open(gamer.token);
+    await open(bob.lease.token);
+    const select = '/campaigns/chatview-test/select';
+    await f.page('/campaigns', sender.b);
+    assert.equal((await f.post(select, sender.b)).status, 303);
+    const managerA = browser(f, sender.b.cookie);
+    const managerB = browser(f);
+    await managerB.identify('/campaigns', 'alice');
+    const initiallySelected = await managerB.confirm('/campaigns');
+    const source = /\/public\/ads\/([a-f0-9]{32})/u.exec(initiallySelected)?.[1]; assert(source);
+    const url = f.origin + '/public/ads/' + source;
+    const first = await managerA.page('/campaigns');
+    assert(first.includes(url));
+    assert(initiallySelected.includes(url));
+    const oldB = { ...managerB.state }; assert(oldB.view);
+    const selection = () => f.store.database.prepare('SELECT connection_id FROM ad_selections WHERE source_id=?')
+      .get(source)?.connection_id;
+    const changes = () => f.store.database.prepare('SELECT total_changes() AS n').get()!.n;
+    const publicState = async () =>
+      (await f.request('/public/ads/' + source + '/state')).json() as Promise<{ state: string }>;
+    const report = (token: string) => f.request('/broadcast/output', { method: 'POST', headers: {
+      Authorization: 'ChatView-Output ' + token, 'Content-Type': 'application/json',
+    }, body: JSON.stringify({ sequence: 1, streaming: false, recording: false, sampleAgeMs: 0 }) });
+    assert.equal((await report(sender.lease.outputToken!)).status, 200);
+    assert.equal((await publicState()).state, 'visible');
+    const grantAlice = f.grants.load('alice'), grantBob = f.grants.load('bob');
+    const started = f.startedWith.length, initialId = sender.lease.membership.connectionId;
+
+    // A deliberately revokes only the streaming PC. The other browser retains
+    // a selected old-sender Stop form; the gaming peer never loses its grant.
+    const closed = once(oldPeer, 'close', { signal: AbortSignal.timeout(3000) });
+    assert.equal((await managerA.post('/connections/' + initialId + '/revoke')).status, 303);
+    await closed;
+    assert.equal(selection(), undefined);
+    assert.equal((await publicState()).state, 'hidden');
+    assert.equal(f.store.find(sender.lease.sessionToken), undefined);
+    assert.equal((await f.native('/display/refresh', 'ChatView-Session', sender.lease.sessionToken, 'streaming')).status, 401);
+    assert.equal((await report(sender.lease.outputToken!)).status, 401);
+    assert.equal(f.store.find(gamer.sessionToken)?.membership?.role, 'gaming');
+
+    const replacement = await f.approve(await f.start('streaming'), 'streaming', managerA.state);
+    assert.notEqual(replacement.membership.connectionId, initialId);
+    assert.equal(replacement.membership.broadcastSessionId, gamer.membership.broadcastSessionId);
+    const replacementPeer = await open(replacement.token);
+    assert.equal((await report(replacement.outputToken!)).status, 200);
+    assert.equal((await publicState()).state, 'hidden', 'replacement approval and report cannot restore the old selection');
+    const reviewed = await managerA.page('/campaigns');
+    assert.match(reviewed, /data-banner-manual-reselect="ready"/u);
+    assert(reviewed.includes(url));
+
+    // A stale Stop when no campaign is selected is a COMPLETE no-op. It may
+    // redirect, but must not clear private activity or retire A's fresh view.
+    const beforeNoOp = changes();
+    assert.equal((await managerB.post('/campaigns/stop')).status, 303);
+    assert.equal(changes(), beforeNoOp, 'a stale empty Stop does not write SQLite');
+    assert.equal(selection(), undefined);
+    assert.equal((await managerA.post(select)).status, 303,
+      'the earlier no-op Stop must not invalidate A’s actual fresh sender review');
+    assert.equal(selection(), replacement.membership.connectionId);
+    assert.equal((await publicState()).state, 'visible');
+    assert((await managerA.page('/campaigns')).includes(url));
+
+    // B's earlier Stop and Select views still refer to the revoked sender.
+    // Neither request may undo the new explicitly selected advertisement.
+    const selectedBefore = changes();
+    const staleStop = await managerB.post('/campaigns/stop');
+    assert.equal(staleStop.status, 409);
+    assert.match(await staleStop.text(), /data-campaign-review-reason="stale-page"/u);
+    const staleSelect = await managerB.post(select);
+    assert.equal(staleSelect.status, 409);
+    assert.equal(changes(), selectedBefore);
+    assert.equal(selection(), replacement.membership.connectionId);
+    assert.equal((await publicState()).state, 'visible');
+
+    // Only an actual fresh review by B may now stop A's selection. A's
+    // earlier form then becomes invalid until A reviews and acts again.
+    assert((await managerB.page('/campaigns')).includes(url));
+    assert.equal((await managerB.post('/campaigns/stop')).status, 303);
+    assert.equal(selection(), undefined);
+    assert.equal((await publicState()).state, 'hidden');
+    const blockedA = await managerA.post(select);
+    assert.equal(blockedA.status, 409, 'A cannot replay its earlier selection after B’s explicit Stop');
+    assert.equal(selection(), undefined);
+    const readyA = await managerA.page('/campaigns');
+    assert.match(readyA, /data-banner-manual-reselect="ready"/u);
+    assert.equal((await managerA.post(select)).status, 303);
+    assert.equal(selection(), replacement.membership.connectionId);
+    assert.equal((await publicState()).state, 'visible');
+
+    // Changing B's management account to Bob never touches Alice's sender,
+    // her selected source URL, or an independently authorized gaming PC.
+    assert.equal((await managerB.post('/account/switch')).status, 303);
+    assert.equal((await f.post(select, oldB)).status, 401, 'old cookie cannot replay Alice’s campaign');
+    const bobLanding = await managerB.identify('/campaigns', 'bob');
+    assert.match(bobLanding, /channel &lt;bob&gt;/u);
+    const bobPage = await managerB.confirm('/campaigns');
+    assert.doesNotMatch(bobPage, new RegExp(source, 'u'));
+    assert.equal((await managerB.post(select)).status, 409, 'Bob cannot select Alice’s approved sender');
+    assert.equal(selection(), replacement.membership.connectionId);
+    assert.equal((await publicState()).state, 'visible');
+    assert.deepEqual(f.grants.load('alice'), grantAlice);
+    assert.deepEqual(f.grants.load('bob'), grantBob);
+    assert.equal(f.startedWith.length, started);
+    assert.equal(f.refreshCalls, 0);
+    assert(f.store.find(gamer.sessionToken) && f.store.find(bob.lease.sessionToken));
+    const gamerReceived = once(gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
+    const senderReceived = once(replacementPeer, 'message', { signal: AbortSignal.timeout(3000) });
+    f.chats.get('alice')!.publish('cross-browser sender handoff keeps game chat');
+    assert.match(String((await gamerReceived)[0]), /cross-browser sender handoff keeps game chat/u);
+    assert.match(String((await senderReceived)[0]), /cross-browser sender handoff keeps game chat/u);
+  } finally { for (const peer of peers) peer.terminate(); await f.close(); }
+});

@@ -958,15 +958,23 @@ def run() -> None:
                 # does not. Only a new explicitly consented sender plus a
                 # separate campaign selection may render it again.
                 flow = Flow(browser, f, 390)
+                old_manager = Flow(browser, f, 390)
                 try:
                     flow.identity("/account")
                     flow.confirm("/account")
-                    gamer = flow.page.locator('[data-pc-role="gaming"]')
+                    gamer = flow.page.locator('[data-pc-role="gaming"]
                     sender = flow.page.locator('[data-pc-role="streaming"]')
                     ad = flow.page.locator("#account-public-banner")
                     campaign = flow.context.new_page()
                     campaign.goto(f.origin + "/campaigns")
                     original_url = campaign.locator("#source-url").input_value()
+                    # Independent authenticated management browser, not just
+                    # another tab sharing the same CSRF. Keep its old sender
+                    # campaign form through actual revocation and replacement.
+                    old_manager.identity("/campaigns")
+                    old_manager.confirm("/campaigns")
+                    assert old_manager.page.locator("#source-url").input_value() == original_url
+                    expect(old_manager.page.get_by_role("button", name="공개 배너 중지")).to_have_count(1)
                     stale_campaign = flow.context.new_page()
                     stale_campaign.goto(f.origin + "/campaigns")
                     public = flow.context.new_page()
@@ -1096,7 +1104,32 @@ def run() -> None:
                     expect(flow.page.locator('[data-sender-reapproval="required"]')).to_have_count(0)
                     flow.image("sender-reapproved-game-preserved-manual-banner-mobile")
                     results.append("owner revokes only sender, preserves gaming chat, consents to fresh sender role and explicitly reselects unchanged public URL")
+
+                    # The old manager's Stop form was generated for the former
+                    # approval. It cannot undo the new sender's explicitly
+                    # reselected campaign, and a subsequent Bob browser switch
+                    # never transfers Alice's source or its role authority.
+                    with old_manager.page.expect_response(
+                            lambda r: urlsplit(r.url).path == "/campaigns/stop") as old_stop:
+                        old_manager.page.get_by_role("button", name="공개 배너 중지", exact=True).click()
+                    assert old_stop.value.status == 409
+                    expect(old_manager.page.locator('[data-campaign-action="review-required"]')).to_have_count(1)
+                    expect(banner).to_be_visible()
+                    assert f.command("sender-reapprove-confirmed")["ok"]
+                    old_manager.page.get_by_role("link", name="현재 시험 캠페인 상태 다시 확인").click()
+                    expect(old_manager.page.locator('[data-public-banner-state="report-ready"]')).to_have_count(1)
+                    assert old_manager.page.locator("#source-url").input_value() == original_url
+                    old_manager.page.get_by_role("button", name="브라우저 관리 계정 바꾸기").click()
+                    old_manager.identity("/campaigns", "bob")
+                    old_manager.confirm("/campaigns", "bob")
+                    expect(old_manager.page.get_by_role("region", name="브라우저 관리 계정")).to_contain_text("channel <bob>")
+                    assert old_manager.page.locator("#source-url").input_value() != original_url
+                    expect(banner).to_be_visible()
+                    assert f.command("sender-reapprove-confirmed")["ok"]
+                    old_manager.image("stale-other-manager-after-sender-reselection-mobile")
+                    results.append("independent old manager Stop409 and Bob switch cannot undo new sender campaign, gaming chat or public URL")
                 finally:
+                    old_manager.close()
                     flow.close()
 
                 metadata = f.command("metadata")["metadata"]

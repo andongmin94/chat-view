@@ -273,3 +273,200 @@ test('confirmation escapes provider channel text and GET requests never perform 
     assert.equal(f.store.connections('owner').length, 0);
   } finally { await f.close(); }
 });
+
+test('browser expiry during sender outage never reauthorizes native streaming or restores an old campaign form', { timeout: 15000 }, async t => {
+  const nativeNow = Date.now(); let browserNow = nativeNow;
+  t.mock.method(Date, 'now', () => browserNow);
+  const f = await fixture({ now: () => nativeNow,
+    createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot) });
+  const peers: WebSocket[] = [];
+  try {
+    const sender = await f.connect('alice', 'streaming');
+    const gaming = await f.approve(await f.start('gaming'), 'gaming', sender.b);
+    const bob = await f.connect('bob', 'gaming');
+    const open = async (token: string) => {
+      const peer = new WebSocket(f.origin.replace('http:', 'ws:') + '/display/events', {
+        headers: { Authorization: 'Bearer ' + token }, handshakeTimeout: 3000 });
+      peer.on('error', () => {}); peers.push(peer);
+      await once(peer, 'message', { signal: AbortSignal.timeout(3000) });
+      return peer;
+    };
+    const streamingPeer = await open(sender.lease.token);
+    const gamePeer = await open(gaming.token);
+    await open(bob.lease.token);
+    const select = '/campaigns/chatview-test/select';
+    await f.page('/campaigns', sender.b);
+    assert.equal((await f.post(select, sender.b)).status, 303);
+    const b = browser(f, sender.b.cookie);
+    const old = await b.page('/campaigns');
+    const source = /\/public\/ads\/([a-f0-9]{32})/u.exec(old)?.[1]; assert(source);
+    const view = /name="view" value="([a-f0-9]{64})"/u.exec(old)?.[1]; assert(view);
+    const sourceUrl = f.origin + '/public/ads/' + source;
+    const ad = async () => (await f.request('/public/ads/' + source + '/state')).json() as Promise<{ state: string }>;
+    const selection = () => f.store.database.prepare('SELECT connection_id FROM ad_selections WHERE source_id = ?')
+      .get(source)?.connection_id;
+    const initialConnection = sender.lease.membership.connectionId;
+    const initialGrant = f.grants.load('alice');
+    const initialStarts = f.startedWith.length;
+    const output = (token: string) => f.request('/broadcast/output', { method: 'POST', headers: {
+      Authorization: 'ChatView-Output ' + token, 'Content-Type': 'application/json',
+    }, body: JSON.stringify({ sequence: 1, streaming: false, recording: false, sampleAgeMs: 0 }) });
+    const oldBrowser = { cookie: b.state.cookie, csrf: b.state.csrf };
+    const staleAction = (cookie: string, csrf: string, path = '/campaigns/stop') => f.request(path, {
+      method: 'POST', headers: { Cookie: cookie, Origin: f.origin,
+        'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ csrf, view }),
+    });
+    assert.equal((await output(sender.lease.outputToken!)).status, 200);
+    assert.equal((await ad()).state, 'visible');
+    const closed = once(streamingPeer, 'close', { signal: AbortSignal.timeout(3000) });
+    streamingPeer.close(); await closed;
+    assert.equal(f.creators.describe('alice').presence.streamingConnections, 0);
+    assert.equal(f.creators.describe('alice').presence.gamingConnections, 1);
+    assert.equal(f.creators.describe('alice').output.state, 'unknown');
+    assert.equal((await ad()).state, 'hidden');
+    assert.equal(selection(), initialConnection);
+
+    browserNow += 3_600_001;
+    const blocked = await staleAction(oldBrowser.cookie, oldBrowser.csrf);
+    assert.equal(blocked.status, 401, 'expired browser cannot Stop the chosen sender campaign');
+    assert.match(await blocked.text(), /data-management-expired-action="blocked"/u);
+    const login = await b.page('/campaigns', 401);
+    assert.match(login, /data-management-session-boundary="browser-only"/u);
+    assert.match(login, /선택된 시험 광고, 공개 URL을 변경하지 않습니다/u);
+    assert.doesNotMatch(login, new RegExp(source, 'u'), 'anonymous login must not leak private public-source association');
+    assert.notEqual(b.state.cookie, oldBrowser.cookie);
+    assert.equal((await staleAction(oldBrowser.cookie, oldBrowser.csrf, select)).status, 401);
+    assert.equal((await staleAction(b.state.cookie, oldBrowser.csrf)).status, 403);
+    assert.equal(selection(), initialConnection);
+    assert.equal((await ad()).state, 'hidden');
+
+    const returning = await f.native('/display/refresh', 'ChatView-Session',
+      sender.lease.sessionToken, 'streaming');
+    assert.equal(returning.status, 200);
+    const lease = await returning.json() as typeof sender.lease;
+    assert.deepEqual(lease.membership, sender.lease.membership);
+    const returnedPeer = await open(lease.token);
+    assert.equal(f.creators.describe('alice').output.state, 'unknown');
+    assert.equal((await ad()).state, 'hidden', 'socket return cannot reuse the pre-expiry output report');
+    assert.equal((await output(lease.outputToken!)).status, 200);
+    assert.equal((await ad()).state, 'visible');
+    assert.equal(selection(), initialConnection);
+
+    await b.identify('/campaigns', 'alice');
+    assert.equal((await staleAction(oldBrowser.cookie, oldBrowser.csrf)).status, 401);
+    assert.equal((await b.post('/campaigns/stop')).status, 401, 'provider identity alone is not management consent');
+    const current = await b.confirm('/campaigns');
+    assert(current.includes(sourceUrl));
+    assert.match(current, /data-public-banner-state="report-ready"/u);
+    assert.equal(selection(), initialConnection);
+    assert.equal(f.store.find(gaming.sessionToken)?.membership?.role, 'gaming');
+    assert(f.store.find(bob.lease.sessionToken));
+    assert.deepEqual(f.grants.load('alice'), initialGrant);
+    assert.equal(f.startedWith.length, initialStarts);
+    assert.equal(f.refreshCalls, 0, 'browser login never refreshes provider grants for streaming approval');
+    const gameMessage = once(gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
+    const senderMessage = once(returnedPeer, 'message', { signal: AbortSignal.timeout(3000) });
+    f.chats.get('alice')!.publish('chat survives expired manager and returned sender');
+    assert.match(String((await gameMessage)[0]), /chat survives expired manager and returned sender/u);
+    assert.match(String((await senderMessage)[0]), /chat survives expired manager and returned sender/u);
+  } finally { for (const peer of peers) peer.terminate(); await f.close(); }
+});
+
+test('manager switching to another creator during sender outage never transfers ad or streaming authority', { timeout: 15000 }, async () => {
+  const f = await fixture({ createDisplay: (access, origin, snapshot) =>
+    new DisplayGateway(access, origin, snapshot) });
+  const peers: WebSocket[] = [];
+  try {
+    const sender = await f.connect('alice', 'streaming');
+    const gaming = await f.approve(await f.start('gaming'), 'gaming', sender.b);
+    const bob = await f.connect('bob', 'gaming');
+    const open = async (token: string) => {
+      const peer = new WebSocket(f.origin.replace('http:', 'ws:') + '/display/events', {
+        headers: { Authorization: 'Bearer ' + token }, handshakeTimeout: 3000 });
+      peer.on('error', () => {}); peers.push(peer);
+      await once(peer, 'message', { signal: AbortSignal.timeout(3000) });
+      return peer;
+    };
+    const streamingPeer = await open(sender.lease.token);
+    const gamePeer = await open(gaming.token);
+    await open(bob.lease.token);
+    const select = '/campaigns/chatview-test/select';
+    await f.page('/campaigns', sender.b);
+    assert.equal((await f.post(select, sender.b)).status, 303);
+    const b = browser(f, sender.b.cookie);
+    const alicePage = await b.page('/campaigns');
+    const source = /\/public\/ads\/([a-f0-9]{32})/u.exec(alicePage)?.[1]; assert(source);
+    const view = /name="view" value="([a-f0-9]{64})"/u.exec(alicePage)?.[1]; assert(view);
+    const aliceForm = { ...b.state, view };
+    const sourceUrl = f.origin + '/public/ads/' + source;
+    const snapshot = async () => (await f.request('/public/ads/' + source + '/state')).json() as Promise<{ state: string }>;
+    const selection = () => f.store.database.prepare('SELECT connection_id FROM ad_selections WHERE source_id = ?')
+      .get(source)?.connection_id;
+    const streamId = sender.lease.membership.connectionId;
+    const connections = f.store.connections('alice'), bobConnections = f.store.connections('bob');
+    const aliceGrant = f.grants.load('alice'), bobGrant = f.grants.load('bob');
+    const starts = f.startedWith.length;
+    const output = (token: string) => f.request('/broadcast/output', { method: 'POST', headers: {
+      Authorization: 'ChatView-Output ' + token, 'Content-Type': 'application/json',
+    }, body: JSON.stringify({ sequence: 1, streaming: false, recording: false, sampleAgeMs: 0 }) });
+    const staleAction = (cookie: string, csrf: string, path = '/campaigns/stop') => f.request(path, {
+      method: 'POST', headers: { Cookie: cookie, Origin: f.origin,
+        'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ csrf, view }),
+    });
+    assert.equal((await output(sender.lease.outputToken!)).status, 200);
+    assert.equal((await snapshot()).state, 'visible');
+    const closed = once(streamingPeer, 'close', { signal: AbortSignal.timeout(3000) });
+    streamingPeer.close(); await closed;
+    assert.equal((await snapshot()).state, 'hidden');
+    assert.equal(selection(), streamId);
+    assert.equal((await b.post('/account/switch')).status, 303);
+    assert.notEqual(b.state.cookie, aliceForm.cookie);
+    assert.equal((await staleAction(aliceForm.cookie, aliceForm.csrf)).status, 401);
+    assert.equal((await staleAction(b.state.cookie, aliceForm.csrf)).status, 403);
+    assert.equal(selection(), streamId);
+
+    const returning = await f.native('/display/refresh', 'ChatView-Session',
+      sender.lease.sessionToken, 'streaming');
+    assert.equal(returning.status, 200);
+    const lease = await returning.json() as typeof sender.lease;
+    assert.deepEqual(lease.membership, sender.lease.membership);
+    const returnedPeer = await open(lease.token);
+    assert.equal((await snapshot()).state, 'hidden');
+    assert.equal((await output(lease.outputToken!)).status, 200);
+    assert.equal((await snapshot()).state, 'visible', 'old campaign returns without browser access or reselection');
+
+    const consent = await b.identify('/campaigns', 'bob');
+    assert.match(consent, /channel &lt;bob&gt;/u);
+    assert.equal((await staleAction(aliceForm.cookie, aliceForm.csrf, select)).status, 401);
+    assert.equal((await b.post('/campaigns/stop')).status, 401, 'unconfirmed Bob cannot manage either campaign');
+    const page = await b.confirm('/campaigns');
+    assert.match(page, /channel &lt;bob&gt;/u);
+    assert.match(page, /data-campaign-selection-state="streaming-required"/u);
+    assert.doesNotMatch(page, new RegExp(source, 'u'), 'Bob never sees Alice public source association');
+    assert.equal((await staleAction(b.state.cookie, b.state.csrf, select)).status, 409,
+      'a different owner cannot select Alice streaming grant with its prior view marker');
+    assert.equal(selection(), streamId);
+    assert.equal(f.store.database.prepare('SELECT COUNT(*) AS n FROM ad_selections').get()!.n, 1);
+    assert.deepEqual(f.store.connections('alice'), connections);
+    assert.deepEqual(f.store.connections('bob'), bobConnections);
+    assert.deepEqual(f.grants.load('alice'), aliceGrant);
+    assert.deepEqual(f.grants.load('bob'), bobGrant);
+    assert.equal(f.startedWith.length, starts);
+    assert.equal(f.refreshCalls, 0);
+    assert.equal(f.store.find(gaming.sessionToken)?.membership?.role, 'gaming');
+    const gameFrame = once(gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
+    const senderFrame = once(returnedPeer, 'message', { signal: AbortSignal.timeout(3000) });
+    f.chats.get('alice')!.publish('game and sender unchanged after manager switched to Bob');
+    assert.match(String((await gameFrame)[0]), /game and sender unchanged after manager switched to Bob/u);
+    assert.match(String((await senderFrame)[0]), /game and sender unchanged after manager switched to Bob/u);
+
+    assert.equal((await b.post('/account/switch')).status, 303);
+    await b.identify('/campaigns', 'alice');
+    const restoredManager = await b.confirm('/campaigns');
+    assert(restoredManager.includes(sourceUrl));
+    assert.match(restoredManager, /data-public-banner-state="report-ready"/u);
+    assert.equal(selection(), streamId, 'switching management accounts never silently reselects an ad');
+  } finally { for (const peer of peers) peer.terminate(); await f.close(); }
+});

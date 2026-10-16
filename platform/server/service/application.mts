@@ -208,6 +208,7 @@ export class PlatformApplication {
   }
   #signInPage(response: ServerResponse, b: Browser, page: ManagementPage, status: number) {
     this.#page(response, '브라우저 관리 로그인', `<p>브라우저 로그인이 없거나 만료됐습니다. 앱의 채팅 연결과 PC 승인은 그대로입니다.</p>
+<p data-management-session-boundary="browser-only">이 관리 브라우저의 로그인 만료·계정 전환은 송출 PC의 기존 승인, 선택된 시험 광고, 공개 URL을 변경하지 않습니다. 송출 채팅 연결이 끊어진 경우 공개 광고만 투명하게 대기하며, 송출 PC가 현재 승인으로 직접 복귀하고 새 출력 보고를 보내야 표시 조건이 다시 충족됩니다. 관리 로그인 자체는 송출 PC나 광고를 자동 복구하지 않습니다.</p>
 <p>치지직에서 관리할 계정으로 로그인한 뒤 계속하세요. 다음 화면에서 채널을 확인해야 관리 화면에 들어갑니다.</p>
 ${this.#form(b, `${page}/login`, '치지직으로 브라우저 로그인')}
 <p>이 로그인은 PC 연결·역할을 새로 승인하지 않습니다. 앱 채팅 계정과 같다고 자동으로 판단하지 않습니다.</p>
@@ -645,7 +646,7 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
       if (status === 401 && request.method === 'POST' &&
           /^\/(?:account(?:\/|$)|campaigns(?:\/|$)|connections\/)/u.test(request.url ?? '')) {
         this.#page(response, '관리 로그인 필요',
-          '<p>브라우저 확인이 만료됐습니다. 요청한 변경은 자동으로 다시 실행하지 않습니다.</p><p><a href="/account">관리 로그인으로 돌아가기</a></p>', 401); return;
+          '<p>브라우저 확인이 만료됐습니다. 요청한 변경은 자동으로 다시 실행하지 않습니다.</p><p data-management-expired-action="blocked">기존 송출 PC 승인·시험 광고 선택·공개 URL은 이 요청으로 변경되지 않습니다. 로그인 후 관리 채널과 현재 송출 연결·광고 상태를 다시 확인하고 필요한 경우에만 직접 선택·중지하세요.</p><p><a href="/account">관리 로그인으로 돌아가기</a></p>', 401); return;
       }
       response.writeHead(status, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify({ error: 'ChatView request unavailable' }));

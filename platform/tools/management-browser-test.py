@@ -581,6 +581,94 @@ def run() -> None:
                 finally:
                     flow.close()
 
+                # Management cookie expiry during sender-only network loss
+                # cannot revoke the sender or replay a stale campaign Stop.
+                # Returning on the original native streaming approval is
+                # independent of management login and a fresh output report.
+                flow = Flow(browser, f, 390)
+                try:
+                    flow.identity("/campaigns")
+                    flow.confirm("/campaigns")
+                    original_url = flow.page.locator("#source-url").input_value()
+                    public = flow.context.new_page()
+                    public.goto(original_url)
+                    banner = public.locator("#banner")
+                    assert f.command("sender-report")["ok"]
+                    expect(banner).to_be_visible()
+                    assert f.command("sender-disconnect")["ok"]
+                    expect(banner).to_be_hidden()
+                    assert f.command("expire-browser")["ok"]
+                    with flow.page.expect_response(
+                            lambda r: urlsplit(r.url).path == "/campaigns/stop") as expired_stop:
+                        flow.page.get_by_role("button", name="공개 배너 중지", exact=True).click()
+                    assert expired_stop.value.status == 401
+                    expect(flow.page.locator('[data-management-expired-action="blocked"]')).to_have_count(1)
+                    flow.page.get_by_role("link", name="관리 로그인으로 돌아가기").click()
+                    expect(flow.page.locator('[data-management-session-boundary="browser-only"]')).to_have_count(1)
+                    expect(flow.page.locator("body")).to_contain_text("공개 URL을 변경하지 않습니다")
+                    assert f.command("sender-return")["ok"]
+                    expect(banner).to_be_hidden()
+                    flow.identity("/account")
+                    flow.confirm("/account")
+                    expect(flow.page.locator('#account-public-banner')).to_have_attribute("data-account-ad-state", "waiting-report")
+                    expect(flow.page.locator('#account-public-banner')).to_have_attribute("data-account-ad-selected", "true")
+                    assert f.command("sender-report")["ok"]
+                    expect(banner).to_be_visible()
+                    flow.page.reload()
+                    expect(flow.page.locator('#account-public-banner')).to_have_attribute("data-account-ad-state", "report-ready")
+                    flow.page.get_by_role("link", name="시험 광고의 선택·공개 상태 확인").click()
+                    assert flow.page.locator("#source-url").input_value() == original_url
+                    assert f.command("check")["ok"]
+                    flow.image("expired-manager-sender-return-mobile")
+                    results.append("expired manager form 401 cannot stop selected ad; native sender same-grant return and fresh report restore public URL")
+                finally:
+                    flow.close()
+
+                # Switching only the browser management identity to Bob must
+                # neither transfer Alice's sender/ad nor let the previous
+                # Alice tab run a form using the newly rotated cookie/CSRF.
+                flow = Flow(browser, f, 390)
+                try:
+                    flow.identity("/campaigns")
+                    flow.confirm("/campaigns")
+                    original_url = flow.page.locator("#source-url").input_value()
+                    old_alice_tab = flow.context.new_page()
+                    old_alice_tab.goto(f.origin + "/campaigns")
+                    public = flow.context.new_page()
+                    public.goto(original_url)
+                    banner = public.locator("#banner")
+                    assert f.command("sender-disconnect")["ok"]
+                    expect(banner).to_be_hidden()
+                    flow.page.get_by_role("button", name="브라우저 관리 계정 바꾸기").click()
+                    expect(flow.page.locator("h1")).to_have_text("브라우저 관리 로그인")
+                    with old_alice_tab.expect_response(
+                            lambda r: urlsplit(r.url).path.endswith("/select")) as switched_form:
+                        old_alice_tab.get_by_role("button", name="이 시험 캠페인 다시 선택").click()
+                    assert switched_form.value.status == 403
+                    flow.identity("/campaigns", "bob")
+                    expect(flow.page.get_by_role("button", name="이 채널로 관리 계속")).to_have_count(1)
+                    flow.confirm("/campaigns", "bob")
+                    expect(flow.page.locator('[data-campaign-selection-state="streaming-required"]')).to_have_count(1)
+                    expect(flow.page.locator("#source-url")).to_have_count(0)
+                    assert f.command("sender-return")["ok"]
+                    expect(banner).to_be_hidden()
+                    assert f.command("sender-report")["ok"]
+                    expect(banner).to_be_visible()
+                    flow.page.reload()
+                    expect(flow.page.locator("#source-url")).to_have_count(0)
+                    expect(flow.page.locator('[data-campaign-selection-state="streaming-required"]')).to_have_count(1)
+                    assert f.command("check")["ok"]
+                    flow.page.get_by_role("button", name="브라우저 관리 계정 바꾸기").click()
+                    flow.identity("/campaigns")
+                    flow.confirm("/campaigns")
+                    assert flow.page.locator("#source-url").input_value() == original_url
+                    expect(flow.page.locator('[data-public-banner-state="report-ready"]')).to_have_count(1)
+                    assert f.command("check")["ok"]
+                    flow.image("switched-manager-sender-return-mobile")
+                    results.append("Alice sender returns while manager switches to Bob; stale Alice tab 403 and no source/approval transfer")
+                finally:
+                    flow.close()
+
                 flow = Flow(browser, f)
                 try:
                     flow.start("/account")

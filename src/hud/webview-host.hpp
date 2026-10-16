@@ -60,8 +60,7 @@ private:
     HRESULT on_controller_created(
         HRESULT result,
         ICoreWebView2CompositionController *controller) noexcept;
-    HRESULT on_overlay_bootstrap_registered(HRESULT result) noexcept;
-    HRESULT on_page_health_bootstrap_registered(HRESULT result) noexcept;
+    HRESULT on_host_bootstrap_registered(HRESULT result) noexcept;
     [[nodiscard]] HRESULT finish_controller_initialization() noexcept;
     void handle_page_health_message(
         ICoreWebView2WebMessageReceivedEventArgs *args) noexcept;

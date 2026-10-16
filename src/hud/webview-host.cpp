@@ -981,50 +981,36 @@ HRESULT WebViewHost::on_controller_created(
         return S_OK;
     }
 
-    result = webview_->AddScriptToExecuteOnDocumentCreated(
-        kOverlayBootstrapScript,
-        Callback<
-            ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
-            [state](HRESULT callback_result, LPCWSTR) -> HRESULT {
-                return state->owner != nullptr
-                           ? state->owner->on_overlay_bootstrap_registered(
-                                 callback_result)
-                           : S_OK;
-            })
-            .Get());
-    if (FAILED(result)) {
-        post_failure(result);
+    // The two fixed bootstrap scripts execute in their original order but
+    // need only one asynchronous registration before host readiness. A
+    // missing second callback used to hold up even the first private chat.
+    try {
+        // Keep independent execution semantics: the page-health observer
+        // still installs if an external page throws during overlay setup.
+        std::wstring bootstrap(L"try {\n");
+        bootstrap += kOverlayBootstrapScript;
+        bootstrap += L"\n} finally {\n";
+        bootstrap += page_health_bootstrap_script();
+        bootstrap += L"\n}";
+        result = webview_->AddScriptToExecuteOnDocumentCreated(
+            bootstrap.c_str(),
+            Callback<
+                ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
+                [state](HRESULT callback_result, LPCWSTR) -> HRESULT {
+                    return state->owner != nullptr
+                               ? state->owner->on_host_bootstrap_registered(callback_result)
+                               : S_OK;
+                })
+                .Get());
+        if (FAILED(result)) post_failure(result);
+    } catch (...) {
+        // Allocation failure is terminal, not a partial-ready host.
+        post_failure(E_OUTOFMEMORY);
     }
     return S_OK;
 }
 
-HRESULT WebViewHost::on_overlay_bootstrap_registered(
-    HRESULT result) noexcept
-{
-    if (FAILED(result)) {
-        post_failure(result);
-        return S_OK;
-    }
-
-    const std::shared_ptr<CallbackState> state = callback_state_;
-    result = webview_->AddScriptToExecuteOnDocumentCreated(
-        page_health_bootstrap_script(),
-        Callback<
-            ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
-            [state](HRESULT callback_result, LPCWSTR) -> HRESULT {
-                return state->owner != nullptr
-                           ? state->owner->on_page_health_bootstrap_registered(
-                                 callback_result)
-                           : S_OK;
-            })
-            .Get());
-    if (FAILED(result)) {
-        post_failure(result);
-    }
-    return S_OK;
-}
-
-HRESULT WebViewHost::on_page_health_bootstrap_registered(
+HRESULT WebViewHost::on_host_bootstrap_registered(
     HRESULT result) noexcept
 {
     if (FAILED(result)) {

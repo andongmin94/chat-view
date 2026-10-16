@@ -4,7 +4,15 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: D1 첫 네이티브 채팅 문서 준비와 첫 텍스트 표시
+## 현재 흐름: D1 WebView2 호스트 부트스트랩과 첫 텍스트 준비 경계 단순화
+
+시작 원격 OBS HEAD `7bae2ae34061a4aeb56d7f76a2da3052f36dbef5`, Windows #436/run `38871299139`의 실제 네이티브 routine **49/49 성공**(첫 DOMContentLoaded+nonce 경로 포함), 이전 CHZZK #97의 synthetic Chromium `collection-recollect` 실패를 확인했다. AGENTS → PRODUCT → development-workflow → architecture → 이 개발 계획 순으로 읽고 OBS만 수정한다.
+
+- **사용자 경험:** 게임 PC의 기존 companion은 OBS 없이 시작한다. WebView2가 초기화돼 채팅 페이지를 열 준비가 된 시점과 채팅 WebSocket의 첫 메시지가 로컬 HUD에 실제 표시된 시점은 독립적이다. 준비 신호 전 채팅/계정 권한을 만들거나 임의 문서를 승인하지 않는다. 초기 호스트 준비에서 불필요한 순차 브라우저 콜백 하나를 제거해 첫 문서 진입 경로를 단순화한다.
+- **기존 코드의 개선:** `WebViewHost`는 동일한 문서 시작 단계에 `kOverlayBootstrapScript` 완료 콜백 → `page_health_bootstrap_script()` 완료 콜백을 **직렬로** 기다렸다. 기존 고정 호스트 스크립트의 순서와 실행 독립성(`try/finally`)을 유지하면서 **WebView2 `AddScriptToExecuteOnDocumentCreated`를 한 번만 등록**하고, 그 결과 성공 후에만 composited HUD를 ready로 보고한다. 실수/할당 실패/host close에는 기존 안전 종료. 네트워크·로그인·capture exclusion·타 채널/OBS·새 환경 변수/브라우저/지연 제한·자동 복구 경로는 추가하지 않는다. `NativeChatSurface`는 이전과 똑같이 자신이 소유한 문서의 탐색 ID·DOMContentLoaded+nonce를 검증해야 첫 글자 메시지를 게시한다.
+- **실제 회귀 범위:** 기존 `tests/native-chat-surface-test.cpp`의 WebView2 실제 첫 문서 준비·Unicode 첫 메시지/ACK·다른 URL 금지·재시작 검증에 **첫 로드 시 폐쇄 ShadowRoot 오버레이 설치 확인**을 추가했다. 기존 Windows native-display/logout/chat-switch/output/companion/OBS/영상 CTest 및 새 HTML 생성·외부 페이지 상태 감지와 격리를 회귀로 유지한다. 이 단계의 성공은 host 시작의 의존성을 줄였다는 뜻이지 D1의 모든 간헐 첫 화면 지연, 실계정 CHZZK/물리 두 PC/시청자 노출의 증거가 아니다. CI 최종 상태를 해당 코드 SHA로 기록한다.
+
+## 직전 완료 흐름: D1 첫 네이티브 채팅 문서 준비와 첫 텍스트 표시
 
 시작 원격 OBS HEAD `fd157b1bbde60df1720367af0f98345c785ac353`, 직전 CHZZK contract #96 Node **340/340·Chromium29/29** 및 Windows #433 scope 성공과 공식 OBS 공개 배너 #34 합성 픽셀 **13/13**을 확인했다. AGENTS → PRODUCT → development-workflow → architecture → 이 문서 순서로 읽었다. 이번 작업은 게임 PC에 OBS를 요구하지 않는 기존 네이티브 HUD 수신 경계에 한정된다.
 
@@ -149,6 +157,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-Windows native routine에서 첫 **DOMContentLoaded+nonce** 로드 및 실제 companion 첫 메시지 결과를 확인한 뒤, 남은 D1 실패가 있다면 그 **실제 실패 단계(WebView2 host startup / navigation / handshake / ACK)**에서 원인을 좁혀 수정한다. 그다음 G4 실제 치지직 로그인→구독→자체 HUD 첫 표시와 G3 게임 PC OBS 없는 물리 투컴 HUD 분리 영상 검증을 진행한다. D2/D4/D6/D7, 실제 광고 시청·HP/정산·배포 qualification은 미완료다.
+호스트 **초기화 완료**와 자체 채팅 **첫 DOM 글자 표시**가 분리된 상태에서 Windows native routine의 실제 성공/실패 단계를 확인한 뒤, D1에서 남은 첫 화면 미표시가 **WebView2 환경/컨트롤러 준비**인지, **문서 탐색·nonce**인지, **렌더 프레임 ACK**인지에 맞춰 한 경계만 추가 개선한다. 완료된 네이티브 로컬 검증과 별도로 G4 실계정 치지직의 승인·채팅 구독·장시간 수신 및 G3 게임 PC OBS 없는 물리 투컴 영상 제외 검증은 남는다. D2/D4/D6/D7·실제 광고 주의/유료·HP·정산·배포 qualification 미완료를 유지한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

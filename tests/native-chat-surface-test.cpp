@@ -135,6 +135,15 @@ int main()
         ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(surface);
         const std::wstring first_url = source(core.Get());
         expect(first_url.starts_with(L"https://chatview.invalid/"), "host-owned memory document");
+        // The combined host bootstrap must still install the existing
+        // closed-shadow overlay on the real first WebView2 document.
+        await([&] { return evaluate(core.Get(), LR"JS(
+            (() => {
+              const root = document.querySelector('chatview-private-hud-root');
+              return Boolean(root && root.parentNode === document.documentElement &&
+                root.shadowRoot === null);
+            })()
+        )JS") == L"true"; }, "host bootstrap installs the existing private overlay");
         expect(evaluate(core.Get(), LR"JS(
             globalThis.nativeMessageContract = null;
             window.chrome.webview.addEventListener('message', event => {

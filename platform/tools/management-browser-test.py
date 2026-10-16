@@ -290,6 +290,39 @@ def run() -> None:
                     right.close()
                     left.close()
 
+                # The same cookie's browser-history page is not new consent.
+                # A second tab viewing the current selection invalidates the
+                # older form without changing any streaming approval or ad.
+                flow = Flow(browser, f, 390)
+                try:
+                    flow.identity("/campaigns")
+                    flow.confirm("/campaigns")
+                    old_url = flow.page.locator("#source-url").input_value()
+                    expect(flow.page.locator('[data-campaign-form-guidance="fresh-review"]')).to_contain_text(
+                        "브라우저 뒤로가기나 오래된 관리 탭")
+                    flow.page.goto(f.origin + "/account")
+                    flow.page.go_back()
+                    expect(flow.page).to_have_url(f.origin + "/campaigns")
+                    fresh_tab = flow.context.new_page()
+                    fresh_tab.goto(f.origin + "/campaigns")
+                    expect(fresh_tab.locator('[data-public-banner-state="waiting-report"]')).to_have_count(1)
+                    with flow.page.expect_response(
+                            lambda r: urlsplit(r.url).path == "/campaigns/stop") as from_history:
+                        flow.page.get_by_role("button", name="공개 배너 중지").click()
+                    assert from_history.value.status == 409
+                    expect(flow.page.locator(
+                        '[data-campaign-review-reason="stale-page"]')).to_have_count(1)
+                    expect(flow.page.locator("body")).to_contain_text(
+                        "실제 송출 승인 철회를 뜻하지는 않습니다")
+                    flow.page.get_by_role("link", name="현재 시험 캠페인 상태 다시 확인").click()
+                    expect(flow.page.locator('[data-public-banner-state="waiting-report"]')).to_have_count(1)
+                    assert flow.page.locator("#source-url").input_value() == old_url
+                    assert f.command("check")["ok"]
+                    flow.image("campaign-back-button-stale-form-mobile")
+                    results.append("back/older same-cookie tab is read-only; stale Stop is 409 while selected sender and public URL persist")
+                finally:
+                    flow.close()
+
                 # Alice already has one live sender and a manually selected
                 # banner. Revoke and reapprove only a gaming peer through the
                 # real account CSRF form and one fresh same-role browser consent.
@@ -811,6 +844,8 @@ def run() -> None:
                     campaign = flow.context.new_page()
                     campaign.goto(f.origin + "/campaigns")
                     original_url = campaign.locator("#source-url").input_value()
+                    stale_campaign = flow.context.new_page()
+                    stale_campaign.goto(f.origin + "/campaigns")
                     public = flow.context.new_page()
                     public.goto(original_url)
                     banner = public.locator("#banner")
@@ -845,6 +880,15 @@ def run() -> None:
                         "게임 PC 채팅 승인은 그대로 유지됩니다")
                     expect(banner).to_be_hidden()
                     assert f.command("sender-reapprove-revoked")["ok"]
+                    with stale_campaign.expect_response(
+                            lambda r: urlsplit(r.url).path.endswith("/select")) as revoked_form:
+                        stale_campaign.get_by_role("button", name="이 시험 캠페인 다시 선택").click()
+                    assert revoked_form.value.status == 409
+                    expect(stale_campaign.locator(
+                        '[data-campaign-review-reason="sender-missing"]')).to_have_count(1)
+                    expect(stale_campaign.locator("body")).to_contain_text("승인 철회 후에는 광고 선택이 해제됩니다")
+                    expect(banner).to_be_hidden()
+                    results.append("revoked streaming approval rejects old selected form and explains manual sender reapproval")
                     flow.page.get_by_role("link", name="송출 승인·광고 재선택 순서 확인", exact=True).click()
                     expect(flow.page).to_have_url(f.origin + "/campaigns#campaign-selection-title")
                     expect(flow.page.locator('[data-campaign-selection-state="streaming-required"]')).to_have_count(1)

@@ -12,11 +12,12 @@ const selectPath = '/campaigns/' + TEST_CAMPAIGN.id + '/select';
 const selected = (f: Awaited<ReturnType<typeof fixture>>, owner: string) =>
   f.store.database.prepare('SELECT s.connection_id FROM ad_sources a JOIN ad_selections s USING(source_id) WHERE a.owner = ?')
     .get(owner)?.connection_id;
-const stale = async (response: Response) => {
+const stale = async (response: Response, reason?: 'stale-page' | 'sender-missing' | 'sender-changed') => {
   assert.equal(response.status, 409);
   assert.match(response.headers.get('content-type') ?? '', /^text\/html/u);
   const html = await response.text();
   assert.match(html, /data-campaign-action="review-required"/u);
+  if (reason) assert.match(html, new RegExp('data-campaign-review-reason="' + reason + '"', 'u'));
   assert.match(html, /이전 페이지의 선택·중지 요청을 실행하지 않았습니다/u);
   assert.match(html, /현재 관리 채널과 송출 역할 승인/u);
   assert.match(html, /href="\/campaigns"/u);
@@ -101,7 +102,7 @@ test('replacing a sender approval invalidates an older campaign form even with t
     assert.notEqual(replacement.membership.connectionId, sender.lease.membership.connectionId);
 
     const before = f.store.database.prepare('SELECT total_changes() AS n').get()!.n;
-    await stale(await f.post(selectPath, owner));
+    await stale(await f.post(selectPath, owner), 'sender-changed');
     assert.equal(f.store.database.prepare('SELECT total_changes() AS n').get()!.n, before);
     assert.equal(selected(f, 'alice'), undefined);
     const fresh = await f.page('/campaigns', owner);
@@ -110,5 +111,83 @@ test('replacing a sender approval invalidates an older campaign form even with t
     assert.equal((await f.post(selectPath, owner)).status, 303);
     assert.equal(selected(f, 'alice'), replacement.membership.connectionId);
     assert.match(await f.page('/campaigns', owner), new RegExp(source, 'u'));
+  } finally { await f.close(); }
+});
+
+test('one browser back/older tab cannot use a prior campaign form after a newer read', async () => {
+  const f = await fixture({ createDisplay: (access, origin, snapshot) =>
+    new DisplayGateway(access, origin, snapshot) });
+  const peers: WebSocket[] = [];
+  try {
+    const sender = await f.connect('alice', 'streaming');
+    const game = await f.approve(await f.start('gaming'), 'gaming', sender.b);
+    const bob = await f.connect('bob', 'gaming');
+    for (const token of [sender.lease.token, game.token, bob.lease.token]) {
+      const ws = new WebSocket(f.origin.replace('http:', 'ws:') + '/display/events',
+        { headers: { Authorization: 'Bearer ' + token }, handshakeTimeout: 3000 });
+      ws.on('error', () => {}); peers.push(ws);
+      await once(ws, 'message', { signal: AbortSignal.timeout(3000) });
+    }
+    await f.page('/campaigns', sender.b);
+    assert.equal((await f.post(selectPath, sender.b)).status, 303);
+    const oldPage = await f.page('/campaigns', sender.b);
+    const oldView = /name="view" value="([a-f0-9]{64})"/u.exec(oldPage)?.[1]; assert(oldView);
+    const source = /\/public\/ads\/([a-f0-9]{32})/u.exec(oldPage)?.[1]; assert(source);
+    const senderId = sender.lease.membership.connectionId;
+    const act = async (path: string, view: string, csrf = sender.b.csrf, origin = f.origin) =>
+      f.request(path, { method: 'POST', headers: { Cookie: sender.b.cookie,
+        Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ csrf, view }) });
+    // Returning via browser history is read-only; another tab viewing the same
+    // account must invalidate the old page-specific consent even if nothing
+    // about the streamer grant or selected campaign changed.
+    await f.page('/account', sender.b);
+    const refreshed = await f.page('/campaigns', sender.b);
+    const newView = /name="view" value="([a-f0-9]{64})"/u.exec(refreshed)?.[1];
+    assert(newView); assert.notEqual(oldView, newView);
+    const before = f.store.database.prepare('SELECT total_changes() AS n').get()!.n;
+    await stale(await act('/campaigns/stop', oldView), 'stale-page');
+    assert.equal(f.store.database.prepare('SELECT total_changes() AS n').get()!.n, before);
+    assert.equal(selected(f, 'alice'), senderId);
+    assert.equal(f.store.find(game.sessionToken)?.membership?.role, 'gaming');
+    assert(f.store.find(bob.lease.sessionToken));
+    assert.equal((await f.request('/public/ads/' + source + '/state')).status, 200);
+    // A wrong/missing CSRF or wrong Origin cannot turn the extra page marker
+    // into a bypass of the existing browser protections.
+    assert.equal((await act('/campaigns/stop', newView, 'a'.repeat(64))).status, 403);
+    assert.equal((await act('/campaigns/stop', newView, sender.b.csrf, 'https://evil.invalid')).status, 403);
+    assert.equal((await act('/campaigns/stop', 'not-a-nonce')).status, 403);
+    assert.equal(selected(f, 'alice'), senderId);
+    await f.page('/campaigns', sender.b);
+    assert.equal((await f.post('/campaigns/stop', sender.b)).status, 303,
+      'the user may explicitly stop after a fresh review');
+    assert.equal(selected(f, 'alice'), undefined);
+    assert.match(await f.page('/campaigns', sender.b), new RegExp(source, 'u'),
+      'old public URL remains available after an explicit Stop');
+  } finally { for (const ws of peers) ws.terminate(); await f.close(); }
+});
+
+test('revoked sender has its own review-required explanation, distinct from old browser history', async () => {
+  const f = await fixture();
+  try {
+    const sender = await f.connect('alice', 'streaming');
+    const gaming = await f.approve(await f.start('gaming'), 'gaming', sender.b);
+    await f.page('/campaigns', sender.b);
+    assert.equal((await f.post(selectPath, sender.b)).status, 303);
+    const before = await f.page('/campaigns', sender.b);
+    const source = /\/public\/ads\/([a-f0-9]{32})/u.exec(before)?.[1]; assert(source);
+    const revoked = '/connections/' + sender.lease.membership.connectionId + '/revoke';
+    assert.equal((await f.post(revoked, sender.b)).status, 303);
+    assert.equal(selected(f, 'alice'), undefined);
+    const snapshot = f.store.database.prepare('SELECT total_changes() AS n').get()!.n;
+    await stale(await f.post(selectPath, sender.b), 'sender-missing');
+    assert.equal(f.store.database.prepare('SELECT total_changes() AS n').get()!.n, snapshot);
+    assert.equal(f.store.find(gaming.sessionToken)?.membership?.role, 'gaming');
+    const current = await f.page('/campaigns', sender.b);
+    assert.match(current, /data-campaign-selection-state="streaming-required"/u);
+    assert.match(current, /data-banner-manual-reselect="sender-required"/u);
+    assert.match(current, new RegExp(source, 'u'));
+    assert.equal((await f.request('/public/ads/' + source + '/state')).status, 200);
+    assert.equal(selected(f, 'alice'), undefined, 'the read and rejected action never reselect an ad');
   } finally { await f.close(); }
 });

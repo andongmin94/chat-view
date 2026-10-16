@@ -63,10 +63,10 @@ export function servePublicAd(request: IncomingMessage, response: ServerResponse
 export type CampaignSelectionState = 'provider-required' | 'streaming-required' | 'ready';
 
 export function campaignsPage(status: CampaignStatus, csrf: string, origin: string,
-  { selectionState, streamingConnected, previewReady }: {
-    selectionState: CampaignSelectionState; streamingConnected: boolean; previewReady: boolean;
+  { selectionState, streamingConnected, previewReady, viewToken }: {
+    selectionState: CampaignSelectionState; streamingConnected: boolean; previewReady: boolean; viewToken: string;
   }): string {
-  const form = (path: string, label: string) => `<form method="post" action="${path}"><input type="hidden" name="csrf" value="${csrf}"><button>${label}</button></form>`;
+  const form = (path: string, label: string) => `<form method="post" action="${path}"><input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="view" value="${viewToken}"><button>${label}</button></form>`;
   const source = status.sourceId ? `${origin}/public/ads/${status.sourceId}` : undefined;
   const selectionText = selectionState === 'provider-required'
     ? '치지직 재승인 필요 · 이 계정의 치지직 승인이 유효하지 않습니다.'
@@ -114,6 +114,7 @@ ${source && !status.selected ? `<p data-banner-manual-reselect="${selectionState
 <p>${escape(TEST_CAMPAIGN.description)}</p><p>권장 브라우저 소스 크기: <strong>960 × 180</strong></p>
 ${selectionState === 'ready' ? form(`/campaigns/${TEST_CAMPAIGN.id}/select`, status.selected ? '이 시험 캠페인 다시 선택' : '이 시험 캠페인 선택') : ''}</section>
 <p>현재 선택: <strong>${status.selected ? '시험 캠페인 선택됨' : '없음'}</strong></p>
+<p data-campaign-form-guidance="fresh-review">브라우저 뒤로가기나 오래된 관리 탭은 현재 선택을 바꾸지 않습니다. 선택·중지 버튼이 오래된 확인 화면이라면 실행되지 않으며, <a href="/campaigns">현재 상태 다시 확인</a> 후 직접 결정해야 합니다. 송출 PC 역할 승인을 실제로 해제한 경우에는 새 송출 승인 뒤에도 광고를 직접 재선택해야 합니다.</p>
 <section id="public-banner-status" aria-labelledby="public-banner-status-title">
 <h3 id="public-banner-status-title">공개 배너 서버 준비 상태</h3>
 <p data-public-banner-state="${preview.state}">${preview.text}</p>

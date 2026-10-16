@@ -21,7 +21,7 @@ for (const [selectionState, selected, streamingConnected, previewReady, expected
   test(`recovery ${selectionState}/${selected}/${streamingConnected}/${previewReady} -> ${expected}`, () => {
     const url = `https://service.invalid/public/ads/${'1'.repeat(32)}`;
     const html = campaignsPage({ selected, sourceId: '1'.repeat(32) }, 'a'.repeat(64),
-      'https://service.invalid', { selectionState, streamingConnected, previewReady });
+      'https://service.invalid', { selectionState, streamingConnected, previewReady, viewToken: 'b'.repeat(64) });
     const recovery = /<div data-banner-recovery-state="([^"]+)">([\s\S]*?)<\/div>/u.exec(html);
     assert(recovery);
     assert.equal(recovery[1], expected);

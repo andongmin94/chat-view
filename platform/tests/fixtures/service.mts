@@ -103,7 +103,7 @@ export async function fixture(options: Options = {}) {
     method: 'POST', headers: { Authorization: `${scheme} ${token}`,
       ...(['/display/login', '/display/refresh'].includes(path) ? { 'X-ChatView-Role': role } : {}) },
   });
-  const browser: { cookie: string; csrf: string } = { cookie: '', csrf: '' };
+  const browser: { cookie: string; csrf: string; view?: string } = { cookie: '', csrf: '' };
   const cookie = (response: Response) => response.headers.get('set-cookie')?.split(';')[0] ?? '';
   async function page(path: string, b = browser) {
     let response = await request(path, { headers: { Cookie: b.cookie } });
@@ -113,11 +113,13 @@ export async function fixture(options: Options = {}) {
     }
     assert.equal(response.status, 200);
     const html = await response.text(); b.csrf = /name="csrf" value="([a-f0-9]{64})"/u.exec(html)?.[1] ?? '';
+    if (path === '/campaigns') b.view = /name="view" value="([a-f0-9]{64})"/u.exec(html)?.[1];
     return html;
   }
   const post = (path: string, b = browser) => request(path, { method: 'POST',
     headers: { Cookie: b.cookie, Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ csrf: b.csrf }),
+    body: new URLSearchParams({ csrf: b.csrf,
+      ...(/^\/campaigns\/(?:stop|[a-z0-9-]{1,64}\/select)$/u.test(path) && b.view ? { view: b.view } : {}) }),
   });
   async function start(role: ConnectionRole = 'gaming') {
     const verifier = nonce(), response = await native('/display/login', 'ChatView-Challenge', hashSecret(verifier), role);
@@ -148,7 +150,7 @@ export async function fixture(options: Options = {}) {
       membership: { role: ConnectionRole; connectionId: string; broadcastSessionId: string } } }).lease;
   }
   async function connect(owner: string, role: ConnectionRole) {
-    const b = { cookie: '', csrf: '' }, pending = await start(role);
+    const b: typeof browser = { cookie: '', csrf: '' }, pending = await start(role);
     await authenticate(owner, pending, b);
     return { b, lease: await approve(pending, role, b) };
   }

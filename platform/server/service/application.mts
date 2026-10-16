@@ -31,7 +31,7 @@ type Browser = { key: string; csrf: string; expires: number; controller: AbortCo
   // Only the account and exact streaming grant the user reviewed on this
   // browser's current campaign page. Any campaign write invalidates all same-
   // owner browser views, so an old tab cannot undo another browser's Stop.
-  campaignView?: { owner: string; connectionId: string };
+  campaignView?: { owner: string; connectionId: string; viewToken: string };
   attempt?: Attempt; pending?: { identity: BrowserIdentity; page: ManagementPage; expires: number } };
 const managementPage = (path: string): path is ManagementPage =>
   MANAGEMENT_PAGES.some(page => page === path);
@@ -50,7 +50,7 @@ function empty(request: IncomingMessage) {
       (request.headers['content-length'] !== undefined && request.headers['content-length'] !== '0'))
     throw new DisplayAccessError(400);
 }
-async function csrfForm(request: IncomingMessage, expected: string) {
+async function csrfForm(request: IncomingMessage, expected: string, campaignAction = false): Promise<string | null> {
   if (!/^application\/x-www-form-urlencoded(?:;\s*charset=utf-8)?$/iu.test(request.headers['content-type'] ?? ''))
     throw new DisplayAccessError(400);
   let body = '';
@@ -59,8 +59,11 @@ async function csrfForm(request: IncomingMessage, expected: string) {
     if (Buffer.byteLength(body) > 2048) throw new DisplayAccessError(413);
   }
   const form = new URLSearchParams(body), value = form.get('csrf');
-  if (form.size !== 1 || !validSecret(value) ||
+  const view = campaignAction ? form.get('view') : null;
+  if (form.size !== (view === null ? 1 : 2) || !validSecret(value) ||
+      (view !== null && !validSecret(view)) ||
       !timingSafeEqual(Buffer.from(value), Buffer.from(expected))) throw new DisplayAccessError(403);
+  return view;
 }
 
 // HTTP routes shared by the HTTPS listener and synthetic HTTP-flow tests.
@@ -164,17 +167,24 @@ export class PlatformApplication {
     for (const browser of this.#browsers.values())
       if (browser.owner === owner) browser.campaignView = undefined;
   }
-  #confirmCampaignView(response: ServerResponse, b: Browser): boolean {
+  #confirmCampaignView(response: ServerResponse, b: Browser, view: string | null): boolean {
     const sender = this.#creators.describe(b.owner!).connections.find(c => c.role === 'streaming');
     const reviewed = b.campaignView;
     if (sender && reviewed && reviewed.owner === b.owner &&
-        reviewed.connectionId === sender.connectionId) return true;
-    // An old page, replaced sender role, expired browser identity or competing
-    // campaign Stop is not new campaign consent. No silent replay/redirect.
+        reviewed.connectionId === sender.connectionId && reviewed.viewToken === view) return true;
+    // A previous tab, other management action or replaced sender approval is
+    // not fresh consent. The rejection itself never changes a campaign.
+    const reason = !sender ? 'sender-missing'
+      : reviewed && reviewed.connectionId !== sender.connectionId ? 'sender-changed' : 'stale-page';
+    const explanation = reason === 'sender-missing'
+      ? '현재 송출 PC 역할 승인이 없습니다. 단순 채팅 연결 단절과 달리 승인 철회 후에는 광고 선택이 해제됩니다. 송출 PC에서 새 역할을 승인하고 광고를 직접 다시 선택하세요.'
+      : reason === 'sender-changed'
+        ? '이 페이지에서 확인했던 송출 PC 승인이 다른 승인으로 교체됐습니다. 새로운 송출 승인이 생겨도 기존 광고 선택은 자동 복구되지 않습니다.'
+        : '브라우저 뒤로가기·오래된 탭 또는 다른 관리 화면에서 확인한 상태와 이 폼의 확인 시점이 다릅니다. 실제 송출 승인 철회를 뜻하지는 않습니다.';
     b.campaignView = undefined;
     this.#page(response, '시험 캠페인 상태 다시 확인', `${this.#accountNotice(b)}
-<section data-campaign-action="review-required"><p>이 브라우저가 확인했던 송출 PC 승인이나 광고 선택 상태가 변경됐습니다.
-이전 페이지의 선택·중지 요청을 실행하지 않았습니다.</p>
+<section data-campaign-action="review-required" data-campaign-review-reason="${reason}">
+<p>${explanation}</p><p>이전 페이지의 선택·중지 요청을 실행하지 않았습니다.</p>
 <p>현재 관리 채널과 송출 역할 승인, 광고 선택 상태를 다시 확인한 뒤 시험 캠페인을 선택하거나 중지할지 직접 결정하세요.</p>
 <p><a href="/campaigns">현재 시험 캠페인 상태 다시 확인</a> · <a href="/account#two-pc-status">현재 PC 역할 확인</a></p>
 </section>`, 409);
@@ -433,8 +443,10 @@ ${this.#form(b, '/account/cancel', '취소')}
         // proves actual rendering or audience exposure.
         const previewReady = !!(status.selected && status.sourceId &&
           this.#campaigns.snapshot(status.sourceId).state === 'visible');
+        const viewToken = nonce();
         b.campaignView = selectionState === 'ready' && account.authorized
-          ? { owner: b.owner, connectionId: account.connections.find(c => c.role === 'streaming')!.connectionId }
+          ? { owner: b.owner, connectionId: account.connections.find(c => c.role === 'streaming')!.connectionId,
+              viewToken }
           : undefined;
         if (status.sourceId) {
           // Only this authenticated page permits the exact fixed copy helper.
@@ -443,7 +455,7 @@ ${this.#form(b, '/account/cancel', '취소')}
             `${response.getHeader('Content-Security-Policy')}; script-src ${campaignSetupScriptHash}`);
         }
         this.#page(response, '시험 캠페인 · 공개 배너', this.#accountNotice(b) + campaignsPage(
-          status, b.csrf, this.#origin, { selectionState, previewReady,
+          status, b.csrf, this.#origin, { selectionState, previewReady, viewToken,
             streamingConnected: account.presence.streamingConnections > 0 })); return;
       }
       if (request.method === 'GET' && url.pathname === '/healthz') { response.writeHead(204); response.end(); return; }
@@ -525,7 +537,9 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
       if (!b && request.headers.authorization !== undefined) throw new DisplayAccessError(403);
       if (!b) throw new DisplayAccessError(
         /^\/(?:account(?:\/|$)|campaigns(?:\/|$)|connections\/)/u.test(url.pathname) ? 401 : 403);
-      await csrfForm(request, b.csrf); this.#live(b);
+      const campaignAction = url.pathname === '/campaigns/stop' ||
+        /^\/campaigns\/[a-z0-9-]{1,64}\/select$/u.test(url.pathname);
+      const view = await csrfForm(request, b.csrf, campaignAction); this.#live(b);
       const loginPage = url.pathname.endsWith('/login') ? url.pathname.slice(0, -6) : '';
       if (managementPage(loginPage)) {
         if (b.owner || b.pending) throw new DisplayAccessError(409);
@@ -576,7 +590,7 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
         // browser tab's last reviewed sender or pending approval.
         if (campaign[1] !== TEST_CAMPAIGN.id) throw new CampaignError(404);
         if (!this.#creators.describe(b.owner).authorized) throw new DisplayAccessError(401);
-        if (!this.#confirmCampaignView(response, b)) return;
+        if (!this.#confirmCampaignView(response, b, view)) return;
         try {
           this.#campaigns.select(b.owner, campaign[1]!);
           this.#creators.activity.clear(b.owner);
@@ -591,7 +605,7 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
         // An empty campaign has nothing to stop; a selected campaign must be
         // stopped from a page that reviewed the current streaming approval.
         if (this.#campaigns.status(b.owner).selected &&
-            !this.#confirmCampaignView(response, b)) return;
+            !this.#confirmCampaignView(response, b, view)) return;
         this.#campaigns.stop(b.owner); this.#creators.activity.clear(b.owner);
         this.#retireCampaignViews(b.owner);
         this.#redirect(response, '/campaigns'); return;

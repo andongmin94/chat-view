@@ -60,8 +60,12 @@ const send = (line: string) => child.stdin.write(line + '\n');
 const timeout = setTimeout(() => child.kill(), 70000);
 try {
   const alice = await f.connect('alice-private', 'streaming');
-  await f.page('/campaigns', alice.b);
   const select = async () => {
+    // Every explicit user selection must follow a fresh review of the
+    // current sender approval. A stopped campaign retires the prior form;
+    // the OBS renderer itself never grants selection authority.
+    const page = await f.page('/campaigns', alice.b);
+    assert.match(page, /data-campaign-selection-state="ready"/u);
     const response = await f.post(`/campaigns/${TEST_CAMPAIGN.id}/select`, alice.b);
     assert.equal(response.status, 303);
   };

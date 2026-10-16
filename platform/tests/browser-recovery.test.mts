@@ -334,7 +334,8 @@ test('browser expiry during sender outage never reauthorizes native streaming or
     assert.match(await blocked.text(), /data-management-expired-action="blocked"/u);
     const login = await b.page('/campaigns', 401);
     assert.match(login, /data-management-session-boundary="browser-only"/u);
-    assert.match(login, /선택된 시험 광고, 공개 URL을 변경하지 않습니다/u);
+    assert.match(login, /로그인 만료·계정 전환 자체는 송출 PC 승인, 시험 광고 선택, 공개 URL을 변경하지 않습니다/u);
+    assert.match(login, /승인 자체를 별도로 철회했다면 광고 선택은 해제됩니다/u);
     assert.doesNotMatch(login, new RegExp(source, 'u'), 'anonymous login must not leak private public-source association');
     assert.notEqual(b.state.cookie, oldBrowser.cookie);
     assert.equal((await staleAction(oldBrowser.cookie, oldBrowser.csrf, select)).status, 401);

@@ -1041,8 +1041,12 @@ def run() -> None:
                     # Alice's sender role, source URL or pending campaign.
                     flow.identity("/campaigns", "bob")
                     flow.confirm("/campaigns", "bob")
-                    expect(flow.page.locator('[data-campaign-selection-state="streaming-required"]')).to_have_count(1)
-                    expect(flow.page.locator("#source-url")).to_have_count(0)
+                    # Bob already has his own approved sender and independently
+                    # selected public source from the preceding collection flow.
+                    # Never mistake that valid Bob approval for Alice's sender.
+                    expect(flow.page.locator('[data-campaign-selection-state="ready"]')).to_have_count(1)
+                    assert flow.page.locator("#source-url").input_value() != original_url
+                    expect(flow.page.get_by_role("region", name="브라우저 관리 계정")).to_contain_text("channel <bob>")
                     with stale_campaign.expect_response(
                             lambda r: urlsplit(r.url).path == "/campaigns/stop") as switched_form:
                         stale_campaign.get_by_role("button", name="공개 배너 중지", exact=True).click()

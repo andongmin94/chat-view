@@ -10,7 +10,10 @@
 
 - **사용자 흐름:** 게임 PC의 기존 자체 채팅/WebSocket과 별도 creator를 유지한 상태에서 송출 PC WebSocket만 끊긴다. 두 관리 탭은 같은 로그인 쿠키로 현재 캠페인 상태를 확인하지만, 이전 탭이 기억한 선택·중지 버튼은 최신 화면을 덮지 못한다. 송출 PC는 **기존 송출 승인으로 명시적으로 복귀**하고 새 출력 보고 전까지 공개 배너가 투명하다. 보고가 들어오면 동일 connection ID/FK/공개 URL의 배너가 다시 준비된다. 관리 GET, 브라우저 뒤로가기, 잘못된 POST는 광고 재선택·다른 계정 전환·게임 영상·OBS 장면을 실행하지 않는다.
 - **좁은 수정:** 유효한 최신 브라우저 캠페인 화면이 별도로 있는 경우, 오래된 탭의 409는 *그 최신 확인값을 취소하지 않는다*. 반면 송출 역할 승인 자체가 철회·교체됐다면 확인값을 무효화한다. 기존 소유자/송출 승인 ID·CSRF·Origin·rate limit·유효한 명시적 Select/Stop 조건은 그대로 유지한다. 새 DB/마이그레이션/클라이언트 API/자동 송출 조작은 없다.
-- **통합 검증:** `stale-campaign-management.test.mts`의 실제 HTTP/SQLite/WebSocket은 동일 쿠키 다중 탭의 오래된 Select·Stop 409, 송출 소켓 단절·기존 승인 갱신·새 보고, 게임 채팅 수신·타 creator 격리, 광고 FK·공개 URL 불변, 이전 보고 무효, 이후 최신 탭의 명시적 Stop/Select를 확인한다. Chromium 390px 브라우저에서는 게임 재승인 중 실제 두 탭 폼 클릭으로 세 단계의 409·상태 확인·동일 공개 URL 복귀를 확인한다. CI 결과는 해당 코드 커밋의 실제 완료 상태로 기록한다.
+- **통합 검증:** `stale-campaign-management.test.mts`의 실제 HTTP/SQLite/WebSocket은 동일 쿠키 다중 탭의 오래된 Select·Stop 409, 송출 소켓 단절·기존 승인 갱신·새 보고, 게임 채팅 수신·타 creator 격리, 광고 FK·공개 URL 불변, 이전 보고 무효, 이후 최신 탭의 명시적 Stop/Select를 확인한다. Chromium 390px 브라우저에서는 게임 재승인 중 실제 두 탭 폼 클릭으로 세 단계의 409·상태 확인·동일 공개 URL 복귀를 확인한다. **실제 CI 완료:**
+  - 기능 커밋 `c552a511ebcc839f6e1b0a6c4130e83df6401025`의 **CHZZK contract #89/run `38854988629` completed/success, 전체 5개 job 성공**. Ubuntu/Windows × Node22·24 통합 회귀·엄격 TypeScript·locked dependency 검사 성공; Ubuntu24 **335/335, fail0, skip0**, 신규 같은 브라우저의 복수 탭 송출 단절·복귀 회귀 통과, 취약점 **0건**. 합성 제공자와 실제 Chromium 관리 브라우저 **24/24 성공**, 390px 다중 탭 오래된 Select/Stop409와 송출 복귀·새 보고·공개 URL 확인, artifact `12026942408`.
+  - 동일 기능 SHA의 **공식 OBS public ad flow #31/run `38854988550` completed/success, OBS·CEF 공개 시험 배너 합성 픽셀 13/13 통과**, artifact `12026597828`. **Windows development #426/run `38854988495` scope 성공, native x64 skipped**(서버/브라우저 변경만). 전체 native 반복 시험·하드웨어 qualification은 실행하지 않았다.
+  - 단일 인스턴스 합성 CHZZK·HTTP/SQLite/WebSocket/Chromium/OBS 시험 장면이며 **실계정/시청자 실제 노출·물리 투컴 HUD 제외의 증거가 아니다**. 기존 D1/D2/D4/D6/D7, 유료 광고·HP/정산 및 배포 검증은 미완료.
 
 ## 직전 완료 흐름: 브라우저 뒤로가기·오래된 탭과 실제 송출 승인 철회 구분
 

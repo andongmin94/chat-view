@@ -394,6 +394,15 @@ def run() -> None:
                     expect(gamer.locator('[data-approved-count]')).to_have_attribute("data-approved-count", "0")
                     expect(sender.locator('[data-online-count]')).to_have_attribute("data-online-count", "1")
                     assert f.command("game-role-released")["ok"]
+                    # This long-lived parent fixture is shared with the next
+                    # independent scenario, which begins with a selected sender
+                    # but NO recent report. Expire ONLY the synthetic report
+                    # clock after asserting the restored live banner above;
+                    # never stop/reselect the campaign or alter native grants.
+                    assert f.command("expire-output-report")["ok"]
+                    flow.page.reload()
+                    expect(ad).to_have_attribute("data-account-ad-state", "waiting-report")
+                    expect(ad).to_have_attribute("data-account-ad-selected", "true")
                     assert f.command("check")["ok"]
                     results.append("sender websocket outage during game reapproval hides public banner; same sender approval and fresh report restore original URL without reselecting")
                 finally:

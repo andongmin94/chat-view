@@ -59,7 +59,8 @@ test('owner revokes and reapproves only gaming chat; sender and its selected pub
     const publicState = async () => (await f.request('/public/ads/' + source + '/state')).json();
     assert.equal((await publicState() as { state: string }).state, 'visible');
     const selected = f.store.database.prepare('SELECT connection_id FROM ad_selections WHERE source_id = ?').get(source);
-    assert.deepEqual(selected, { connection_id: sender.lease.membership.connectionId });
+    assert.equal(selected?.connection_id, sender.lease.membership.connectionId,
+      'the chosen banner remains tied to the exact original streaming-role grant');
     const beforeConnections = f.store.connections('alice');
     const beforeOutput = f.creators.describe('alice').output;
     const baselineStarts = f.startedWith.length, baselineRefresh = f.refreshCalls;

@@ -4,7 +4,15 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: D1 WebView2 호스트 부트스트랩과 첫 텍스트 준비 경계 단순화
+## 현재 흐름: D1 첫 채팅 글자 표시를 정확한 소유 문서 nonce에 직접 연결
+
+시작 원격 `OBS` HEAD `f9baeaf4da70e1712f01f3e67f75b9715e7eca16`, Windows development #437/run `38874011246` **49/49 routine 네이티브 성공**(초기 호스트 부트스트랩 한 번 등록 + 첫 WebView2 문서/오버레이/채팅)과 기존 CHZZK #97의 독립 Chromium `collection-recollect` 합성 fixture 실패를 확인했다. AGENTS → PRODUCT → development-workflow → architecture → 이 계획 순서로 검토. 게임 PC에 OBS 없이 쓰는 기존 companion 및 main 원본을 유지하고 OBS만 작업한다.
+
+- **좁은 동작 수정:** 기존 `NativeChatSurface`는 정확한 로컬 문서 URL에서 `NavigationStarting`을 관찰하고 `chat-ready:<nonce>`를 받았어도 별도의 `DOMContentLoaded` 또는 `NavigationCompleted` callback을 기다려야 `ready()`가 true였다. 모듈 코드는 **자체 `#status/#messages` DOM 생성 후에만** nonce 준비 신호를 보낸다. 이제 활성 네이티브 WebView2·일치하는 문서 소유자/탐색 ID·**현재 실제 `get_Source` URL**·문서의 nonce `chat-ready`를 모두 확인한 즉시 첫 메시지 전송을 허용한다. DOMContentLoaded 구독과 `ICoreWebView2_2` 의존을 제거하고 별도의 loaded 플래그를 없애 표시 준비 경로를 단순화한다.
+- **실패 보호 유지:** `NavigationCompleted` callback은 성공 대기를 위한 경로가 아니지만 **실패 확인 시 즉시 기존 문서/프레임을 무효화**한다. 예전 URL/다른 페이지/취소된 탐색/프로세스 실패/만료된 nonce/불일치 source는 여전히 게시 불가. 새로운 네트워크·타이머·자동 승인·재로그인·대체 브라우저·OBS scene/캡처·테스트 한도 완화는 하지 않는다. renderer ACK는 여전히 한 개 이상의 실제 DOM 텍스트 행을 확인해야 첫 글자 성공으로 표시한다.
+- **실제 검증:** `tests/native-chat-surface-test.cpp`에서 실제 WebView2의 **첫 `NavigationCompleted` 수신 콜백을 의도적으로 해제**한 뒤 (더 이상 DOMContentLoaded 의존도 없음), 정확한 source/nonce handshake로 첫 Unicode DOM 글자·렌더 ACK를 검증한다. 기존 setup↔채팅 문서 전환·취소된 외부 탐색·invalid frame·reopen/closed host 경계도 유지한다. 변경된 네이티브 코드의 Windows development 실제 컴파일·CTest 결과를 **해당 SHA**로 이 문서에 기록한다. 이 성공은 D1 간헐 전체 해결, 실제 치지직 메시지/장시간 사용, 물리 투컴 HUD 제외나 실제 광고 노출 증거가 아니다.
+
+## 직전 완료 흐름: D1 WebView2 호스트 부트스트랩과 첫 텍스트 준비 경계 단순화
 
 시작 원격 OBS HEAD `7bae2ae34061a4aeb56d7f76a2da3052f36dbef5`, Windows #436/run `38871299139`의 실제 네이티브 routine **49/49 성공**(첫 DOMContentLoaded+nonce 경로 포함), 이전 CHZZK #97의 synthetic Chromium `collection-recollect` 실패를 확인했다. AGENTS → PRODUCT → development-workflow → architecture → 이 개발 계획 순으로 읽고 OBS만 수정한다.
 
@@ -158,6 +166,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-호스트 **초기화 완료**와 자체 채팅 **첫 DOM 글자 표시**가 분리된 상태에서 Windows native routine의 실제 성공/실패 단계를 확인한 뒤, D1에서 남은 첫 화면 미표시가 **WebView2 환경/컨트롤러 준비**인지, **문서 탐색·nonce**인지, **렌더 프레임 ACK**인지에 맞춰 한 경계만 추가 개선한다. 완료된 네이티브 로컬 검증과 별도로 G4 실계정 치지직의 승인·채팅 구독·장시간 수신 및 G3 게임 PC OBS 없는 물리 투컴 영상 제외 검증은 남는다. D2/D4/D6/D7·실제 광고 주의/유료·HP·정산·배포 qualification 미완료를 유지한다.
+첫 텍스트를 현재 WebView2 문서의 실제 source/nonce handshake로 전달하는 경로의 Windows 네이티브 검증 뒤, **실제 companion의 브라우저 승인 → 첫 구독 프레임 → 첫 텍스트 표시**에서 아직 실패하는 단계가 있는지 확인해 남은 D1을 고친다. 로컬 채팅 renderer 완료와 별개로 **실계정 치지직 인증·구독·장시간 수신(G4-06)**, 게임 PC에 OBS 없는 실제 투컴 HUD 없는 영상(G3) 검증을 우선한다. D2/D4/D6/D7, 광고 실노출·유료/HP·정산 및 배포 qualification은 남는다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

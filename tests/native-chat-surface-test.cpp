@@ -126,12 +126,12 @@ int main()
         expect(host.initialize(window), "initialize production host");
         await([&] { return host.ready(); }, "WebView2 startup");
         expect(surface.open(host), "open embedded own chat");
-        // Reproduce a missing completion callback on the REAL WebView2.
-        // The current owned DOM and nonce handshake must still render first
-        // text; neither an unowned page nor a navigation error gets authority.
+        // Reproduce missing navigation-completion notifications on REAL WebView2,
+        // with no DOMContentLoaded dependency. Only the owned document's
+        // exact source, navigation ID and nonce message establish readiness.
         expect(chatview::NativeChatSurfaceTestAccess::omit_completed_for_current_document(surface),
             "omit first native NavigationCompleted notification");
-        await([&] { return surface.ready(); }, "own DOMContentLoaded and nonce handshake");
+        await([&] { return surface.ready(); }, "owned document nonce handshake without load events");
         ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(surface);
         const std::wstring first_url = source(core.Get());
         expect(first_url.starts_with(L"https://chatview.invalid/"), "host-owned memory document");

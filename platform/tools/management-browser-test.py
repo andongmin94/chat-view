@@ -742,6 +742,99 @@ def run() -> None:
                 finally:
                     flow.close()
 
+                # The user's separate gaming companion remains connected
+                # while the exact streaming-role approval is revoked. The same
+                # public OBS source survives the removal, but its selection FK
+                # does not. Only a new explicitly consented sender plus a
+                # separate campaign selection may render it again.
+                flow = Flow(browser, f, 390)
+                try:
+                    flow.identity("/account")
+                    flow.confirm("/account")
+                    gamer = flow.page.locator('[data-pc-role="gaming"]')
+                    sender = flow.page.locator('[data-pc-role="streaming"]')
+                    ad = flow.page.locator("#account-public-banner")
+                    campaign = flow.context.new_page()
+                    campaign.goto(f.origin + "/campaigns")
+                    original_url = campaign.locator("#source-url").input_value()
+                    public = flow.context.new_page()
+                    public.goto(original_url)
+                    banner = public.locator("#banner")
+
+                    game = f.command("sender-reapprove-prepare")
+                    flow.page.goto(f.origin + game["path"])
+                    expect(flow.page.locator('[data-login-request="pending"]')).to_have_count(1)
+                    expect(flow.page.locator("[data-login-code]")).to_have_text(game["code"])
+                    expect(flow.page.locator("body")).to_contain_text("게임 PC · 개인 HUD")
+                    flow.page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True).click()
+                    expect(flow.page.locator('[data-login-collection="awaiting-app"]')).to_have_count(1)
+                    active_game = f.command("sender-reapprove-game-collected")
+                    assert active_game["gameConnectionId"] != game["senderConnectionId"]
+                    flow.page.goto(f.origin + "/account")
+                    expect(gamer.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "1")
+                    expect(gamer.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    expect(sender.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "1")
+                    expect(sender.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    expect(ad).to_have_attribute("data-account-ad-state", "report-ready")
+                    expect(banner).to_be_visible()
+
+                    flow.page.locator(
+                        f'form[action="/connections/{game["senderConnectionId"]}/revoke"] button').click()
+                    expect(flow.page).to_have_url(f.origin + "/account")
+                    expect(gamer.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "1")
+                    expect(gamer.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    expect(sender.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "0")
+                    expect(sender.locator("[data-online-count]")).to_have_attribute("data-online-count", "0")
+                    expect(ad).to_have_attribute("data-account-ad-state", "not-selected")
+                    expect(ad).to_have_attribute("data-account-ad-selected", "false")
+                    expect(flow.page.locator('[data-sender-reapproval="required"]')).to_contain_text(
+                        "게임 PC 채팅 승인은 그대로 유지됩니다")
+                    expect(banner).to_be_hidden()
+                    assert f.command("sender-reapprove-revoked")["ok"]
+                    flow.page.get_by_role("link", name="송출 승인·광고 재선택 순서 확인", exact=True).click()
+                    expect(flow.page).to_have_url(f.origin + "/campaigns#campaign-selection-title")
+                    expect(flow.page.locator('[data-campaign-selection-state="streaming-required"]')).to_have_count(1)
+                    expect(flow.page.locator('[data-banner-manual-reselect="sender-required"]')).to_have_count(1)
+                    assert campaign.locator("#source-url").input_value() == original_url
+
+                    sender_request = f.command("sender-reapprove-request")
+                    flow.page.goto(f.origin + sender_request["path"])
+                    expect(flow.page.locator('[data-login-request="pending"]')).to_have_count(1)
+                    expect(flow.page.locator("[data-login-code]")).to_have_text(sender_request["code"])
+                    expect(flow.page.locator("body")).to_contain_text("송출 PC · OBS 역할")
+                    flow.page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True).click()
+                    expect(flow.page.locator('[data-login-collection="awaiting-app"]')).to_have_count(1)
+                    renewed_sender = f.command("sender-reapprove-collected")
+                    assert renewed_sender["senderConnectionId"] != game["senderConnectionId"]
+                    flow.page.goto(f.origin + "/account")
+                    expect(gamer.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "1")
+                    expect(gamer.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    expect(sender.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "1")
+                    expect(sender.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    expect(ad).to_have_attribute("data-account-ad-state", "not-selected")
+                    expect(ad).to_have_attribute("data-account-ad-selected", "false")
+                    assert f.command("sender-reapprove-report")["ok"]
+                    campaign.reload()
+                    expect(campaign.locator('[data-banner-manual-reselect="ready"]')).to_have_count(1)
+                    expect(campaign.locator('[data-public-banner-state="not-selected"]')).to_have_count(1)
+                    expect(banner).to_be_hidden()
+                    assert campaign.locator("#source-url").input_value() == original_url
+                    campaign.get_by_role("button", name="이 시험 캠페인 선택", exact=True).click()
+                    expect(campaign.locator('[data-public-banner-state="report-ready"]')).to_have_count(1)
+                    expect(banner).to_be_visible()
+                    assert campaign.locator("#source-url").input_value() == original_url
+                    assert public.url == original_url
+                    assert f.command("sender-reapprove-confirmed")["ok"]
+                    flow.page.goto(f.origin + "/account")
+                    expect(gamer.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    expect(sender.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    expect(ad).to_have_attribute("data-account-ad-state", "report-ready")
+                    expect(flow.page.locator('[data-sender-reapproval="required"]')).to_have_count(0)
+                    flow.image("sender-reapproved-game-preserved-manual-banner-mobile")
+                    results.append("owner revokes only sender, preserves gaming chat, consents to fresh sender role and explicitly reselects unchanged public URL")
+                finally:
+                    flow.close()
+
                 metadata = f.command("metadata")["metadata"]
                 returns = [r for r in metadata if r["path"] in ("/callback", "/account/confirm", "/login/:id")
                            and r["site"] == "cross-site"]

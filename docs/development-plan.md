@@ -4,21 +4,22 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 게임 재승인 중 송출 소켓 단절 → 시험 배너 투명 대기 → 원래 송출 승인으로 명시적 복귀
+## 현재 흐름: 송출 PC 승인 직접 철회 → 게임 PC 채팅 유지 → 새 송출 승인 후 기존 시험 배너 직접 재선택
 
-시작 OBS HEAD `fec97b73c72cd8eda60d2b739e9ca0fbc4d79ac1`. AGENTS → PRODUCT → development-workflow → architecture → 이 문서를 순서대로 읽었다. 직전 `21514f3bfcfdabb0069456d14ebefaca43d8e8c8` CHZZK contract #79/run `38836241099`은 **328/328 + Chromium19/19**를 포함한 5개 job 성공, 공식 OBS #24는 이전 기능 SHA에서 합성 PNG13/13 성공, Windows development #416은 **네이티브 x64 skipped**다. 새 변경의 성공 근거로 재사용하지 않는다.
+시작 OBS HEAD `705f76d6ad37c2f8ad47e7fbea58604317f0e456`에서 AGENTS → PRODUCT → development-workflow → architecture → development-plan 순서로 확인했다. 직전 `a056a596ac0f22c0ee6d0c35446baa36532bb57a`/CHZZK contract **#81/run `38838932680`의 Node 330/330·Chromium20/20 성공**, 공식 OBS 공개 합성 #25의 13/13은 **직전 기능 SHA `f3022b65`**에서 실행됐다. Windows native #418은 scope만 성공, x64 빌드는 skipped. 이들 이전 결과를 새 SHA의 통과로 계산하지 않는다.
 
-### 구현
+### 사용자 흐름과 보존하는 경계
 
-- 브라우저 `/account`의 기존 **PC 역할별 승인·열린 소켓·송출 출력 보고 및 공개 배너 상태**를 이어서 사용한다. `streaming-disconnected`에서는 송출 역할 승인과 선택된 시험 광고가 여전히 유효하지만 **열린 송출 WebSocket이 없어 공개 소스가 투명 대기**임을 명확히 안내한다. 송출 PC 연결창의 **현재 승인으로 자체 채팅 복귀**는 사용자가 직접 선택하며, **새로운 유효 출력 보고 이후에만** 같은 공개 URL의 시험 배너가 복원된다. `waiting-report`에서는 송출 소켓이 돌아왔어도 출력 보고가 없으면 광고 재선택·브라우저 새로고침이 해결책이 아니며 공개 소스가 투명 대기임을 안내한다. `report-ready`는 실제 방송/시청자 노출·지급 증거가 아닌 기존 server TEST predicate다.
-- 반대로 송출 PC 역할 승인이 **실제로 철회되어 사라진 경우** `not-selected` 안내에 **새 송출 역할 승인을 받고 캠페인을 직접 재선택**해야 한다고 표시한다. 기존 공개 소스 URL은 그대로지만 streaming approval의 FK 결합이 끊긴 광고 선택은 자동 복구하지 않는다. 게임 PC 역할·업스트림 채팅·WGC/OBS 설정은 독립적이다. 클라이언트 역할/출력/계정·DB schema/새 API를 변경하지 않는다.
-- 새 HTTP/SQLite/ws `platform/tests/streaming-return-during-game-reapproval.test.mts`은 동시 단계 전부를 한 번의 실제 서비스로 통과시킨다. 같은 owner의 원래 송출 승인·게임 승인을 두 실제 WebSocket으로 시작해 송출 시험 배너 선택 + **유효 출력 보고**로 공개 TEST state를 `visible`로 만든다. 게임 승인만 개별 철회하고 새 게임 요청 대기 중 **송출 WebSocket만 종료**, 계정에 게임0·송출 승인1/연결0·`streaming-disconnected`, 공개 JSON `HIDDEN_AD`, 이전 출력 보고 인증 실패를 확인한다.
-- 송출이 끊긴 채 사용자가 게임 PC를 새 역할 승인하면 게임의 새 서버 연결 ID/채팅 소켓에서 실제 제공자 메시지가 이어지지만 공개 배너는 여전히 hidden이다. 송출 PC는 새 로그인/타 owner/광고 수동 선택 없이 **기존 `ChatView-Session` 승인으로 명시적 `/display/refresh`**하여 같은 streaming 역할·connection ID의 새 단기 lease/WebSocket을 얻는다. 복귀 직후는 새 유효 보고가 없으므로 `waiting-report`/hidden, 기존 sender의 fresh `broadcast/output` 이후에만 `report-ready`/visible로 복구한다. URL·선택 streaming FK·같은 creator upstream·다른 owner grant·게임 새 WebSocket을 보존한다.
-- 별도 실 HTTP 회귀는 **진짜 송출 승인 철회**(단순 소켓 단절 아님) → FK 연쇄 삭제 및 기존 공개 URL hidden → 같은 계정의 새 송출 승인·새 출력 보고만으로도 **광고는 미선택/hidden** → 사용자가 기존 브라우저 CSRF로 캠페인을 **직접 재선택한 뒤에만 visible**을 확인하며 게임 채팅은 계속 수신한다.
-- Chromium 390px `platform/tools/management-browser-fixture.mts`·`management-browser-test.py`에도 기존 선택된 송출 광고→게임 PC 개별 철회/새 대기→송출 소켓 종료→게임 새 동의·수집/게임 메시지 수신→같은 송출 승인 명시적 복귀→**보고 대기**→새 보고로 동일 공개 URL 배너 표시 복원→게임 개별 해제를 연결한다. 원래 브라우저 CSRF 폼·쿠키·고정 게임 역할, 출력/선택의 읽기 전용 확인, 다른 계정 격리, server report gate는 그대로 유지한다.
-- **기능 코드 `f3022b659e14227cefda654d3380249bdc094a92` 실제 CI:** CHZZK contract **#80/run `38838352061` 전체 실패**(Ubuntu/Windows × Node22/24는 모두 성공, Ubuntu24 **330/330·fail/skip0**; Chromium은 신규/기존 공유 테스트 fixture의 출력 보고 초기 상태 때문에 실패). 공식 OBS public ad flow **#25/run `38838352164` 성공, OBS32.2.2 배너 합성 픽셀 **13/13 통과**. Windows development **#417/run `38838352178` native scope 성공·Windows x64 skipped**(service/browser 전용 변경). 실제 Chromium 390px은 새 동시 게임 재승인 중 송출 단절 → 기존 sender 원 승인 복귀 → **새 report 후 기존 배너 visible**와 스크린샷 `same-sender-ad-restored-mobile.png`까지 성공했다. 그 후 유지된 **송출 출력 보고가 다음 기존 시나리오의 전제(선택됨/보고 없음)를 깨뜨려** `#banner` hidden assertion에서 실패했다. 새 사용자 동선 종료 시 테스트 전용 `expire-output-report`로 **output fake clock만 15,000ms 경과**시켜 다음 독립 시나리오의 보고 대기 초기 상태를 복원한다. 이는 서버 유효 보고 수명/광고 로직/재선택/연결 권한/timeout을 변경하지 않는다.
-- **최종 코드 `a056a596ac0f22c0ee6d0c35446baa36532bb57a` 실제 검증:** CHZZK contract **#81/run `38838932680`: completed/success, Chromium을 포함한 5개 job 모두 성공**. Ubuntu/Windows × Node22·24에서 서비스/실제 ws·렌더·엄격 TypeScript·audit/lock 검사가 통과했고 Ubuntu24 Node **330/330·fail/skip0**, 의존성 audit0, Chromium 실제 관리 브라우저 **20/20**(390px 동시 게임 재승인→송출 WebSocket 단절·배너 숨김→게임 메시지 유지→동일 송출 승인 재연결 후 보고 대기→새 보고 뒤 원래 공개 URL 배너 재등장, fixture 상태 복원) 통과. Windows development **#418/run `38838932679`은 scope job 성공, 네이티브 Windows x64 skipped**. 별도 공식 OBS32.2.2 공개 배너 합성 #25 **13/13**은 이전 **기능 코드 `f3022b65`**에서 통과했고, 테스트 fixture 정리 커밋에는 실행되지 않았다.
-- synthetic CHZZK·실제 HTTP/SQLite/ws와 공식 OBS 합성 픽셀은 물리 두 PC·실제 HUD 없는 수신 영상·실계정 채팅·시청 실측·유료 광고·HP/수익·설치 검증이 아니다. D1/D2/D4/D6/D7 및 장시간/자원/배포 qualification은 미완료. 이전 #80 Chromium 실패는 공유 fixture의 남은 가짜 출력 보고 초기 상태였으며, 유효성·보호·rate limiting·CSRF·광고 노출 판정·WGC 조건 및 CI 한도는 완화하지 않고 #81에서 해소했다.
+- 동일 creator의 게임 PC companion이 **실제 열린 채팅 WebSocket을 유지하는 상태**에서, 소유자가 관리 브라우저의 기존 송출 PC 연결만 CSRF 보호된 `이 연결 해제`로 명시적으로 철회한다. 서버는 원래 송출 `connection_id`의 광고 선택 FK를 연쇄 삭제하고 오래된 단기 영상/출력 보고는 무효화한다. 게임 PC 역할·소켓·치지직 upstream·다른 creator 승인과 OBS 없는 게임 PC 영상 제어는 변경하지 않는다.
+- `/account` 관리 화면은 게임 PC 승인/열린 채팅과 송출 PC 0/0 상태를 구분한다. **게임 PC가 연결되어 있고 송출 승인이 0건일 때만** `data-sender-reapproval="required"` 안내와 `/campaigns#campaign-selection-title` 링크를 표시해, **송출 PC에서 원래 역할 새 승인 → 기존 공개 시험 캠페인 직접 재선택** 순서를 설명한다. 기존 광고 선택이 사라졌을 때 실제 공개 URL 자체가 사라졌다고 표현하지 않는다. 읽기 GET은 승인을/광고를 자동 재개하지 않는다.
+- `/campaigns`는 기존 `sourceId`가 있지만 광고 선택이 없는 때 `data-banner-manual-reselect="sender-required" | "ready"`로 상황을 구분한다. 송출 승인이 0이면 새 송출 역할 동의만 안내하고, 새 송출 승인이 생기면 **기존 광고가 아직 미선택**임을 표시한다. 동일 owner의 새 송출 승인·새 WebSocket·신선한 `broadcast:report`만으로는 광고를 표시하지 않는다. **브라우저에서 캠페인을 새로 직접 선택**한 뒤에만 기존 URL의 공개 시험 배너가 나타난다. 이는 서버 공개 TEST 판정이며 OBS 시청자 노출/HP/지급이 아니다.
+- 기존 서버 `SessionStore`·`Campaigns`·`DisplayGateway`의 역할/카드 광고 FK, `connection_id`, refresh, WebSocket 및 CSRF 권한을 재사용한다. 새 API/DB schema/플랫폼 의존성·재로그인 자동화·게임 PC OBS·송출 장면 자동 변경을 도입하지 않는다.
+- 기존 HTTP/SQLite/ws `platform/tests/streaming-return-during-game-reapproval.test.mts`의 **실제 송출 승인 철회/재승인** 검사를 확장한다. 동작 전후 1 게임/0 송출 → 1 게임/1 송출, 읽기 전용 상태 및 `sender-required`→`ready` 안내, 기존 URL·선택 FK 삭제/재선택, 게임 소켓 유지/메시지 수신, 새 역할만 출력 권한 취득을 확인한다.
+- Chromium 390px `management-browser-fixture.mts` + `management-browser-test.py`에 별도 **게임 연결 유지 상태의 송출 승인 직접 철회/재승인/광고 수동 재선택** 동선을 추가한다. 브라우저가 소유자 권한·고정 role·6자리 확인 번호를 실제 확인/동의하고, fixture stdio는 앱 native 요청 시작·승인 수집·송출 보고만 맡는다. 원래 Alice 게임 소켓은 송출 철회 중 계속 합성 제공자 메시지를 수신한다. 공개 소스는 old sender revoke 직후 hidden, 새 sender consent/보고 직후에도 hidden, 기존 URL의 캠페인 수동 선택 후에만 visible. 다른 owner Bob 및 기존 제공자 upstream/쿠키·CSRF/광고 선택의 비결정적 자동 복원은 차단한다.
+
+### 실제 검증·미완료
+
+- 변경 커밋의 **CHZZK contract 전체 Node/Chromium 및 변경 범위·공식 OBS 흐름 결과는 실행 뒤 SHA에 맞춰 기록한다.** 네이티브/OBS/WGC/브라우저 관련 간헐 오류 D1/D2/D4/D6/D7, 실계정 치지직, 물리 두 PC HUD 제외 영상, 실제 관중 광고 노출·HP·지급·설치/반복 자원 qualification은 여전히 미완료다. 합성 report/서버 `visible`을 지급 또는 실방송 입증으로 취급하지 않는다. 타임아웃·보안 판정·제3자 권한은 완화하지 않는다.
 
 ## G1. 한 화면의 작업과 개인 채팅
 
@@ -82,6 +83,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-이번 **송출 소켓만 단절/같은 승인 복귀 + 게임 채팅 계속 수신 + 광고 hidden → fresh report → 동일 URL visible**를 실제 Node/Chromium CI로 검증한 뒤, **송출 역할을 사용자가 명시적으로 철회/새로 승인했을 때 게임 PC의 채팅을 계속 보존하면서 관리 브라우저의 기존 공개 URL에 직접 캠페인을 재선택하는 흐름**을 클릭 단위로 연결한다. 유효 송출 보고와 서버 공개 응답만으로 실제 시청자 노출/HP/지급을 추정하지 않는다. D1/D2/D4/D6/D7 반복 불안정, 실제 치지직 계정, 물리 투컴 HUD 없는 수신 영상, 설치·자원·배포 qualification은 미완료다.
+이번 **게임 PC 채팅 유지 + 송출 승인만 명시적 철회/새 역할 동의 + 새 보고로는 광고 미복구 + 브라우저 수동 캠페인 선택 후 동일 URL 복귀**를 실제 Node·Chromium 및 공식 OBS 테스트 결과로 확정한다. 그 다음에는 **송출 PC 승인 재발급과 캠페인 재선택 사이에 다른 관리 브라우저가 계정을 바꾸거나 광고를 중지한 경우**, 기존 광고 선택을 무단 재실행하지 않고 현재 소유자/요청의 확인을 다시 요구하는 사용자 동선으로 간다. 실계정/물리 수신 HUD 제외, 간헐 WebView2·OBS 결함, 시청/HP/보상/배포 검증은 별도 미완료다.
 
-main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 금지한다.
+main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

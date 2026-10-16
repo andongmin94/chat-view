@@ -175,6 +175,16 @@ test('actual sender approval revocation deletes campaign selection, so a newly a
     ad(html, 'not-selected', false);
     assert.match(html, /송출 PC 역할 승인이 없습니다/u);
     assert.match(html, /직접 다시 선택하세요/u);
+    assert.match(html, /data-sender-reapproval="required"/u);
+    assert.match(html, /게임 PC 채팅 승인은 그대로 유지됩니다/u);
+    assert.match(html, /href="\/campaigns#campaign-selection-title"/u);
+    const beforeRead = f.store.database.prepare('SELECT total_changes() AS n').get()!.n;
+    const waiting = await f.page('/campaigns', sender.b);
+    assert.match(waiting, /data-campaign-selection-state="streaming-required"/u);
+    assert.match(waiting, /data-banner-manual-reselect="sender-required"/u);
+    assert.equal(sourceId(waiting), source);
+    assert.equal(f.store.database.prepare('SELECT total_changes() AS n').get()!.n, beforeRead,
+      'recovery guidance is read-only and cannot choose or revive a campaign');
     assert.deepEqual(await state(), HIDDEN_AD);
     assert.equal((await f.native('/display/refresh', 'ChatView-Session',
       sender.lease.sessionToken, 'streaming')).status, 401,
@@ -187,6 +197,11 @@ test('actual sender approval revocation deletes campaign selection, so a newly a
     html = await f.page('/account', sender.b);
     role(html, 'gaming', 1, 1); role(html, 'streaming', 1, 1);
     ad(html, 'not-selected', false);
+    assert.doesNotMatch(html, /data-sender-reapproval="required"/u,
+      'the fresh sender role is already approved but its advertisement remains unselected');
+    const selectable = await f.page('/campaigns', sender.b);
+    assert.match(selectable, /data-campaign-selection-state="ready"/u);
+    assert.match(selectable, /data-banner-manual-reselect="ready"/u);
     assert.deepEqual(await state(), HIDDEN_AD,
       'new streaming role and fresh output report cannot restore revoked campaign selection');
     assert.equal(sourceId(await f.page('/campaigns', sender.b)), source,

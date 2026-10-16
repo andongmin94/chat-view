@@ -108,7 +108,7 @@ ${selectionState !== 'ready' ? `<ol>
 <li>아래 링크로 준비 상태를 다시 확인한 뒤 시험 캠페인을 직접 선택하세요.</li>
 </ol>` : '<p>아래에서 캠페인을 직접 선택하세요. 송출 역할 승인은 현재 열린 채팅 연결이나 최신 출력 보고, 실제 OBS 배너 표시를 뜻하지 않습니다.</p>'}
 <p><a href="/campaigns">선택 준비 상태 다시 확인</a> · <a href="/account">이 계정의 PC 역할 확인</a></p>
-${source && !status.selected ? '<p>기존 공개 URL은 그대로 사용할 수 있습니다. 송출 역할을 다시 승인해도 광고는 자동 선택되지 않습니다. 준비 상태 확인 후 캠페인을 다시 선택하세요.</p>' : ''}
+${source && !status.selected ? `<p data-banner-manual-reselect="${selectionState === 'ready' ? 'ready' : 'sender-required'}">기존 공개 URL은 그대로 사용할 수 있습니다. 송출 역할을 다시 승인해도 광고는 자동 선택되지 않습니다. 준비 상태 확인 후 캠페인을 다시 선택하세요.</p>` : ''}
 </section>
 <section><h2>${escape(TEST_CAMPAIGN.brand)} · ${escape(TEST_CAMPAIGN.title)}</h2>
 <p>${escape(TEST_CAMPAIGN.description)}</p><p>권장 브라우저 소스 크기: <strong>960 × 180</strong></p>

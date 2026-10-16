@@ -66,6 +66,9 @@ try {
     lease?: typeof bob.lease; gamePeer?: WebSocket } | undefined;
   let collection: { requests: Started[]; gamer: WebSocket; loser?: Started;
     lease?: typeof alice.lease; sender?: WebSocket; lastPollAt: number; sequence: number; before: string } | undefined;
+  let senderReapproval: { original: typeof alice.lease; gamingRequest: Started;
+    game?: typeof bob.lease; gamePeer?: WebSocket; newRequest?: Started;
+    sender?: typeof alice.lease; senderPeer?: WebSocket } | undefined;
   const unaffected = () => JSON.stringify({ alice: f.store.connections('alice'), selection: selection(),
     aliceGrant: f.grants.load('alice'), bobGrant: f.grants.load('bob'), starts: f.startedWith.length });
   const openCollectionPeer = async (token: string) => {
@@ -423,6 +426,104 @@ try {
         assert(received);
       } finally { controller.abort(); }
       reply({ ok: true }); continue;
+    }
+    // Final browser flow: explicitly revoke Alice's streaming approval, keep
+    // her gaming chat connected, reapprove streaming using the browser form
+    // and manually reselect the same public OBS URL. Parent commands represent
+    // only the two native request/collect operations and a fresh report.
+    if (command.op === 'sender-reapprove-prepare') {
+      assert(replacement && peer?.readyState === WebSocket.OPEN && !senderReapproval);
+      assert.equal(selection()?.connection_id, replacement.membership.connectionId);
+      senderReapproval = { original: replacement, gamingRequest: await f.start('gaming') };
+      outputNow += 500;
+      const response = await f.request('/broadcast/output', { method: 'POST', headers: {
+        Authorization: `ChatView-Output ${outputToken}`, 'Content-Type': 'application/json',
+      }, body: JSON.stringify({ sequence: ++reportSequence, streaming: false, recording: false, sampleAgeMs: 0 }) });
+      assert.equal(response.status, 200);
+      assert.equal((await (await f.request(`/public/ads/${sourceId}/state`)).json() as {state:string}).state, 'visible');
+      reply({ path: senderReapproval.gamingRequest.verificationPath,
+        code: senderReapproval.gamingRequest.id.slice(-6).toUpperCase(),
+        senderConnectionId: replacement.membership.connectionId }); continue;
+    }
+    if (command.op === 'sender-reapprove-game-collected') {
+      assert(senderReapproval && !senderReapproval.game);
+      const request = senderReapproval.gamingRequest;
+      const response = await f.native(`/display/login/${request.id}`, 'ChatView-Login', request.verifier);
+      assert.equal(response.status, 200);
+      const result = await response.json() as {status:string;lease:typeof bob.lease};
+      assert.equal(result.status, 'approved'); senderReapproval.game = result.lease;
+      assert.equal(result.lease.membership.role, 'gaming');
+      senderReapproval.gamePeer = await openCollectionPeer(result.lease.token);
+      reply({ gameConnectionId: result.lease.membership.connectionId }); continue;
+    }
+    if (command.op === 'sender-reapprove-revoked') {
+      assert(senderReapproval?.game && senderReapproval.gamePeer?.readyState === WebSocket.OPEN);
+      assert(f.store.find(senderReapproval.original.sessionToken) === undefined);
+      assert(peer);
+      if (peer.readyState !== WebSocket.CLOSED)
+        await once(peer, 'close', { signal: AbortSignal.timeout(3000) });
+      assert.equal(f.creators.describe('alice').presence.gamingConnections, 1);
+      assert.equal(f.creators.describe('alice').presence.streamingConnections, 0);
+      assert.equal(selection(), undefined);
+      assert.equal((await (await f.request(`/public/ads/${sourceId}/state`)).json() as {state:string}).state, 'hidden');
+      assert(f.store.find(bob.lease.sessionToken), 'other creator gaming authority remains intact');
+      const marker = 'alice-game-chat-after-sender-revoked';
+      const message = once(senderReapproval.gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
+      f.chats.get('alice')!.publish(marker);
+      assert(String((await message)[0]).includes(marker));
+      reply({ok:true}); continue;
+    }
+    if (command.op === 'sender-reapprove-request') {
+      assert(senderReapproval?.game && !senderReapproval.newRequest);
+      senderReapproval.newRequest = await f.start('streaming');
+      assert.equal(f.app.login.view(senderReapproval.newRequest.id).role, 'streaming');
+      reply({ path: senderReapproval.newRequest.verificationPath,
+        code: senderReapproval.newRequest.id.slice(-6).toUpperCase() }); continue;
+    }
+    if (command.op === 'sender-reapprove-collected') {
+      assert(senderReapproval?.newRequest && !senderReapproval.sender);
+      const req = senderReapproval.newRequest;
+      const response = await f.native(`/display/login/${req.id}`, 'ChatView-Login', req.verifier);
+      assert.equal(response.status, 200);
+      const result = await response.json() as {status:string;lease:typeof alice.lease};
+      assert.equal(result.status, 'approved'); senderReapproval.sender = result.lease;
+      assert.equal(result.lease.membership.role, 'streaming');
+      assert.notEqual(result.lease.membership.connectionId, senderReapproval.original.membership.connectionId);
+      assert.equal(result.lease.membership.broadcastSessionId, senderReapproval.game.membership.broadcastSessionId);
+      assert.equal(selection(), undefined, 'fresh role approval cannot reselect an expired FK');
+      senderReapproval.senderPeer = await openCollectionPeer(result.lease.token);
+      reply({ senderConnectionId: result.lease.membership.connectionId }); continue;
+    }
+    if (command.op === 'sender-reapprove-report') {
+      assert(senderReapproval?.sender?.outputToken && senderReapproval.senderPeer?.readyState === WebSocket.OPEN);
+      outputNow += 500;
+      const response = await f.request('/broadcast/output', { method: 'POST', headers: {
+        Authorization: `ChatView-Output ${senderReapproval.sender.outputToken}`,
+        'Content-Type': 'application/json',
+      }, body: JSON.stringify({ sequence: 1, streaming: false, recording: false, sampleAgeMs: 0 }) });
+      assert.equal(response.status, 200);
+      assert.equal(selection(), undefined, 'new output report is not consent to the old campaign');
+      assert.equal((await (await f.request(`/public/ads/${sourceId}/state`)).json() as {state:string}).state, 'hidden');
+      reply({ok:true}); continue;
+    }
+    if (command.op === 'sender-reapprove-confirmed') {
+      assert(senderReapproval?.game && senderReapproval.gamePeer?.readyState === WebSocket.OPEN);
+      assert(senderReapproval.sender && senderReapproval.senderPeer?.readyState === WebSocket.OPEN);
+      assert.equal(selection()?.connection_id, senderReapproval.sender.membership.connectionId);
+      assert.equal(f.store.find(senderReapproval.game.sessionToken)?.owner, 'alice');
+      assert.equal(f.creators.describe('alice').presence.gamingConnections, 1);
+      assert.equal(f.creators.describe('alice').presence.streamingConnections, 1);
+      assert.equal((await (await f.request(`/public/ads/${sourceId}/state`)).json() as {state:string}).state, 'visible');
+      assert.equal(f.startedWith.filter(token => !token.includes(':charlie:')).length, starts,
+        'role-only replacement cannot rotate creator/provider upstream');
+      assert.equal(f.refreshCalls, 0);
+      assert(f.store.find(bob.lease.sessionToken));
+      const gameReceived = once(senderReapproval.gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
+      const senderReceived = once(senderReapproval.senderPeer, 'message', { signal: AbortSignal.timeout(3000) });
+      const marker = 'alice-gaming-preserved-on-sender-reapproval';
+      f.chats.get('alice')!.publish(marker);
+      assert(String((await gameReceived)[0]).includes(marker) && String((await senderReceived)[0]).includes(marker));
+      reply({ok:true}); continue;
     }
     assert.equal(command.op, 'check');
     assert(snapshot() === before, 'browser actions must preserve native approvals, grants and selection');

@@ -467,6 +467,10 @@ ${this.#form(b, '/account/cancel', '취소')}
 <p>${adText}</p>
 <p>게임 PC의 새 채팅 승인·로그아웃은 기존 송출 PC 승인이나 송출 광고 선택을 옮기지 않습니다.
 공개 배너는 선택한 송출 승인과 최근 출력 보고에만 연결되며, 영상의 HUD 제외·시청자 노출·수익은 증명하지 않습니다.</p>
+${gamingApproved > 0 && streamingApproved === 0 ? `<p data-sender-reapproval="required">
+게임 PC 채팅 승인은 그대로 유지됩니다. 송출 PC의 OBS 관리 런타임에서 <strong>송출 PC · OBS 역할</strong>을 새로 승인한 다음,
+시험 캠페인을 <strong>직접 다시 선택</strong>하세요. 이전 공개 URL이 남아 있어도 새 송출 승인만으로 광고는 나타나지 않습니다.
+<a href="/campaigns#campaign-selection-title">송출 승인·광고 재선택 순서 확인</a></p>` : ''}
 <p><a href="/campaigns#public-banner-status">시험 광고의 선택·공개 상태 확인</a></p>
 </section>
 <p><a href="/account">현재 연결 다시 확인</a></p>

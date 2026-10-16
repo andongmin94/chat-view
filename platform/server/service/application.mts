@@ -425,6 +425,22 @@ ${this.#form(b, '/account/cancel', '취소')}
         const account = this.#creators.describe(b.owner);
         const gamingApproved = account.connections.filter(connection => connection.role === 'gaming').length;
         const streamingApproved = account.connections.filter(connection => connection.role === 'streaming').length;
+        const ad = this.#campaigns.status(b.owner);
+        // Account reads use the same existing public-response predicate as
+        // /campaigns and the OBS Browser Source; none of these GETs select,
+        // renew, sign in, report output or reconfigure a broadcasting PC.
+        const adReady = !!(ad.selected && ad.sourceId &&
+          this.#campaigns.snapshot(ad.sourceId).state === 'visible');
+        const adState = !ad.selected ? 'not-selected'
+          : account.presence.streamingConnections === 0 ? 'streaming-disconnected'
+          : adReady ? 'report-ready' : 'waiting-report';
+        const adText = adState === 'not-selected'
+          ? '시험 캠페인 미선택 · 게임 PC 채팅 재승인이나 송출 PC 재접속만으로 광고가 선택되지 않습니다.'
+          : adState === 'streaming-disconnected'
+            ? '시험 캠페인 선택 유지 · 송출 PC의 열린 채팅 연결이 없어 공개 소스는 투명하게 대기합니다.'
+            : adState === 'waiting-report'
+              ? '시험 캠페인 선택 유지 · 유효한 송출 PC 출력 보고가 없어 공개 소스는 투명하게 대기합니다.'
+              : '시험 캠페인 선택 유지 · 서버의 공개 시험 배너 표시 조건 충족 (OBS 화면·시청자 노출 미검증).';
         const outputText = account.output.state === 'unknown' ? '최근 유효한 송출 PC 출력 보고 없음'
           : account.output.streaming ? '최근 송출 활성 보고 수신 (실제 영상 미검증)'
           : account.output.recording ? '최근 녹화 활성 보고 수신 (방송 송출 미확인)'
@@ -443,6 +459,14 @@ ${this.#form(b, '/account/cancel', '취소')}
 승인된 PC가 오프라인일 수 있고, 연결되어도 실제 채팅 글자 표시·영상 출력·장치 등록을 증명하지 않습니다.</p>
 <p data-output-report="${account.output.state}">송출 PC 출력 상태: ${outputText}.
 이것은 클라이언트의 최근 보고이며, OBS 합성/송출 영상이나 개인 HUD 제외의 검증이 아닙니다.</p>
+<section id="account-public-banner" aria-labelledby="account-public-banner-title"
+  data-account-ad-state="${adState}" data-account-ad-selected="${ad.selected ? 'true' : 'false'}">
+<h3 id="account-public-banner-title">송출 PC 공개 시험 배너 · 현재 서버 상태</h3>
+<p>${adText}</p>
+<p>게임 PC의 새 채팅 승인·로그아웃은 기존 송출 PC 승인이나 송출 광고 선택을 옮기지 않습니다.
+공개 배너는 선택한 송출 승인과 최근 출력 보고에만 연결되며, 영상의 HUD 제외·시청자 노출·수익은 증명하지 않습니다.</p>
+<p><a href="/campaigns#public-banner-status">시험 광고의 선택·공개 상태 확인</a></p>
+</section>
 <p><a href="/account">현재 연결 다시 확인</a></p>
 <h3>각 PC에서 연결하거나 복귀하는 방법</h3>
 <p>게임 PC에서는 OBS 없이 ChatView companion을 실행해 <strong>게임 PC · 개인 HUD</strong> 역할로 승인합니다.

@@ -236,6 +236,77 @@ def run() -> None:
                     finally:
                         flow.close()
 
+                # Alice already has one live sender and a manually selected
+                # banner. Revoke and reapprove only a gaming peer through the
+                # real account CSRF form and one fresh same-role browser consent.
+                # The preexisting sender, public source address, and selection
+                # must never change even when the gaming count briefly drops.
+                flow = Flow(browser, f, 390)
+                try:
+                    flow.identity("/account")
+                    flow.confirm("/account")
+                    sender = flow.page.locator('[data-pc-role="streaming"]')
+                    gamer = flow.page.locator('[data-pc-role="gaming"]')
+                    ad = flow.page.locator("#account-public-banner")
+                    expect(sender.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "1")
+                    expect(sender.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    expect(gamer.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "0")
+                    expect(ad).to_have_attribute("data-account-ad-state", "waiting-report")
+                    expect(ad).to_have_attribute("data-account-ad-selected", "true")
+                    flow.page.get_by_role("link", name="시험 광고의 선택·공개 상태 확인").click()
+                    expect(flow.page).to_have_url(f.origin + "/campaigns#public-banner-status")
+                    initial_source = flow.page.locator("#source-url").input_value()
+                    assert initial_source.startswith(f.origin + "/public/ads/")
+                    flow.page.go_back()
+                    current = f.command("game-role-start")
+                    flow.page.reload()
+                    expect(gamer.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "1")
+                    expect(gamer.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    expect(sender.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    flow.page.locator(
+                        f'form[action="/connections/{current["connectionId"]}/revoke"] button').click()
+                    expect(flow.page).to_have_url(f.origin + "/account")
+                    expect(gamer.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "0")
+                    expect(gamer.locator("[data-online-count]")).to_have_attribute("data-online-count", "0")
+                    expect(sender.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "1")
+                    expect(ad).to_have_attribute("data-account-ad-selected", "true")
+                    assert f.command("game-role-revoked")["ok"]
+
+                    started = f.command("game-role-new")
+                    flow.page.goto(f.origin + started["path"])
+                    expect(flow.page.locator('[data-login-request="pending"]')).to_have_count(1)
+                    expect(flow.page.locator("[data-login-code]")).to_have_text(started["code"])
+                    expect(flow.page.locator("body")).to_contain_text("게임 PC · 개인 HUD")
+                    expect(flow.page.locator("body")).to_contain_text("channel <alice>")
+                    flow.page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True).click()
+                    expect(flow.page.locator('[data-login-collection="awaiting-app"]')).to_have_count(1)
+                    renewed = f.command("game-role-collect")
+                    assert renewed["connectionId"] != current["connectionId"]
+                    flow.page.goto(f.origin + "/account")
+                    expect(gamer.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "1")
+                    expect(gamer.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    expect(sender.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "1")
+                    expect(sender.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    expect(ad).to_have_attribute("data-account-ad-state", "waiting-report")
+                    expect(ad).to_have_attribute("data-account-ad-selected", "true")
+                    flow.page.get_by_role("link", name="현재 연결 다시 확인").click()
+                    expect(sender.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    assert f.command("game-role-check")["ok"]
+                    flow.image("game-reapproved-sender-banner-untouched-mobile")
+                    flow.page.get_by_role("link", name="시험 광고의 선택·공개 상태 확인").click()
+                    assert flow.page.locator("#source-url").input_value() == initial_source
+                    expect(flow.page.locator('[data-public-banner-state="waiting-report"]')).to_have_count(1)
+                    flow.page.goto(f.origin + "/account")
+                    flow.page.locator(
+                        f'form[action="/connections/{renewed["connectionId"]}/revoke"] button').click()
+                    expect(gamer.locator("[data-approved-count]")).to_have_attribute("data-approved-count", "0")
+                    expect(sender.locator("[data-online-count]")).to_have_attribute("data-online-count", "1")
+                    assert f.command("game-role-released")["ok"]
+                    assert f.command("check")["ok"]
+                    results.append("gaming peer reapproval retains sender role, same selected public URL and read-only account counts")
+                finally:
+                    flow.close()
+
                 flow = Flow(browser, f)
                 try:
                     flow.identity("/campaigns")

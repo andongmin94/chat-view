@@ -62,6 +62,8 @@ try {
   const selection = () => f.store.database.prepare('SELECT connection_id FROM ad_selections WHERE source_id = ?').get(sourceId);
   type Started = Awaited<ReturnType<typeof f.start>>;
   let stale: { old: Started; current?: Started; serverCancelled: boolean } | undefined;
+  let gamingReturn: { old: typeof bob.lease; oldPeer: WebSocket; request?: Started;
+    lease?: typeof bob.lease; gamePeer?: WebSocket } | undefined;
   let collection: { requests: Started[]; gamer: WebSocket; loser?: Started;
     lease?: typeof alice.lease; sender?: WebSocket; lastPollAt: number; sequence: number; before: string } | undefined;
   const unaffected = () => JSON.stringify({ alice: f.store.connections('alice'), selection: selection(),
@@ -88,6 +90,78 @@ try {
     if (command.op === 'expire-browser') { offset += 3_600_001; reply({ ok: true }); continue; }
     if (command.op === 'expire-confirmation') { offset += 300_001; reply({ ok: true }); continue; }
     if (command.op === 'metadata') { reply({ metadata }); continue; }
+    // A preexisting Alice sender and selected test banner must outlive a
+    // revoked/reapproved gaming peer. Browser forms, not fixture commands,
+    // perform every role revocation and user consent action.
+    if (command.op === 'game-role-start') {
+      assert(!gamingReturn);
+      const game = await f.approve(await f.start('gaming'), 'gaming', alice.b);
+      // Preexisting game approval is issued using Alice's confirmed browser,
+      // not a new provider reauthorization that could rotate durable grants.
+      gamingReturn = { old: game, oldPeer: await openCollectionPeer(game.token) };
+      assert.equal(selection()?.connection_id, alice.lease.membership.connectionId);
+      assert.equal(f.creators.describe('alice').presence.streamingConnections, 1);
+      reply({ connectionId: game.membership.connectionId }); continue;
+    }
+    if (command.op === 'game-role-revoked') {
+      assert(gamingReturn && !gamingReturn.request);
+      if (gamingReturn.oldPeer.readyState !== WebSocket.CLOSED)
+        await once(gamingReturn.oldPeer, 'close', { signal: AbortSignal.timeout(3000) });
+      assert.equal(f.store.find(gamingReturn.old.sessionToken), undefined);
+      assert(f.store.find(alice.lease.sessionToken) && peer?.readyState === WebSocket.OPEN);
+      assert.equal(selection()?.connection_id, alice.lease.membership.connectionId);
+      assert.equal(f.creators.describe('alice').presence.streamingConnections, 1);
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'game-role-new') {
+      assert(gamingReturn && !gamingReturn.request);
+      gamingReturn.request = await f.start('gaming');
+      assert.equal(f.app.login.view(gamingReturn.request.id).role, 'gaming');
+      reply({ path: gamingReturn.request.verificationPath,
+        code: gamingReturn.request.id.slice(-6).toUpperCase() }); continue;
+    }
+    if (command.op === 'game-role-collect') {
+      assert(gamingReturn?.request && !gamingReturn.lease);
+      const response = await f.native(`/display/login/${gamingReturn.request.id}`,
+        'ChatView-Login', gamingReturn.request.verifier);
+      assert.equal(response.status, 200);
+      const result = await response.json() as { status: 'approved'; lease: typeof bob.lease };
+      assert.equal(result.status, 'approved');
+      gamingReturn.lease = result.lease;
+      assert.equal(gamingReturn.lease.membership.role, 'gaming');
+      assert.notEqual(gamingReturn.lease.membership.connectionId, gamingReturn.old.membership.connectionId);
+      assert.equal(gamingReturn.lease.membership.broadcastSessionId, alice.lease.membership.broadcastSessionId);
+      gamingReturn.gamePeer = await openCollectionPeer(gamingReturn.lease.token);
+      reply({ connectionId: gamingReturn.lease.membership.connectionId }); continue;
+    }
+    if (command.op === 'game-role-check') {
+      assert(gamingReturn?.lease && gamingReturn.gamePeer?.readyState === WebSocket.OPEN);
+      assert(peer?.readyState === WebSocket.OPEN && f.store.find(alice.lease.sessionToken));
+      assert.equal(f.store.find(gamingReturn.lease.sessionToken)?.owner, 'alice');
+      assert.equal(selection()?.connection_id, alice.lease.membership.connectionId);
+      assert(f.store.find(bob.lease.sessionToken));
+      assert.equal(f.startedWith.length, starts, 'game-only reapproval does not restart either creator upstream');
+      assert.equal(f.refreshCalls, 0, 'game-only reapproval never renews the sender');
+      assert.equal(f.creators.describe('alice').presence.streamingConnections, 1);
+      assert.equal(f.creators.describe('alice').presence.gamingConnections, 1);
+      const senderReceived = once(peer, 'message', { signal: AbortSignal.timeout(3000) });
+      const gameReceived = once(gamingReturn.gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
+      const marker = 'game-role-reapproved-and-sender-kept';
+      f.chats.get('alice')!.publish(marker);
+      assert(String((await senderReceived)[0]).includes(marker) &&
+        String((await gameReceived)[0]).includes(marker));
+      reply({ ok: true }); continue;
+    }
+    if (command.op === 'game-role-released') {
+      assert(gamingReturn?.lease && gamingReturn.gamePeer);
+      if (gamingReturn.gamePeer.readyState !== WebSocket.CLOSED)
+        await once(gamingReturn.gamePeer, 'close', { signal: AbortSignal.timeout(3000) });
+      assert.equal(f.store.find(gamingReturn.lease.sessionToken), undefined);
+      assert.equal(snapshot(), before, 'game-only reapproval and revocation leave original sender/banner untouched');
+      assert(peer?.readyState === WebSocket.OPEN);
+      gamingReturn = undefined;
+      reply({ ok: true }); continue;
+    }
     // Explicit parent actions stand in for the sender, never for browser JS.
     // The production management GET cannot invoke any of these operations.
     if (command.op === 'sender-disconnect') {

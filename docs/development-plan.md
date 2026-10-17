@@ -11,7 +11,8 @@
 - **실제 실패 분리:** 신규 `early-first`를 포함해 `tests/companion-chat-video-test.mts`가 최상위 `try` 블록 안에서 `return`을 사용해 Node 구문 검사에서 `Illegal return statement` 발생, companion 5개 CTest가 **실행 시작 전 실패**했다. 기존 `native-logout` 1개는 **별개 D1 간헐 실패**: `active=1 worker=1 awaiting_login=0 surface_ready=0 frames=0 rows=0 rejected=0 metadata=1 pending_frame=1 awaiting_render=0`, 첫 승인 프레임 뒤 네이티브 첫 표시가 인정되지 않았다. 전체 실패 6개를 첫 텍스트 오류 해결이나 서비스 장애로 뭉뚱그리지 않는다.
 - **게임 PC 사용자 흐름:** 브라우저에서 채널·gaming 역할을 명시 승인하기 전에 이미 올라온 합성 첫 글자를, 처음 인증된 서버/WebSocket snapshot→실제 WinHTTP→WebView2 HUD에서 **빈 구독 화면 선행 없이** 텍스트로 표시한다. 기존 C++ renderer DOM·ACK·게임 PC OBS 부재·관리 권한 검사, 로컬 Stop 후 화면 비움 및 같은 승인으로만 복귀 가능 조건은 그대로 둔다. **수정은 테스트 드라이버의 최상위 `return`을 독립 `if/else` 주장으로 교체**하는 최소 변경이며, 오류를 없애기 위해 결과 판정/시간 제한/권한 검사를 완화하지 않는다.
 - **Actions 절감:** 기존 Windows workflow는 OBS의 문서·관리 서버 변경에도 Ubuntu `Native change scope`를 먼저 실행한 뒤 skip을 판단했다. `on.push`/`on.pull_request`에서 실제 네이티브·통합 의존 파일만 포함하는 `paths` 필터를 적용해 **문서·비네이티브 플랫폼 변경은 Windows Actions 자체를 예약하지 않는다**. 경로 목록은 기존 scope `case`와 일치시키며 내부 scope 방어를 유지한다. `obs-verify/**` tag 및 수동 `workflow_dispatch` 자격/검증은 그대로 유지. 개발·문서·CI 수정은 구문 확인 뒤 **한 번의 기능 푸시로 묶는다**. Linux unit/CHZZK/API 테스트와 관련 네이티브 첫 표시 CTest는 스킵해 통과했다고 주장하지 않는다.
-- **검증 경계:** 로컬에서 JS 수정 구문과 YAML trigger/경로 일치 여부를 확인하고, 그 수정 SHA에 해당하는 Windows native routine을 **한 번** 확인한다. #439의 native-logout 첫 표시 실패는 원인 미확정 **D1**에 남기며 신규 조작과 무관한 항목을 반복 실행해 우연한 green으로 처리하지 않는다. 실계정 CHZZK·장시간 게임 PC HUD·물리 두 PC의 HUD 없는 영상·D2/D4/D6/D7·실광고/HP/정산/배포 qualification은 미완료다.
+- **실제 수정 SHA와 검증:** `b371ac66630998fb0e1841f9bee0a27e78165801`에서 [Windows development #440/run `38991323214`](https://github.com/andongmin94/chat-view/actions/runs/38991323214) **completed/success, Windows x64 네이티브 빌드+CTest 50/50·fail0 (총 231.62초)**. 신규 `chat-view-companion-chat-early-first` **2.48초 통과**: 승인 결과가 게임 PC 앱에 도착하기 전 채팅 게시→첫 실제 자체 DOM/ACK→사용자 Stop/원래 승인 보존. 공유 테스트 드라이버를 쓰는 companion 영상 **17.18초**, 철회 **7.39초**, 재승인 **10.70초**, 재표시 **7.08초** 모두 통과. 기존 `native-logout` **23.48초 통과**, `native-chat-surface` **3.44초**, native-display·chat-switch·public-ad-browser 등도 성공. 이전 #439 44/50 실패를 성공으로 고쳐 기록하지 않으며 D1의 간헐 실패는 미해결이다.
+- **Actions 사용량 및 검증 경계:** 변경 분기 조각에 대한 로컬 Node 구문 검사, YAML event 파싱·경로 예제 8건 일치 검사와 GitHub 코드 diff를 확인하고 **기능 커밋 1개, Windows Actions 신규 1회**로 검증했다. 수동/배포 태그 자격은 유지했고 플랫폼/문서만 바뀌는 다음 푸시들은 Windows workflow를 만들지 않는다. 이 SHA에서는 별도 CHZZK/공식 OBS/qualification을 실행하지 않았다. 실계정 치지직·장시간 게임 PC HUD·물리 투컴 HUD 제외·D2/D4/D6/D7·실광고/HP/정산/배포 qualification은 미완료다.
 
 ## 직전 완료 흐름: D1 첫 채팅 글자 표시를 정확한 소유 문서 nonce에 직접 연결
 
@@ -176,6 +177,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-실제 Windows native routine에서 **브라우저 동의 중 도착한 첫 채팅→첫 DOM·ACK→사용자 로컬 Stop**까지 확인한다. 별개로 남은 D1 `surface_ready=0` 사건은 재현된 실패에서 소유 문서 탐색·nonce·호스트 시작의 원인이 명확해지는 경우에 한정해 수정한다. 이후 G4 실계정 치지직 인증·구독·장시간 수신, G3 게임 PC OBS 없는 물리 투컴 HUD 제외를 진행한다. CI 절약을 위해 독립 수정은 로컬에서 검증하고 한 번에 묶는다. D2/D4/D6/D7와 유료 광고/HP/정산 및 배포 qualification은 미완료다.
+첫 메시지가 **브라우저 승인 전에 도착하는 게임 PC companion** 경계가 성공했으므로, 다음에는 **해당 첫 글자 표시→사용자 로컬 Stop→정확히 같은 게임 역할 승인으로 명시적 복귀→새 메시지 재표시** 동선을 보강한다. 기존 브라우저 재승인·다른 저장 계정·게임 PC OBS/영상 제어는 없어야 한다. #439처럼 간헐 발생한 D1 `surface_ready=0`는 실제 원인이 확인될 경우에만 좁게 수정한다. 이후 G4 실계정 치지직 로그인·구독·장시간 수신, G3 물리 투컴 HUD 제외를 우선한다. GitHub Actions는 변경 구문을 로컬에서 확인하고 한 번의 코드 푸시로 필요한 범위만 실행한다. D2/D4/D6/D7와 유료 광고/HP/정산 및 배포 qualification은 미완료다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

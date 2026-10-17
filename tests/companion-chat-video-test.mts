@@ -184,11 +184,11 @@ try {
     assert(f.store.find(target), 'local Stop retains the exact gaming approval');
     assert.equal(loginStarts, 1); assert.equal(refreshes, 0); assert.equal(signouts, 0);
     console.log('companion early first chat: real native approval -> first text DOM -> local Stop passed');
-    return;
+  } else {
+    assert.equal(loginStarts, reapproved ? 4 : 1);
+    assert.equal(refreshes, reapproved || redraw ? 5 : revoked ? 4 : 3);
+    assert.equal(signouts, reapproved || !revoked ? 1 : 0); assert.equal(denials, revoked ? 1 : 0);
+    assert.equal(freshApproval, reapproved); assert.equal(cancelled, reapproved ? 2 : 0);
+    console.log(`companion chat/video ${mode}: independent video and exact chat authority passed`);
   }
-  assert.equal(loginStarts, reapproved ? 4 : 1);
-  assert.equal(refreshes, reapproved || redraw ? 5 : revoked ? 4 : 3);
-  assert.equal(signouts, reapproved || !revoked ? 1 : 0); assert.equal(denials, revoked ? 1 : 0);
-  assert.equal(freshApproval, reapproved); assert.equal(cancelled, reapproved ? 2 : 0);
-  console.log(`companion chat/video ${mode}: independent video and exact chat authority passed`);
 } finally { child?.kill(); await f.close(); }

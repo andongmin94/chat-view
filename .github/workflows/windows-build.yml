@@ -7,9 +7,45 @@ on:
       - OBS
     tags:
       - 'obs-verify/**'
+    # GitHub does not apply path filters to tag pushes: qualification remains available.
+    # Filter before allocating even the Linux scope job for server/docs-only pushes.
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'cmake/**'
+      - 'scripts/**'
+      - 'data/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - '.github/workflows/windows-build.yml'
+      - 'platform/package.json'
+      - 'platform/package-lock.json'
+      - 'platform/server/chat/**'
+      - 'platform/web/chat-renderer.js'
+      - 'platform/web/native-chat.js'
+      - 'platform/tools/native-*.mts'
+      - 'platform/tools/session-display-test.mts'
+      - 'platform/tools/public-ad-browser-test.mts'
   pull_request:
     branches:
       - OBS
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'cmake/**'
+      - 'scripts/**'
+      - 'data/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - '.github/workflows/windows-build.yml'
+      - 'platform/package.json'
+      - 'platform/package-lock.json'
+      - 'platform/server/chat/**'
+      - 'platform/web/chat-renderer.js'
+      - 'platform/web/native-chat.js'
+      - 'platform/tools/native-*.mts'
+      - 'platform/tools/session-display-test.mts'
+      - 'platform/tools/public-ad-browser-test.mts'
   workflow_dispatch:
     inputs:
       qualify:

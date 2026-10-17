@@ -80,7 +80,10 @@ try {
   const exited = once(child, 'exit'); child.stdin!.write(`${f.origin}\n${other.lease.sessionToken}\n`);
   let errors = '', phase = 0;
   child.stderr!.on('data', chunk => { errors = (errors + String(chunk)).slice(-4096); });
-  const phases = earlyFirst ? ['browser-opened', 'early-first-visible', 'early-stopped'] : ['browser-opened',
+  const phases = earlyFirst
+    ? ['browser-opened', 'early-first-visible', 'early-stopped',
+      'early-returned', 'early-returned-text', 'early-final-stopped']
+    : ['browser-opened',
     ...(redraw ? ['live-redraw-started', 'live-redraw-ready', 'black-redraw-started', 'black-redraw-ready'] : []),
     'chat-empty-ready', 'pattern-paused', 'pattern-returned',
     'capture-paused', 'capture-returned', 'video-stopped', 'black-paused', 'black-returned', 'reselected',
@@ -100,12 +103,21 @@ try {
         } else assert(reapproved && removed, 'new consent remains pending until explicitly approved');
         continue;
       }
-      if (earlyFirst && (line === 'early-first-visible' || line === 'early-stopped')) {
-        assert.equal(loginStarts, 1, 'the initial first chat needs only one browser approval');
-        assert.equal(refreshes, 0, 'initial chat display must not trigger renewal');
-        assert.equal(signouts, 0, 'local Stop is not approval revocation');
+      if (earlyFirst && line.startsWith('early-')) {
+        const returned = ['early-returned', 'early-returned-text', 'early-final-stopped'].includes(line);
+        const stopped = line === 'early-stopped' || line === 'early-final-stopped';
+        assert.equal(loginStarts, 1, 'explicit return never creates a second browser consent');
+        assert.equal(refreshes, returned ? 1 : 0, 'only one same-role native lease renewal');
+        assert.equal(signouts, 0, 'neither local Stop revokes the approved gaming connection');
         assert.equal(denials, 0);
-        await account(line === 'early-first-visible' ? 1 : 0);
+        assert.equal(f.store.find(target)?.membership?.connectionId, connectionId,
+          'Stop and return are bound to the originally approved gaming connection');
+        await account(stopped ? 0 : 1);
+        if (line === 'early-returned') {
+          const chat = f.chats.get('alice');
+          assert(chat, 'the original creator chat remains subscribed across local Stop');
+          chat.publish('returned-chat');
+        }
         child!.stdin!.write('continue\n'); continue;
       }
       if (line.startsWith('reapproval-') || line.startsWith('reapproved')) {
@@ -182,8 +194,9 @@ try {
   assert(f.store.find(other.lease.sessionToken), 'another creator approval is unchanged');
   if (earlyFirst) {
     assert(f.store.find(target), 'local Stop retains the exact gaming approval');
-    assert.equal(loginStarts, 1); assert.equal(refreshes, 0); assert.equal(signouts, 0);
-    console.log('companion early first chat: real native approval -> first text DOM -> local Stop passed');
+    assert.equal(loginStarts, 1); assert.equal(refreshes, 1); assert.equal(signouts, 0);
+    assert.equal(denials, 0); assert.equal(cancelled, 0); assert(!freshApproval);
+    console.log('companion early first chat: approval -> first text -> Stop -> same gaming grant return -> new DOM text -> Stop passed');
   } else {
     assert.equal(loginStarts, reapproved ? 4 : 1);
     assert.equal(refreshes, reapproved || redraw ? 5 : revoked ? 4 : 3);

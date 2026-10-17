@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 승인 순간 첫 채팅 표시 검증 복구와 Actions 사용량 절감
+## 현재 흐름: 게임 PC 최초 채팅에서 Stop → 동일 승인 복귀 → 새 글자 표시
+
+시작 원격 `OBS` HEAD `abd33306194e8eb12cca5026ecda72019037aee1`, Windows development #440/run `38991323214`의 실제 Windows x64 routine **50/50 성공**(승인 전 첫 글자/로컬 Stop 포함)을 확인했다. AGENTS → PRODUCT → development-workflow → architecture → 이 계획 순으로 검토했으며, `main`과 게임 PC OBS 금지 조건을 보존한다.
+
+- **사용자 동선:** 실제 게임 PC companion과 동일한 네이티브 HUD/WebView2·WinHTTP 경로에서 브라우저의 gaming 역할 동의 **전** 게시된 합성 채팅 첫 글자가 표시된다. 사용자가 **연결 중지**를 직접 선택하면 문서·소켓·첫 글자 ACK를 제거하되 서버의 기존 PC 승인은 보존한다. 해당 사용자가 **현재 승인으로 자체 채팅 복귀**를 직접 선택하면 다른 계정의 저장 토큰이나 새 브라우저 동의 없이 원래 gaming 역할/connectionId의 짧은 새 display lease로만 돌아온다. 새로운 채팅 글자를 실제 새 자체 DOM과 HUD 패널에 표시하고, 다시 중지해도 다른 계정/영상 설정/광고를 변경하거나 PC 승인을 해제하지 않는다.
+- **기존 컴포넌트 재사용:** `tests/companion-chat-video-test.cpp`의 이미 통과한 `early-first` 시나리오에 같은 실제 UI 버튼 ID(Stop 105, return 112)·WinHTTP/WebView2·비디오 Control Center를 이어 붙여 독립 CTest 건수를 늘리지 않는다. `tests/companion-chat-video-test.mts`의 동일 승인 fixture는 서버 `/display/refresh` **정확히 1회**, 브라우저 신규 로그인 0회, PC signout 0회, 연결 소켓 수 1→0→1→0 및 새로운 chat snapshot을 검사한다. 다른 Bob 계정의 실제 DPAPI 저장 승인도 추가해 return이 이를 덮어쓰거나 대신 사용하지 않는지 확인한다. 동일 creator 승인 ID와 DOM 실제 신규 글자·비밀·role 격리까지 검증한다.
+- **Actions 예산:** 로컬에서 변경 C++/Node 분기와 CTest 경계를 검토한 다음 관련 파일을 **한 번의 기능 푸시**로 묶는다. 문서 보완 커밋은 native build를 재실행하지 않는다. 변경 파일 범위에 적합한 Windows routine만 확인하며 불필요한 CHZZK contract/공식 OBS/전체 qualification은 실행하지 않는다. 기존 15초 첫 표시 한도, 모든 nonce/source/캡처 보호, 배포 제한은 그대로 둔다. 실제 CI 결과는 코드를 검증한 SHA로만 기록한다.
+- **기존 미해결:** D1의 재현이 불규칙한 `surface_ready=0` 첫 표시 장애는 #439에서 보았고 #440에서 재현되지 않았으나 해결로 판정하지 않는다. 실계정 치지직 인증·장시간 표시, 물리 투컴 HUD 제외, D2/D4/D6/D7, 광고 실노출·HP/정산/배포는 여전히 미완료다.
+
+## 직전 완료 흐름: 승인 순간 첫 채팅 표시 검증 복구와 Actions 사용량 절감
 
 시작 원격 `OBS` HEAD `029f834a39f71ef93731d9aba4f12fe246d22833` 및 **Windows development #439/run `38878104924` completed/failure, routine 44/50**를 확인하고 AGENTS → PRODUCT → development-workflow → architecture → 이 문서 순으로 읽었다. `main`은 수정하지 않는다.
 
@@ -177,6 +186,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-첫 메시지가 **브라우저 승인 전에 도착하는 게임 PC companion** 경계가 성공했으므로, 다음에는 **해당 첫 글자 표시→사용자 로컬 Stop→정확히 같은 게임 역할 승인으로 명시적 복귀→새 메시지 재표시** 동선을 보강한다. 기존 브라우저 재승인·다른 저장 계정·게임 PC OBS/영상 제어는 없어야 한다. #439처럼 간헐 발생한 D1 `surface_ready=0`는 실제 원인이 확인될 경우에만 좁게 수정한다. 이후 G4 실계정 치지직 로그인·구독·장시간 수신, G3 물리 투컴 HUD 제외를 우선한다. GitHub Actions는 변경 구문을 로컬에서 확인하고 한 번의 코드 푸시로 필요한 범위만 실행한다. D2/D4/D6/D7와 유료 광고/HP/정산 및 배포 qualification은 미완료다.
+게임 PC companion의 최초 글자 → Stop → **동일 승인 수동 복귀 → 새 글자** 흐름을 확인한 뒤, **브라우저 동의를 받지 않은 새 계정의 메시지나 이전 문서 ACK가 복귀 화면에 섞이지 않는지** 정확한 권한 경계에서 검사한다. 그 이후 합성 환경을 벗어나 실계정 치지직 승인·첫 메시지·장시간 연결(G4-06), 실제 게임 PC에 OBS가 없는 물리 투컴의 readable HUD/clean capture(G3)를 우선한다. D1 간헐 초기화, D2/D4/D6/D7, 광고 실노출·유료/HP·정산 및 배포 qualification은 미완료다. CI는 독립 수정들을 한 번에 묶어 필요한 작업만 수행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

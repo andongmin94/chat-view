@@ -320,16 +320,68 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
         }
         flow.received(L"initial-chat");
         flow.state(Status::Receiving, controls);
-        expect(browser_requests == 1 && !GetModuleHandleW(L"obs.dll") &&
+        const auto approved = Chat::membership(chat)->membership;
+        expect(approved.role == chatview::DisplayRole::Gaming &&
+            browser_requests == 1 && !GetModuleHandleW(L"obs.dll") &&
             !GetModuleHandleW(L"obs-frontend-api.dll"),
             "first chat from exact gaming approval uses no OBS or extra login");
         flow.checkpoint("early-first-visible");
         command(dialog, 105); // Stop local display; keep exact server approval.
         flow.wait([&] { return !Chat::client(chat).running() &&
             !Chat::membership(chat) && !Chat::surface(chat).ready() &&
+            Chat::surface(chat).rendered_messages() == 0U &&
             !Chat::first_text(chat) && Chat::client(chat).can_resume_current(); },
             "local Stop clears the early text but preserves same-role return authority");
+        flow.state(Status::IdleResumable, controls);
         flow.checkpoint("early-stopped");
+
+        // A different creator may already be remembered locally. Returning
+        // must prefer the exact in-run gaming approval, never that DPAPI file.
+        expect(chatview::save_connection({origin, other, true}),
+            "unrelated saved creator cannot replace an in-run approval");
+
+        // The owner explicitly returns using only the approval already held
+        // in memory. Neither saved credentials nor a new browser flow may
+        // supply a different creator/role; the first private DOM is fresh.
+        expect(IsWindowEnabled(GetDlgItem(dialog, 112)) != FALSE,
+            "existing approval offers an explicit native chat return");
+        command(dialog, 112);
+        try {
+            flow.wait([&] {
+                const auto membership = Chat::membership(chat);
+                return membership && membership->membership == approved &&
+                    Chat::surface(chat).ready() &&
+                    Chat::surface(chat).rendered_frames() >= 1U;
+            }, "same gaming approval renews its native chat surface");
+        } catch (...) {
+            Chat::first_display_evidence(chat);
+            throw;
+        }
+        flow.state(Status::Receiving, controls);
+        expect(browser_requests == 1 && Chat::client(chat).running() &&
+            !GetModuleHandleW(L"obs.dll") && !GetModuleHandleW(L"obs-frontend-api.dll"),
+            "return creates one new chat connection without browser login or OBS");
+        flow.checkpoint("early-returned");
+        flow.received(L"returned-chat");
+        expect(Chat::membership(chat) &&
+            Chat::membership(chat)->membership == approved,
+            "new text after return is bound to the original gaming approval");
+        auto saved = chatview::load_connection();
+        const bool other_intact = saved && saved->credential == other &&
+            saved->origin == origin && saved->developer_loopback;
+        if (saved) SecureZeroMemory(saved->credential.data(),
+            saved->credential.size() * sizeof(wchar_t));
+        expect(other_intact, "return keeps the unrelated remembered creator unchanged");
+        flow.checkpoint("early-returned-text");
+
+        command(dialog, 105);
+        flow.wait([&] { return !Chat::client(chat).running() &&
+            !Chat::membership(chat) && !Chat::surface(chat).ready() &&
+            Chat::surface(chat).rendered_messages() == 0U &&
+            !Chat::first_text(chat) && Chat::client(chat).can_resume_current(); },
+            "second local Stop clears return text without revoking the approval");
+        flow.state(Status::IdleResumable, controls);
+        flow.checkpoint("early-final-stopped");
         video.close(); chat.close(); hud.destroy();
         return;
     }

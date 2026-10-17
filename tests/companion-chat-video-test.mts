@@ -113,6 +113,14 @@ try {
         assert.equal(f.store.find(target)?.membership?.connectionId, connectionId,
           'Stop and return are bound to the originally approved gaming connection');
         await account(stopped ? 0 : 1);
+        if (line === 'early-stopped' || line === 'early-returned') {
+          // Bob has a distinct approved gaming account and active upstream.
+          // Neither his frames while Alice is stopped nor his next message
+          // after her return may cross into Alice's private WebView2 document.
+          const foreign = f.chats.get('bob');
+          assert(foreign, 'unrelated creator subscription stays independent');
+          foreign.publish(line === 'early-stopped' ? 'bob-only-during-stop' : 'bob-only-after-return');
+        }
         if (line === 'early-returned') {
           const chat = f.chats.get('alice');
           assert(chat, 'the original creator chat remains subscribed across local Stop');

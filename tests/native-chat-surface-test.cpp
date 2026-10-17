@@ -135,6 +135,15 @@ int main()
         ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(surface);
         const std::wstring first_url = source(core.Get());
         expect(first_url.starts_with(L"https://chatview.invalid/"), "host-owned memory document");
+        // Capture only the synthetic document's own nonce in this test. No
+        // provider tokens or private chat text are logged or persisted.
+        const std::wstring first_nonce_json = evaluate(core.Get(),
+            L"document.querySelector('script[type=module]')?.nonce");
+        expect(first_nonce_json.size() == 34U && first_nonce_json.front() == L'"' &&
+            first_nonce_json.back() == L'"', "first document has one 32-byte-hex nonce");
+        const std::wstring old_nonce = first_nonce_json.substr(1U, 32U);
+        expect(old_nonce.find_first_not_of(L"0123456789abcdef") == std::wstring::npos,
+            "first private nonce is lowercase hexadecimal");
         // The combined host bootstrap must still install the existing
         // closed-shadow overlay on the real first WebView2 document.
         await([&] { return evaluate(core.Get(), LR"JS(
@@ -219,10 +228,46 @@ int main()
         expect(surface.open(host), "new own document after close");
         await([&] { return surface.ready(); }, "fresh document handshake");
         expect(source(core.Get()) != first_url, "reopen gets distinct document identity");
+        const std::wstring fresh_nonce_json = evaluate(core.Get(),
+            L"document.querySelector('script[type=module]')?.nonce");
+        expect(fresh_nonce_json.size() == 34U &&
+            fresh_nonce_json.substr(1U, 32U) != old_nonce,
+            "reopened private document has a different nonce");
         expect_cancelled(core.Get(), first_url);
-        expect(surface.ready(), "stale document cannot replace current one");
+        expect(surface.ready() && surface.rendered_frames() == 0U &&
+            surface.rendered_messages() == 0U,
+            "a new document starts with no previous render acknowledgements");
+
+        // Replay an old document's rendered ACK through the CURRENT WebView2
+        // JS bridge (an even stronger adversarial case than an old source URL).
+        // A separate test observer is the delivery barrier: the production
+        // handler has already seen this old-nonce message before we assert.
+        const std::wstring old_ack = L"chat-rendered:" + old_nonce + L":1";
+        const auto observed_old_ack = std::make_shared<bool>(false);
+        EventRegistrationToken observe_token{};
+        expect(SUCCEEDED(core->add_WebMessageReceived(
+            Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                [old_ack, observed_old_ack](
+                    ICoreWebView2 *, ICoreWebView2WebMessageReceivedEventArgs *args) -> HRESULT {
+                    LPWSTR raw = nullptr;
+                    if (SUCCEEDED(args->TryGetWebMessageAsString(&raw)) &&
+                        raw && old_ack == raw) *observed_old_ack = true;
+                    CoTaskMemFree(raw);
+                    return S_OK;
+                }).Get(), &observe_token)), "observe stale nonce injection");
+        const std::wstring inject = L"window.chrome.webview.postMessage('" +
+            old_ack + L"'); true";
+        expect(evaluate(core.Get(), inject.c_str()) == L"true",
+            "inject prior document's obsolete renderer ACK");
+        await([&] { return *observed_old_ack; }, "old ACK delivered to native handlers");
+        core->remove_WebMessageReceived(observe_token);
+        expect(surface.ready() && surface.rendered_frames() == 0U &&
+            surface.rendered_messages() == 0U,
+            "old document ACK cannot count as the new document's first text");
         expect(surface.publish(kMessage), "reopened render");
         await([&] { return surface.rendered_frames() == 1U; }, "fresh counters");
+        expect(surface.rendered_messages() == 1U,
+            "only the current document's actual Unicode text counts");
         surface.close();
         // Clear and open can be queued together; an old cancelled event must
         // neither authorize its stale document nor invalidate the newer one.

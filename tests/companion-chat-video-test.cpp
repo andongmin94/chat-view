@@ -156,12 +156,19 @@ struct Flow {
                 text(controls, 212) == chatview::native_chat_status_text_ko(expected);
         }, "video panel independently follows the actual native chat state");
     }
-    void received(const wchar_t *marker, unsigned long long after = 0) {
+    void received(const wchar_t *marker, unsigned long long after = 0,
+                  const wchar_t *excluded = nullptr, const wchar_t *also_excluded = nullptr) {
         wait([&] { return Chat::first_text(chat) && Chat::surface(chat).rendered_frames() > after &&
             Chat::surface(chat).rendered_messages() == 1; }, "fresh first text acknowledgement");
         struct Result { bool pending = false, done = false; HRESULT status = E_FAIL; std::wstring value; };
         auto result = std::make_shared<Result>();
-        const std::wstring script = L"document.getElementById('messages').textContent.includes('" + std::wstring(marker) + L"')";
+        // Only fixed synthetic fixture markers are interpolated, never user
+        // messages. Check all conditions on the same actual WebView2 DOM.
+        std::wstring script = L"document.getElementById('messages').textContent.includes('" + std::wstring(marker) + L"')";
+        if (excluded) script += L" && !document.getElementById('messages').textContent.includes('" +
+            std::wstring(excluded) + L"')";
+        if (also_excluded) script += L" && !document.getElementById('messages').textContent.includes('" +
+            std::wstring(also_excluded) + L"')";
         Microsoft::WRL::ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(Chat::surface(chat));
         expect(core.Get() != nullptr, "owned chat DOM exists");
         // A heartbeat may advance rendered_frames before the newly published
@@ -362,7 +369,7 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
             !GetModuleHandleW(L"obs.dll") && !GetModuleHandleW(L"obs-frontend-api.dll"),
             "return creates one new chat connection without browser login or OBS");
         flow.checkpoint("early-returned");
-        flow.received(L"returned-chat");
+        flow.received(L"returned-chat", 0U, L"initial-chat", L"bob-only-after-return");
         expect(Chat::membership(chat) &&
             Chat::membership(chat)->membership == approved,
             "new text after return is bound to the original gaming approval");

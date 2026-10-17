@@ -4,17 +4,14 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 게임 PC 재복귀에서 이전 문서 ACK와 다른 계정 채팅 격리
+## 현재 흐름: 로컬 Stop 도중 게임 PC 승인 실제 철회 → 수동 재동의
 
-시작 원격 `OBS` HEAD `1651291539b5ca43e557555db0c308c64e6067e1`, Windows development #441/run `38993681986` **50/50 성공**(gaming 역할의 초기 메시지→로컬 Stop→기존 승인 갱신 1회→새 자체 DOM 메시지→다시 Stop)을 확인했다. AGENTS → PRODUCT → development-workflow → architecture → 이 계획 순서로 검토했고 `main`은 수정하지 않는다.
+시작 원격 OBS HEAD `557393e6812fa2a8902789ac1a92a3e269f237dc`, Windows development #442/run `38995801385` **실제 Windows x64 routine 50/50 성공**(다른 creator 메시지 격리·옛 nonce 렌더 ACK 차단 포함)을 확인했다. AGENTS → PRODUCT → development-workflow → architecture → 이 계획 순서로 검토했고 `main`과 게임 PC OBS 비사용을 유지한다.
 
-- **사용자 흐름:** Alice 게임 PC companion은 기존 치지직 채널·역할 승인으로 첫 글자를 보다가 로컬 Stop을 누른다. 그동안 Bob은 다른 승인된 창에서 자기 채팅을 받고 Bob의 메시지를 게시한다. Alice가 같은 승인으로 명시적으로 복귀한 직후에도 Bob은 새 메시지를 보낸다. Alice에 해당하는 새로운 메시지는 첫 채팅과 구분되는 **새 WebView2 문서 DOM**에 표시되어야 하며 이전 Alice 문서의 글자·Bob의 메시지·이전 로컬 문서의 **렌더 ACK**가 복귀한 화면의 첫 글자 증거로 사용되어서는 안 된다. 다른 소유자의 인증·저장 승인, 별도 영상·OBS는 그대로다.
-- **기존 코드 유지·좁은 검증:** `NativeChatSurface`의 URL/탐색 ID·매 문서 128-bit nonce·`WebMessageReceived` 소유권 검사와 `DisplayClient`의 gaming 멤버십 검증을 재사용하고 서버 권한/프로토콜을 새로 만들지 않는다. `tests/native-chat-surface-test.cpp`는 실제 WebView2에서 옛 소유 문서의 nonce를 확인한 뒤 현재 새 문서의 bridge에 **그 옛 nonce의 `chat-rendered` ACK를 의도적으로 게시**해 수신 이벤트 완료까지 기다리고 새 프레임·글자 카운터가 0인지를 검증한다. 이어 새 문서의 실제 Unicode 첫 글자·ACK만 1로 반영돼야 한다. `tests/companion-chat-video-test.mts`는 Bob의 자기 채팅을 Alice 로컬 Stop 중·복귀 직후 게시하고, `tests/companion-chat-video-test.cpp`는 기존 `early-first`의 실제 DOM에 **새 Alice 글자는 있고 이전 Alice/타 계정 글자는 없어야 함**을 확인한다.
-- **검증·Actions 예산:** 기존 `native-chat-surface`와 `early-first` CTest에 연계해 **CTest 건수 증가 없이** 실제 UI·HTTP/SQLite·WinHTTP/WebSocket·WebView2를 검증한다. Node 시험 분기 구문, C++ 생성 코드·마커, 두 fixture 교차 순서를 로컬 확인한 뒤 **관련 수정 1커밋→Windows workflow 1회**로만 실행한다. 시간 제한·nonce/보호·수익 경계는 완화하지 않는다.
-
-  **실제 CI 완료:** 코드 커밋 `10b6ab82a52e7c2166f93c56d762439335284741`의 [Windows development #442/run `38995801385`](https://github.com/andongmin94/chat-view/actions/runs/38995801385) **completed/success**, 실제 Windows x64 컴파일·routine **CTest 50/50·fail0(250.89초)**. WebView2에서 기존 문서의 nonce를 새 문서의 bridge에 주입한 뒤 이전 `chat-rendered`가 새 프레임을 늘리지 못하고 새 Unicode 글자 ACK만 반영되는 `chat-view-native-chat-surface` **2.87초 성공**. Alice 로컬 Stop 중·복귀 직후 Bob의 별도 채팅을 발행했지만 Alice 새 DOM에는 새 Alice 글자만 표시된 `chat-view-companion-chat-early-first` **7.92초 성공**. 기존 companion chat-video **21.88초**, logout **26.25초**, chat-switch **18.46초**, reapproval **10.87초**, public-ad-browser **13.00초** 등 정기 검증도 통과. 신규 CTest 건수·타임아웃·보안 기준·서비스 스키마 변경 없이 **기능 코드 푸시 1회에 Windows Actions 신규 1회**만 실행했다. CHZZK contract·공식 OBS 광고·전체 qualification은 이번 SHA에서 새로 실행되지 않았다. 이 검증만으로 실계정 치지직/물리 영상/반복 초기화 D1 전체가 해결됐다고 판정하지 않는다.
-- **남은 제한:** D1의 간헐 `surface_ready=0` 첫 표시, D2/D4/D6/D7, 실계정 치지직 인증·장시간 수신, 물리 투컴 HUD 없는 영상, 광고 실노출/유료·HP·정산·배포 qualification은 미완료다.
-
+- **사용자 흐름:** Alice 게임 PC companion에서 원래 브라우저 승인으로 첫 글자를 받고, 사용자가 로컬 Stop→같은 승인으로 복귀→새 글자를 받았다가 두 번째 로컬 Stop을 누른다. 그때 서버 관리자가 **Alice의 정확한 gaming 역할 승인 자체를 철회**한다. 기존 로컬 복귀 버튼은 마지막 확인 시점의 자격일 뿐이므로, 사용자가 눌러도 앱의 실제 `/display/refresh` 요청은 **401/403 거부**돼야 한다. 이때 기존 채팅·연결 수·복귀 가능 자격이 비워지고 다른 계정/저장 권한으로 자동 변경하거나 브라우저를 열어서는 안 된다. Alice가 **새 로그인 / 연결 버튼과 실제 브라우저 gaming 역할 동의**를 다시 거쳐야 새 승인 ID와 첫 자체 HUD DOM 글자 표시가 가능하다. 이후 본인이 명시적으로 로그아웃한 경우에만 신규 승인이 해제되고, Bob의 독립 gaming 승인·저장 정보 및 영상 출력 선택은 유지한다.
+- **기존 경계 재사용:** `NativeChatConnection` / `DisplayClient`의 Denied 상태·`approval_denied_`·DPAPI 다른 계정 차단, 서버 `Creators.removeConnection` / SQLite 역할 FK 삭제와 버전/nonce 바인딩을 수정하지 않는다. `tests/companion-chat-video-test.cpp` 기존 `early-first`에 새 **revoke→denied return→manual browser consent→fresh empty snapshot→new first text→explicit logout**를 연결한다. `tests/companion-chat-video-test.mts`의 실제 HTTP/SQLite/WebSocket synthetic CHZZK는 구 승인 철회, 기존 renewal 거부 **정확히 1회**, 신규 gaming 연결 ID, 브라우저에서의 수동 동의 1회, Bob 계정 승인 불변, 로그인/중지/갱신·로그아웃 횟수를 검사한다. 신규 CTest 항목·서버 API·새 UI/프로세스·별도 인프라는 만들지 않고 기존 45초/15초 시간 한도와 보안 조건을 그대로 둔다.
+- **CI 사용량:** Node 스크립트의 TS 제거 후 문법 파싱, C++↔Node checkpoint 순서 및 조합별 승인·갱신 수 시뮬레이션을 먼저 검증한다. 가능한 한 **관련 코드·문서를 한 커밋에 묶어 단 한 번의 Windows routine**으로 검사하고, 결과에 따라 실패 단계만 수정한다. 문서에 남은 실제 CI 결과는 해당 SHA로 기록하며 `[skip ci]` 문서-only 갱신은 무거운 빌드를 다시 시작하지 않는다. 실계정 치지직·실영상/OBS/배포 qualification을 통과한 것으로 주장하지 않는다.
+- **남은 결함:** D1의 간헐 첫 표시 `surface_ready=0`, D2/D4/D6/D7, 실계정 치지직 장시간 첫 수신, 실제 게임 PC OBS 없는 물리 투컴 HUD 제외, 광고 실노출·유료/HP·정산·배포 검증은 아직 남아 있다.
 
 ## 직전 완료 흐름: 승인 순간 첫 채팅 표시 검증 복구와 Actions 사용량 절감
 
@@ -189,6 +186,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-게임 PC companion에서 다른 계정 메시지와 오래된 문서 ACK의 복귀 격리가 검증되면, **게임 역할의 로컬 Stop 중 서버에서 해당 승인 자체가 실제 철회되는 경우**를 이어서 확인한다. 이 경우 복귀 버튼이 유효한 서버 승인을 대신 만들거나 다른 저장 계정을 가져오지 못해야 하며, 새 브라우저에서 해당 소유자·역할을 직접 재승인하기 전에는 첫 글자를 표시하지 않는다. 그다음 G4 실계정 치지직, G3 게임 PC OBS 없는 물리 투컴 HUD 제외를 우선한다. CI는 관련 변경을 사전 점검한 뒤 묶어서 실행한다. D1 간헐·D2/D4/D6/D7·실광고·HP/정산·배포 qualification 미완료.
+로컬 Stop과 원격 gaming 승인 실제 철회 후 **기존 토큰 갱신 실패→수동 새 Alice 채널/게임 역할 동의**를 끝까지 확인한 다음, G4-06 실계정 치지직 시스템 브라우저 승인·실제 구독 프레임·자체 HUD 첫 글자/연결 철회와 G3-04 실제 투컴의 읽을 수 있는 HUD/송출 화면 HUD 제외를 우선한다. 제공자 운영 계정·물리 장치는 synthetic 성공과 별도로 입증해야 한다. D1 간헐·D2/D4/D6/D7·유료 광고 실노출/HP·정산·배포 qualification은 미완료다. GitHub Actions는 관련 코드 검토·사전 검사 뒤 한 번에 묶어서 필요한 workflow만 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

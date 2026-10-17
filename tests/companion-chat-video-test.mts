@@ -21,7 +21,7 @@ try {
   const start = f.app.login.start.bind(f.app.login);
   f.app.login.start = (challenge, remember, role) => {
     assert.equal(role, 'gaming'); loginStarts++;
-    assert(loginStarts <= (reapproved ? 4 : 1), 'no automatic or duplicate login');
+    assert(loginStarts <= (reapproved ? 4 : earlyFirst ? 2 : 1), 'no automatic or duplicate login');
     assert.equal(remember, reapproved && (loginStarts === 2 || loginStarts === 3));
     const value = start(challenge, remember, role); pending = { ...value, verifier: '' }; return value;
   };
@@ -30,16 +30,19 @@ try {
     const result = poll(id, verifier);
     if (result.status === 'approved') {
       if (target) {
-        assert(reapproved && removed && !freshApproval && cancelled === 2 && loginStarts === 4,
-          'only the final explicitly approved request can replace the denied context');
-        assert(id === pending?.id && !f.store.find(oldTarget));
+        assert(removed && !freshApproval && id === pending?.id && !f.store.find(oldTarget),
+          'a new gaming connection needs a fresh approved browser request after revocation');
         assert(result.lease.sessionToken !== oldTarget && result.lease.sessionToken !== other.lease.sessionToken,
           'new consent is neither the revoked grant nor the unrelated saved account');
-        assert(result.lease.membership!.connectionId !== oldConnection, 'new approval receives a new connection');
+        assert(result.lease.membership!.role === 'gaming' &&
+          result.lease.membership!.connectionId !== oldConnection,
+          'new approval receives a new gaming connection');
+        assert(earlyFirst ? loginStarts === 2 : reapproved && cancelled === 2 && loginStarts === 4,
+          'only the explicitly approved final request can replace the denied context');
         freshApproval = true;
       }
       target = result.lease.sessionToken; connectionId = result.lease.membership!.connectionId;
-      if (earlyFirst) {
+      if (earlyFirst && !freshApproval) {
         // Publish BEFORE returning the approved lease to the native worker:
         // its very first authenticated WebSocket snapshot must include text.
         const chat = f.chats.get('alice'); assert(chat, 'authorized provider subscription is live');
@@ -82,7 +85,9 @@ try {
   child.stderr!.on('data', chunk => { errors = (errors + String(chunk)).slice(-4096); });
   const phases = earlyFirst
     ? ['browser-opened', 'early-first-visible', 'early-stopped',
-      'early-returned', 'early-returned-text', 'early-final-stopped']
+      'early-returned', 'early-returned-text', 'early-final-stopped',
+      'early-revoked', 'browser-opened', 'early-reapproval-pending',
+      'early-reapproval-empty', 'early-reapproved', 'early-signed-out']
     : ['browser-opened',
     ...(redraw ? ['live-redraw-started', 'live-redraw-ready', 'black-redraw-started', 'black-redraw-ready'] : []),
     'chat-empty-ready', 'pattern-paused', 'pattern-returned',
@@ -100,23 +105,33 @@ try {
         if (loginStarts === 1) {
           await f.authenticate('alice', pending);
           assert.equal((await f.post(`/login/${pending.id}/approve`)).status, 200);
-        } else assert(reapproved && removed, 'new consent remains pending until explicitly approved');
+        } else assert(removed && !freshApproval &&
+          (earlyFirst ? loginStarts === 2 : reapproved),
+          'the new browser challenge stays pending until explicit owner consent');
         continue;
       }
       if (earlyFirst && line.startsWith('early-')) {
-        const returned = ['early-returned', 'early-returned-text', 'early-final-stopped'].includes(line);
-        const stopped = line === 'early-stopped' || line === 'early-final-stopped';
-        assert.equal(loginStarts, 1, 'explicit return never creates a second browser consent');
-        assert.equal(refreshes, returned ? 1 : 0, 'only one same-role native lease renewal');
-        assert.equal(signouts, 0, 'neither local Stop revokes the approved gaming connection');
-        assert.equal(denials, 0);
-        assert.equal(f.store.find(target)?.membership?.connectionId, connectionId,
-          'Stop and return are bound to the originally approved gaming connection');
-        await account(stopped ? 0 : 1);
+        const hasNewConsent = ['early-reapproval-empty', 'early-reapproved', 'early-signed-out'].includes(line);
+        const afterRevocation = ['early-revoked', 'early-reapproval-pending'].includes(line) || hasNewConsent;
+        const beforeFirstReturn = ['early-first-visible', 'early-stopped'].includes(line);
+        const stopped = ['early-stopped', 'early-final-stopped', 'early-revoked',
+          'early-reapproval-pending', 'early-signed-out'].includes(line);
+        assert.equal(loginStarts, hasNewConsent || line === 'early-reapproval-pending' ? 2 : 1,
+          'only the user opens a second browser challenge after the revoked grant');
+        assert.equal(refreshes, afterRevocation ? 2 : beforeFirstReturn ? 0 : 1,
+          'the original approval is renewed once, then denied exactly once after revocation');
+        assert.equal(denials, afterRevocation ? 1 : 0,
+          'server denial is mandatory before new channel/role consent');
+        assert.equal(signouts, line === 'early-signed-out' ? 1 : 0,
+          'only an explicit logout of the new grant revokes its approval');
+        assert.equal(freshApproval, hasNewConsent);
+        assert.equal(f.store.find(oldTarget || target)?.membership?.connectionId,
+          !afterRevocation ? connectionId : undefined,
+          'revocation removes only the exact obsolete gaming connection');
+        const approvedCount = line === 'early-signed-out' || (afterRevocation && !hasNewConsent) ? 0 : 1;
+        await account(stopped ? 0 : 1, approvedCount);
+        assert(f.store.find(other.lease.sessionToken), 'Bob gaming approval survives Alice revoke/consent');
         if (line === 'early-stopped' || line === 'early-returned') {
-          // Bob has a distinct approved gaming account and active upstream.
-          // Neither his frames while Alice is stopped nor his next message
-          // after her return may cross into Alice's private WebView2 document.
           const foreign = f.chats.get('bob');
           assert(foreign, 'unrelated creator subscription stays independent');
           foreign.publish(line === 'early-stopped' ? 'bob-only-during-stop' : 'bob-only-after-return');
@@ -125,6 +140,36 @@ try {
           const chat = f.chats.get('alice');
           assert(chat, 'the original creator chat remains subscribed across local Stop');
           chat.publish('returned-chat');
+        }
+        if (line === 'early-final-stopped') {
+          oldTarget = target; oldConnection = connectionId;
+          f.creators.removeConnection('alice', oldConnection);
+          removed = true;
+          assert.equal(f.store.find(oldTarget), undefined,
+            'server revoked Alice while her private display was locally stopped');
+          await account(0, 0);
+        }
+        if (line === 'early-revoked') {
+          assert(removed && !freshApproval && loginStarts === 1 &&
+            !f.store.find(oldTarget), 'the denied old refresh never creates consent');
+        }
+        if (line === 'early-reapproval-pending') {
+          assert(removed && pending && !freshApproval &&
+            f.app.login.view(pending.id).role === 'gaming',
+            'second browser challenge is new, fixed-role and not yet approved');
+          await f.authenticate('alice', pending);
+          assert.equal((await f.post(`/login/${pending.id}/approve`)).status, 200,
+            'the creator explicitly reapproves the original gaming role');
+        }
+        if (line === 'early-reapproval-empty') {
+          assert(freshApproval && connectionId !== oldConnection && !f.store.find(oldTarget),
+            'fresh approval is distinct from the revoked connection');
+          const chat = f.chats.get('alice'); assert(chat);
+          chat.publish('fresh-consent-chat');
+        }
+        if (line === 'early-signed-out') {
+          assert.equal(f.store.find(target), undefined,
+            'explicit logout retires only the newly approved game connection');
         }
         child!.stdin!.write('continue\n'); continue;
       }
@@ -201,10 +246,12 @@ try {
   } finally { clearTimeout(deadline); }
   assert(f.store.find(other.lease.sessionToken), 'another creator approval is unchanged');
   if (earlyFirst) {
-    assert(f.store.find(target), 'local Stop retains the exact gaming approval');
-    assert.equal(loginStarts, 1); assert.equal(refreshes, 1); assert.equal(signouts, 0);
-    assert.equal(denials, 0); assert.equal(cancelled, 0); assert(!freshApproval);
-    console.log('companion early first chat: approval -> first text -> Stop -> same gaming grant return -> new DOM text -> Stop passed');
+    assert(removed && freshApproval && oldTarget !== target &&
+      oldConnection !== connectionId && !f.store.find(oldTarget) && !f.store.find(target),
+      'old grant denied, new gaming grant explicitly approved and then logged out');
+    assert.equal(loginStarts, 2); assert.equal(refreshes, 2); assert.equal(signouts, 1);
+    assert.equal(denials, 1); assert.equal(cancelled, 0);
+    console.log('companion early first chat: Stop -> original approval denied -> explicit same-owner gaming consent -> new private DOM -> logout passed');
   } else {
     assert.equal(loginStarts, reapproved ? 4 : 1);
     assert.equal(refreshes, reapproved || redraw ? 5 : revoked ? 4 : 3);

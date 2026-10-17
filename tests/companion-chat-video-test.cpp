@@ -389,6 +389,75 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
             "second local Stop clears return text without revoking the approval");
         flow.state(Status::IdleResumable, controls);
         flow.checkpoint("early-final-stopped");
+
+        // The creator revoked this precise server-side gaming approval while
+        // the local display was stopped. The button's cached eligibility
+        // grants no new authority: the real refresh must be rejected.
+        expect(IsWindowEnabled(GetDlgItem(dialog, 112)) != FALSE,
+            "the previously renewable approval still offers a manual return attempt");
+        command(dialog, 112);
+        flow.wait([&] {
+            return !Chat::client(chat).running() && !Chat::membership(chat) &&
+                !Chat::surface(chat).ready() && !Chat::first_text(chat) &&
+                !Chat::client(chat).can_resume_current() &&
+                text(dialog, 110).find(L"서버 거부") != std::wstring::npos;
+        }, "server revocation denies the old manual return and clears private display");
+        flow.state(Status::Idle, controls);
+        expect(!IsWindowEnabled(GetDlgItem(dialog, 112)) &&
+            text(dialog, 113).find(L"첫 텍스트 렌더링 확인") == std::wstring::npos &&
+            browser_requests == 1,
+            "revocation cannot reopen the old role or log into a different account");
+        flow.checkpoint("early-revoked");
+
+        // The unrelated remembered Bob account is still present. Pressing
+        // Connect must create a NEW challenge for Alice's fixed gaming role,
+        // not reuse Bob or turn a failed refresh into automatic consent.
+        SendDlgItemMessageW(dialog, 107, BM_SETCHECK, BST_UNCHECKED, 0);
+        command(dialog, 104);
+        flow.wait([&] { return browser_requests == 2U; },
+            "one explicit fresh browser login after confirmed revocation");
+        flow.state(Status::AwaitingApproval, controls);
+        expect(!Chat::membership(chat) && !Chat::first_text(chat) &&
+            !Chat::surface(chat).ready() && !IsWindowEnabled(GetDlgItem(dialog, 112)),
+            "new consent pending cannot inherit a revoked sender or previous text");
+        flow.checkpoint("early-reapproval-pending");
+
+        try {
+            flow.wait([&] {
+                return Chat::membership(chat).has_value() &&
+                    Chat::surface(chat).rendered_frames() >= 1U;
+            }, "new explicit gaming approval creates a subscribed private document");
+        } catch (...) {
+            Chat::first_display_evidence(chat);
+            throw;
+        }
+        expect(Chat::membership(chat)->membership.role == chatview::DisplayRole::Gaming &&
+            Chat::membership(chat)->membership.connection_id != approved.connection_id &&
+            Chat::surface(chat).rendered_messages() == 0U && !Chat::first_text(chat),
+            "fresh owner consent receives a new gaming grant and no old first-text ACK");
+        flow.state(Status::Receiving, controls);
+        flow.checkpoint("early-reapproval-empty");
+        flow.received(L"fresh-consent-chat", 0U, L"returned-chat", L"bob-only-after-return");
+        auto saved_after_consent = chatview::load_connection();
+        const bool intact = saved_after_consent && saved_after_consent->credential == other &&
+            saved_after_consent->origin == origin && saved_after_consent->developer_loopback;
+        if (saved_after_consent) SecureZeroMemory(saved_after_consent->credential.data(),
+            saved_after_consent->credential.size() * sizeof(wchar_t));
+        expect(intact && browser_requests == 2U,
+            "fresh Alice consent does not replace the unrelated saved creator");
+        flow.checkpoint("early-reapproved");
+
+        command(dialog, 108); // Only the user's explicit logout revokes new approval.
+        flow.wait([&] {
+            return !Chat::client(chat).running() && !Chat::membership(chat) &&
+                !Chat::first_text(chat) && !Chat::surface(chat).ready() &&
+                !Chat::client(chat).can_resume_current();
+        }, "explicit logout clears newly approved private chat and return eligibility");
+        flow.state(Status::Idle, controls);
+        flow.checkpoint("early-signed-out");
+        expect(!GetModuleHandleW(L"obs.dll") && !GetModuleHandleW(L"obs-frontend-api.dll") &&
+            !Video::requested(video) && !Video::capture(video).running(),
+            "revocation, reapproval and logout never start gaming-PC OBS or independent video");
         video.close(); chat.close(); hud.destroy();
         return;
     }

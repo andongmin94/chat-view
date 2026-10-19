@@ -56,8 +56,9 @@ test('real Socket.IO disconnect and fresh subscribe deliver only new first text 
     allowEIO3: true, transports: ['websocket'], serveClient: false, perMessageDeflate: false,
   });
   await new Promise<void>(resolve => providerHttp.listen(0, '127.0.0.1', resolve));
-  const port = providerHttp.address();
-  assert.ok(port && typeof port !== 'string');
+  const address = providerHttp.address();
+  assert.ok(address && typeof address !== 'string');
+  const providerPort = address.port;
 
   // The production socket constructor/URL validation is unchanged. Substitute
   // only its destination, keeping the real Socket.IO v2 Manager and EIO3 wire.
@@ -69,7 +70,7 @@ test('real Socket.IO disconnect and fresh subscribe deliver only new first text 
       assert.equal(options.port, 443);
       assert.equal(options.reconnection, false);
       assert.deepEqual(options.transports, ['websocket']);
-      super({ ...options, hostname: '127.0.0.1', port: port.port, secure: false });
+      super({ ...options, hostname: '127.0.0.1', port: providerPort, secure: false });
     }
   } };
 

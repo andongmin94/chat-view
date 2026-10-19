@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 실측 치지직 OAuth·CHAT 응답 계약으로 첫 수신 차단 해소
+## 현재 흐름: 실제 Socket.IO 중단·재구독과 마지막 PC 승인 해제의 서비스 수명
+
+시작 원격 OBS HEAD **7b1ece12a0542215c0e59cb30d964d788992b866**, main **6d1633d3df75c4781051394a5c381ea8275a804f**을 재확인하고 필수 5개 문서를 읽었다.
+
+- **사용자 동선:** 동일 creator가 gaming·streaming 각각 승인한 두 private HUD에 실제 Socket.IO v2/EIO3를 거친 첫 채팅/이후 채팅이 보인다. upstream을 강제로 끊으면 두 창에서 과거 메시지·수신 건수를 비우고, 원래 PC 승인을 그대로 유지한 채 **새 provider ticket/Socket.IO 세션의 첫 글자만** 자동 복귀한다. 다른 creator의 private 창은 영향을 받지 않는다. 한 PC를 명시적으로 로그아웃해도 남은 PC는 계속 수신하지만 **마지막 PC까지 로그아웃/관리자가 승인 해제하면** 해당 creator의 upstream 구독/예약된 재시도를 중지한다. 다시 역할을 명시적으로 승인하면 provider grant가 남아 있으므로 새 구독을 시작할 수 있다. 전체 provider 권한 철회는 해당 creator의 모든 private HUD를 닫고 다른 creator는 유지한다.
+- **코드 개선:** `Creators`의 마지막 역할 제거 후 `ChzzkChatSession.stop()`을 호출하고 재연결 타이머를 취소한다. 기존 `c.stopping`의 identity로 이미 진행/예약된 재연결을 fence해, last-device 로그아웃과 동시에 발생한 자동 복귀가 이전 구독을 되살리지 못하게 한다. 이 작업은 재사용 불가 refresh token의 `c.epoch`를 건드리지 않아 동시 갱신 결과의 저장 안전성을 유지한다. provider refresh가 끝날 때 승인된 PC가 하나도 없으면 자동으로 채팅을 재구독하지 않는다. 잘못된 관리 화면의 이미 제거된 connection ID no-op은 새로운 구독 중단을 일으키지 않는다. 게임 PC OBS·새 데스크톱 시스템·호환성 API·광고 데이터 계산은 추가하지 않는다.
+- **검증 범위:** 신규 `platform/tests/chzzk-reconnect-wire.test.mts`에서 실제 로컬 Socket.IO v4/EIO3 호환 서버와 기존 Socket.IO v2 클라이언트, `Creators`·SQLite·암호화 provider grant·실제 private WebSocket 두 역할+다른 creator를 함께 실행한다. 실제 전송 경계의 첫 글자→중단 상태 0→1회 재구독→새 첫 글자/이전 이력 격리→게임 역할 로그아웃/송출 유지→마지막 로그아웃/구독 중단→재승인→provider 철회/타 creator 불변을 검사한다. 실제 등록된 네이버 치지직 앱·프로덕션 채널, 두 물리 PC·네이티브 WinHTTP/WebView2는 이 fixture의 범위가 아니다. 별도 refresh 단일사용 권한 갱신 중 최종 승인 해제를 회귀 검증한다.
+- **CI:** 기능 코드/검사·최종 성공/실패 SHA는 관련 CI 확인 후 이 항목에 반영한다. 로컬 환경은 GitHub 도메인 DNS가 없어 git clone/npm 검사를 **실행하지 못함**. CHZZK contract와 경로 조건으로 실행되는 관련 OBS public-ad synthetic 외에 불필요한 수동 Windows 네이티브/패키지/qualification은 실행하지 않는다. D1/D2/D4/D6/D7, 실제 CHZZK G4-06, HUD 없는 물리 투컴 G3-04, 유료 광고/HP/정산/배포는 미완료.
+
+## 직전 완료 흐름: 실측 치지직 OAuth·CHAT 응답 계약으로 첫 수신 차단 해소
 
 시작 원격 OBS HEAD `5b26d65ac5257dd574292a6fa2d5987c92057069`, main `6d1633d3df75c4781051394a5c381ea8275a804f` 불변. AGENTS → PRODUCT → development-workflow → architecture → 이 계획 순으로 읽고 OBS만 작업한다.
 
@@ -207,6 +216,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-실측 응답 스키마 기반 첫 글자 처리 후에는 **실제 Socket.IO upstream을 Creators의 자동 재구독과 연결하고, 두 승인된 private HUD로 첫 글자→강제 단절→새 세션 첫 글자→provider 권한 철회를 end-to-end로 검증**한다. 그 다음 등록 앱과 실제 로그인 계정으로 WinHTTP/WebView2 첫 화면까지 확인한다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
+합성 Socket.IO→Creators→두 private WebSocket과 승인 해제까지 이어지면, **실제 치지직 등록 앱/채널에서 OAuth→첫 메시지→장시간 수신→강제 단절·재연결→권한 철회**를 확인하고 같은 동선을 기존 native WinHTTP/WebView2 HUD에 연결한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

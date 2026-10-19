@@ -228,3 +228,28 @@ test('long healthy subscriptions restore the bounded auto-reconnect budget', { t
     assert.equal(f.exchangeCalls, 1, 'provider OAuth was performed only for the initial approval');
   } finally { await f.close(); }
 });
+
+
+test('last PC signout during a one-use provider refresh preserves the rotated grant and never restarts unattended chat', async () => {
+  const f = await fixture();
+  try {
+    const alice = await f.connect('alice', 'gaming');
+    const bob = await f.connect('bob', 'gaming');
+    const pending = deferred<Tokens>();
+    f.setRefresh(() => pending.promise);
+    const refreshing = f.creators.refresh('alice');
+    assert.equal(f.grants.load('alice'), undefined, 'one-use refresh was durably claimed');
+    assert.equal((await f.native('/display/signout', 'ChatView-Session',
+      alice.lease.sessionToken)).status, 200);
+    assert.equal(f.store.connections('alice').length, 0);
+    pending.resolve(tokens('alice', 1));
+    await refreshing;
+    assert.equal(f.grants.load('alice')?.tokens.accessToken, tokens('alice', 1).accessToken,
+      'last-device signout does not invalidate the in-flight provider rotation');
+    assert.equal(f.active.get('alice'), 0, 'the rotated provider grant is not an unattended subscription');
+    assert.equal(f.creators.describe('alice').chatState, 'stopped');
+    assert.equal(f.active.get('bob'), 1);
+    assert.ok(f.creators.gateway(bob.lease.token));
+    assert.equal(f.refreshCalls, 1);
+  } finally { await f.close(); }
+});

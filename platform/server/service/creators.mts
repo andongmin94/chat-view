@@ -108,6 +108,14 @@ export class Creators {
     c.stopping = Promise.allSettled([c.stopping, ...(chat ? [chat.stop()] : [])]);
     c.gateway.changed();
   }
+  #stopUnattendedChat(owner: string) {
+    const c = this.#creators.get(owner);
+    if (!c || this.sessions.connections(owner).length) return;
+    // The last explicitly approved PC is gone. End its shared subscription
+    // and retry, but preserve the provider grant and any token refresh in flight.
+    clearTimeout(c.retry); c.retry = undefined; c.retries = 0;
+    this.#stopChat(c);
+  }
   #retire(c: Creator) {
     this.audience.clear(c.channel.channelId);
     c.epoch++; c.tokens = undefined; c.expires = 0; c.refreshing = undefined; c.validating = undefined;
@@ -229,7 +237,8 @@ export class Creators {
     try { await task; } finally { if (c.refreshing === task) c.refreshing = undefined; }
     // Chat transport failure is NOT provider refresh failure. The successfully
     // persisted replacement must survive it and remain usable after restart.
-    await this.ensureChat(owner);
+    // A concurrent last-device logout must not resurrect an unattended chat.
+    if (this.sessions.connections(owner).length) await this.ensureChat(owner);
   }
   async ensureChat(owner: string): Promise<void> {
     const c = this.#get(owner);
@@ -242,10 +251,11 @@ export class Creators {
     if (c.ready) return c.ready;
     if (c.chat?.snapshot().state === 'subscribed') return;
     clearTimeout(c.retry); c.retry = undefined;
-    const epoch = c.epoch;
+    const epoch = c.epoch, stopping = c.stopping;
     const task = (async () => {
-      await c.stopping;
-      if (this.#closed || c.epoch !== epoch || !c.tokens) throw new DisplayAccessError(503);
+      await stopping;
+      if (this.#closed || c.epoch !== epoch || c.stopping !== stopping || !c.tokens)
+        throw new DisplayAccessError(503);
       let subscribedAt: number | undefined;
       const chat = this.#options.createChat(() => {
         if (c.chat !== chat || c.epoch !== epoch || this.#closed) return;
@@ -257,8 +267,12 @@ export class Creators {
           // Restore retries after a long healthy subscription, never after a rapid flap.
           if (subscribedAt !== undefined && this.#now() - subscribedAt >= STABLE_CHAT_MS) c.retries = 0;
           if (c.retry || c.retries >= 5) return;
+          const retryStopping = c.stopping;
           c.retry = setTimeout(() => {
             c.retry = undefined;
+            // Last-device logout cancels even a queued callback, without
+            // invalidating an unrelated provider refresh.
+            if (this.#closed || c.epoch !== epoch || c.stopping !== retryStopping) return;
             void this.ensureChat(owner).catch(() => {});
           }, 1000 * 2 ** c.retries++);
           c.retry.unref();
@@ -322,12 +336,16 @@ export class Creators {
     const session = this.sessions.find(token);
     this.sessions.remove(token);
     if (session?.membership?.role === 'streaming') this.audience.clear(session.owner);
-    if (session) this.#creators.get(session.owner)?.gateway.changed();
+    if (session) {
+      this.#stopUnattendedChat(session.owner);
+      this.#creators.get(session.owner)?.gateway.changed();
+    }
   }
   removeConnection(owner: string, id: string) {
-    if (this.sessions.connections(owner).some(c => c.connectionId === id && c.role === 'streaming'))
-      this.audience.clear(owner);
+    const existing = this.sessions.connections(owner).find(c => c.connectionId === id);
+    if (existing?.role === 'streaming') this.audience.clear(owner);
     this.sessions.removeConnection(owner, id);
+    if (existing) this.#stopUnattendedChat(owner);
     this.#creators.get(owner)?.gateway.changed();
   }
   async revoke(owner: string): Promise<boolean> {

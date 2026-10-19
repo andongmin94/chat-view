@@ -65,11 +65,21 @@ test('display frame strips private fields and is accepted by the existing native
   const raw = displayFrame({ state: 'subscribed', received: 1, messages: [{ ...message(), senderChannelId: 'PRIVATE_SENDER', token: 'PRIVATE_TOKEN' }], token: 'PRIVATE_ACCESS' });
   assert.doesNotMatch(raw, /PRIVATE_/u); assert.ok(Buffer.byteLength(raw) < MAX_DISPLAY_FRAME_BYTES);
   let listener: ((event: unknown) => void) | undefined; let rendered: unknown;
-  const bridge = { addEventListener(_event: string, fn: (event: unknown) => void) { listener = fn; }, removeEventListener() {}, postMessage() {} };
+  const replies: string[] = [];
+  const bridge = { addEventListener(_event: string, fn: (event: unknown) => void) { listener = fn; },
+    removeEventListener() {}, postMessage(reply: string) { replies.push(reply); } };
   const document = { getElementById() { return { children: { length: 1 } }; } };
   const close = connectNativeChat(document, bridge, (_doc: unknown, snapshot: unknown) => { rendered = snapshot; }, 'nonce');
-  listener!({ source: bridge, data: JSON.parse(raw) });
-  assert.deepEqual(rendered, { state: 'subscribed', received: 1, messages: [message()] }); close();
+  try {
+    const frame = JSON.parse(raw);
+    assert.equal(Object.hasOwn(frame, 'frameId'), false, 'server never issues native DOM frame IDs');
+    // NativeChatSurface stamps the ID only after WinHTTP validates and removes
+    // the private connection metadata; this test exercises that same boundary.
+    listener!({ source: bridge, data: { ...frame, frameId: '1' } });
+    assert.deepEqual(rendered, { state: 'subscribed', received: 1, messages: [message()] });
+    assert.equal(replies.at(-1), 'chat-rendered:nonce:1:1');
+    assert.doesNotMatch(replies.join(''), /PRIVATE_|onerror|한글/u);
+  } finally { close(); }
 });
 
 test('invalid/oversized DTO is rejected and non-subscribed frames contain no previous chat', () => {

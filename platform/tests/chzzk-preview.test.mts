@@ -85,6 +85,7 @@ test('first CHZZK frame during subscribe appears in the first own chat stream sn
   assert.equal((await f.post('/chat/stop')).status, 303);
   frame = await next();
   assert.equal(frame.state, 'stopped');
+  assert.equal(frame.received, 0, 'local Stop clears the first-message counter too');
   assert.deepEqual(frame.messages, [], 'local Stop clears the early first text');
 });
 
@@ -92,7 +93,10 @@ test('revocation clears the stream and local authorization; no automatic global 
   const f = await fixture(t); await f.post('/chat/start'); f.send();
   const next = await f.events(); assert.equal((await next()).messages.length, 1);
   f.socket().emit('SYSTEM', { type: 'revoked', data: { channelId: 'mine', eventType: 'CHAT' } });
-  assert.equal((await next()).state, 'revoked');
+  const revoked = await next();
+  assert.equal(revoked.state, 'revoked');
+  assert.equal(revoked.received, 0, 'confirmed upstream revocation clears the first-message count');
+  assert.deepEqual(revoked.messages, []);
   assert.equal((await f.post('/chat/start')).status, 400);
   assert.match(await (await f.get('/')).text(), /치지직 로그인/u);
   assert.equal(f.calls.some(url => url.endsWith('/revoke')), false);

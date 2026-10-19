@@ -4,15 +4,14 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 송출 PC의 동시 승인 경쟁 후 재수집 브라우저 복귀 안정화
+## 현재 흐름: 치지직 구독 중단 후 이전 메시지·수신 건수 없이 새 세션 복귀
 
-시작 OBS `62198d98af49a5386736779fcb9c17749765d015`. AGENTS → PRODUCT → development-workflow → architecture → 이 개발 계획 순으로 확인했다. 앞선 **CHZZK contract #96**은 Chromium **29/29**이었지만 동일한 fixture·브라우저 코드에서 **#97/run `38871048093` 및 #98/run `39187277542`의 Chromium**은 둘 다 `collection-recollect` 단계에서 실패했다. #98 Node22/24/Ubuntu/Windows **344/344** 통과·Chromium 실패라는 범위를 구분한다.
+시작 OBS HEAD `731d1b040b56f263287aed1711bf596b7144b6e4`, CHZZK #99/run `39189448824`의 실제 Node 22/24 Ubuntu·Windows 4개 job·Chromium **29/29**, Node **344/344** 성공 확인. AGENTS → PRODUCT → development-workflow → architecture → 이 계획 순으로 읽었고 OBS만 수정한다.
 
-- **사용자 흐름:** Bob 채널에서 송출 PC 두 개가 같은 streaming 역할의 명시적 브라우저 동의를 주고 앱에서 동시에 승인 수집을 시도한다. 서버가 단 한 PC의 승인을 원자적으로 부여하고, 진 송출 요청에는 `retry-required`와 원래 확인 번호를 보여준다. 사용자가 기존 송출 승인을 직접 해제해 자리가 비어도 이전 동의로 자동 연결되지 않는다. **원래 요청의 브라우저에서 동일 채널·송출 역할에 명시적으로 다시 동의**한 경우에만, initiating PC가 원래 verifier로 승인 1회를 새로 수집하고, 새 연결에서 출력 보고가 온 후 기존 공개 광고 URL의 캠페인을 사용자가 직접 재선택할 수 있다. Bob 게임 PC와 Alice 기존 승인/광고는 그대로다.
-- **교정한 경계:** `BrowserLogin.poll`은 **단조 `performance.now()` 기준 `LOGIN_POLL_MS=1000`**을 엄격히 검사한다. Chromium fixture의 기존 소수점 `setTimeout`은 타이머가 경계 전에 깨어나는 경우 429를 유발할 수 있었다. 이제 **동일 단조 시계가 실제 허용 시각에 도달한 뒤** 단 한 번 승인 수집을 시도한다. 이전 #97/#98의 구체적 실패 assertion은 scrubbed fixture 결과에 없어 이 가설을 유일 원인으로 확정할 수 없으며, 타임아웃 확장/HTTP 반복 재시도/서버 인증 완화는 하지 않았다.
-- **브라우저 검증 강화:** 실제 Playwright Chromium에서 두 번째 명시적 동의 버튼 클릭 뒤에는 해당 `/login/<id>/approve` **HTTP 200**과 동일 원래 ID의 `data-login-collection="awaiting-app"` 완료 화면을 모두 확인한다. 단순 버튼 클릭만으로 서버 수집을 시작하지 않는다. 후속 원래 요청 1회 수집→기존 광고 미선택→출력 보고→관리자 직접 선택→시청자 공개 배너 복귀까지 기존 보안/캠페인 검사 전부 유지한다.
-- **실제 CI 검증:** 기능 커밋 `2036472f9816f6f135de6bf1c76a4155c6c8dc90`의 [CHZZK contract #99/run `39189448824`](https://github.com/andongmin94/chat-view/actions/runs/39189448824) **completed/success, 전체 5개 작업 성공**. 합성 제공자를 이용한 **실제 Playwright Chromium 관리 브라우저 29/29 성공**: 동시 송출 승인 경쟁→패배 요청의 이전 동의 폐기→기존 승인 직접 철회→원래 요청의 수동 재동의(브라우저 POST 200 및 `awaiting-app`)→다음 허용 시각의 원래 verifier 승인 수집→새 송출 보고→관리자 수동 동일 공개 URL 캠페인 재선택. 합성 증빙 artifact `12159616326`. Ubuntu/Windows × Node22/24 검증 4작업 모두 성공, Ubuntu24 **344/344·fail0·skip0**, locked dependency 취약점 0건. 변경된 브라우저/fixture·문서를 **코드 푸시 1회 + CHZZK Actions 1회**로 검증했고 Windows native/공식 OBS/qualification은 실행하지 않았다. `main`·provider credentials·Origin/CSRF/역할/광고 권한·서버 1000ms poll 한도는 그대로다. **#97/#98의 정확한 fixture 실패 지점은 노출되지 않아 경계 타이밍 가설은 미확정**이며, #99 한 번의 성공으로 반복 안정성·실서비스/실방송 수용을 완료했다고 간주하지 않는다.
-- **미완료:** D1 간헐 첫 수신·D2 핸들 증가·D4 OBS 캡처·D6 WGC 분리 영상·D7 OBS/CEF 시작, 실제 치지직 OAuth/권한·장시간 구독, 실제 게임 PC에 OBS 없는 물리 투컴 HUD 제외, 광고 실노출·HP·정산·배포 qualification.
+- **보이는 사용자 동선:** 실제 치지직 제공자 채팅 구독 중 첫 글자가 도착했는데 HTTP 성공과 `SYSTEM subscribed`의 두 확인이 끝나기 전에 upstream이 단절되거나 `revoked`가 도착한다. 이 글자는 기존 private HUD/미리보기에 전달되지 않고, 이전 구독의 늦은 HTTP 성공/오래된 WebSocket 콜백도 이를 다시 표시하거나 **새 CHZZK 세션**에 주입할 수 없다. 이후 사용자가 새로 인증된 채팅 구독을 열어 정상 첫 메시지를 받으면 그 메시지만 첫 자체 화면에 표시한다. 한 번 구독했던 세션에서 disconnect/Stop/철회되어도 이전 **메시지 수신 건수**가 남아 있지 않다.
+- **구현:** 기존 `ChzzkChatSession`는 이미 부팅 중 대기 메시지를 100개로 제한하고 `#closed`/자체 소켓 수명으로 늦은 callbacks을 fence하며, 새 upstream마다 새 인스턴스를 쓴다. 종료 시 메시지·pending 메시지는 비웠지만 **`#received` 카운터만 남기는 누락**을 바로잡아 종료 상태의 자체/native snapshot을 완전히 초기화한다. 새 저장소·토큰 정책·재시도/타임아웃·브라우저 권한·데스크톱 프로세스는 추가하지 않는다.
+- **연결 검증:** `chzzk-session.test.mts`에서 이전 세션의 구독 HTTP 응답을 의도적으로 보류한 채 첫 CHAT/정확한 SYSTEM ACK를 받게 한 뒤, disconnect와 `revoked` 각각의 세션 종료를 시험한다. 새 세션은 새 ticket/socket에서 정상 첫 글자를 받는다. 이전 HTTP 성공과 유출된 낡은 CHAT 핸들러를 그 후 호출해도 전/후 메시지가 섞이지 않아야 한다. 기존 종료 상태 5종에서 receipt count 0도 확인한다. `chzzk-preview.test.mts`의 실제 첫 자체 미리보기 SSE도 Stop·권한 철회 뒤 수신 건수와 메시지 모두 0인지를 검사한다.
+- **검증·Actions:** 변경한 서버+Node unit/browser 테스트와 사용 설명을 **한 번의 기능 코드 커밋**으로 묶는다. 준비된 Node 검사는 로컬 구현 모사로 preflight 후, 변경 SHA에서 CHZZK contract Node×4/Chromium을 한 번 확인한다. Windows native/OBS/qualification은 대상 코드 변경이 없어 실행하지 않는다. 실계정 OAuth/메시지 수신·장시간 실서비스 G4-06, 물리 게임 PC OBS 없는 clean video G3-04, D1/D2/D4/D6/D7 및 광고 실제 노출·유료/HP/정산/배포는 미완료다.
 
 
 ## 직전 완료 흐름: 승인 순간 첫 채팅 표시 검증 복구와 Actions 사용량 절감
@@ -188,6 +187,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-이번 재수집 브라우저 흐름이 Chromium에서 통과하면 **실제 치지직 등록 앱/채팅 읽기 권한으로 OAuth→Session→CHAT 첫 메시지**를 챗뷰 자체 HUD에 표시하는 G4-06 검증으로 넘어간다. 현재 계정 인증·등록 애플리케이션·물리 장비가 없어 그 성공을 합성으로 대신하지 않는다. 실계정 전에도 독립적으로 개선 가능한 한 흐름은 **구독 중단 직후의 메시지가 신규 세션의 첫 채팅에 유입되지 않는지** 확인하는 수신 경계다. 병행 최우선 물리 검증은 **게임 PC에 OBS 없이 HUD를 보고, 송출 PC의 녹화 영상에는 HUD가 없는지** 실측하는 G3-04다. D1/D2/D4/D6/D7, 유료 광고·HP·정산 및 배포 qualification은 미완료이며, 관련 변경은 사전 확인 후 한 번에 묶는다.
+구독 중단→새 구독의 메시지/카운터 격리를 끝내면 **동일 치지직 creator의 게임 PC와 송출 PC가 한 upstream에 붙은 상태에서 채팅 연결이 중단되고 다시 살아날 때** 두 기존 승인된 private HUD에 새 글자만 전달되고, 다른 creator의 채팅·승인은 그대로인지 실서비스 HTTP/SQLite/WebSocket 경계를 검증한다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

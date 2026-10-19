@@ -59,7 +59,9 @@ export class ChzzkChatSession {
   }
   #finish(state: ChatState) {
     if (this.#closed) return;
-    this.#closed = true; this.#state = state; this.#messages = [];
+    this.#closed = true; this.#state = state; this.#messages = []; this.#received = 0;
+    // A cancelled subscription must not leave even its receipt count visible
+    // to the native/preview clients, or revive on a late HTTP/SYSTEM callback.
     this.#pendingMessages = []; this.#pendingReceived = 0;
     this.#lifetime.abort(); clearTimeout(this.#timer);
     this.#abortCleanup?.(); this.#abortCleanup = undefined;

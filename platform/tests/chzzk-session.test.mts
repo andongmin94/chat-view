@@ -7,6 +7,7 @@ import { ChzzkChatSession, MAX_MESSAGES } from '../server/chzzk/session.mts';
 import type { ChatApi } from '../server/chzzk/session.mts';
 import { ChzzkApi } from '../server/chzzk/api.mts';
 import { parseChatMessage, parseSystemEvent } from '../server/chzzk/events.mts';
+import { nativeChatSnapshot } from '../web/native-chat.js';
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 const message = (content = '안녕하세요 <script>alert(1)</script>') => ({
@@ -155,6 +156,60 @@ test('pre-confirmation burst is bounded; subscription failure discards all buffe
   await broken.session.stop();
 });
 
+// The production service creates a fresh ChzzkChatSession for every upstream
+// restart. An unconfirmed first chat, an old SYSTEM ack and a slow HTTP reply
+// from the retired session must not become the new native HUD's first text.
+for (const closing of ['disconnect', 'revoked'] as const) {
+  test(`unconfirmed first chat from ${closing} never enters a replacement session`, async () => {
+    let finishOldSubscribe!: () => void;
+    const old = fixture({
+      async subscribeChat() { await new Promise<void>(resolve => { finishOldSubscribe = resolve; }); },
+    });
+    const first = old.session.start('PRIVATE_ACCESS', 'mine');
+    const rejected = assert.rejects(first);
+    await tick();
+    old.socket.emit('SYSTEM', { type: 'connected', data: { sessionKey: 'PRIVATE_KEY' } });
+    const oldChatListener = old.socket.listeners('CHAT')[0]!;
+    old.socket.emit('CHAT', message('PRIVATE_OLD_FIRST_TEXT'));
+    old.socket.emit('SYSTEM', system('subscribed'));
+    assert.equal(old.session.snapshot().state, 'subscribing');
+    assert.deepEqual(old.session.snapshot().messages, []);
+    assert.equal(old.session.snapshot().received, 0);
+
+    if (closing === 'disconnect') old.socket.emit('disconnect', 'PRIVATE_OLD_SOCKET');
+    else old.socket.emit('SYSTEM', system('revoked'));
+    assert.equal(old.session.snapshot().state, closing === 'disconnect' ? 'disconnected' : 'revoked');
+    assert.equal(old.socket.listenerCount('CHAT'), 0);
+    assert.deepEqual(old.session.snapshot().messages, []);
+    assert.equal(nativeChatSnapshot(old.session.snapshot()).received, 0);
+    assert.equal(old.session.snapshot().received, 0);
+
+    // A replacement uses a separate provider ticket/socket and starts empty.
+    const current = fixture();
+    await current.begin();
+    assert.equal(current.session.snapshot().received, 0);
+    current.socket.emit('CHAT', message('fresh authorized first text'));
+    assert.equal(current.session.snapshot().state, 'subscribed');
+    assert.deepEqual(current.session.snapshot().messages.map(m => m.content),
+      ['fresh authorized first text']);
+    assert.equal(nativeChatSnapshot(current.session.snapshot()).received, 1);
+
+    // Provider I/O and even a previously captured listener may complete late.
+    finishOldSubscribe();
+    await rejected;
+    oldChatListener(message('PRIVATE_LATE_MESSAGE'));
+    old.socket.emit('SYSTEM', system('subscribed'));
+    assert.equal(old.session.snapshot().received, 0);
+    assert.deepEqual(old.session.snapshot().messages, []);
+    assert.deepEqual(current.session.snapshot().messages.map(m => m.content),
+      ['fresh authorized first text']);
+    assert.doesNotMatch(JSON.stringify(current.session.snapshot()), /PRIVATE_/u);
+    await old.session.stop(); await current.session.stop();
+    assert.equal(current.session.snapshot().received, 0);
+    assert.deepEqual(current.session.snapshot().messages, []);
+  });
+}
+
 for (const end of ['revoked', 'unsubscribed', 'disconnect', 'connect_error', 'error']) {
   test(`${end} closes delivery, clears history, suppresses raw reasons and late messages`, async () => {
     const f = fixture(); await f.begin(); f.socket.emit('CHAT', message());
@@ -163,6 +218,7 @@ for (const end of ['revoked', 'unsubscribed', 'disconnect', 'connect_error', 'er
     else f.socket.emit(end, new Error('PRIVATE_REASON'));
     late(message());
     assert.equal(f.session.snapshot().messages.length, 0);
+    assert.equal(f.session.snapshot().received, 0, 'terminal state cannot retain the old HUD count');
     assert.equal(f.socket.connected, false);
     assert.doesNotMatch(JSON.stringify(f.session.snapshot()), /PRIVATE_/u);
     assert.equal(f.socket.listenerCount('CHAT'), 0);

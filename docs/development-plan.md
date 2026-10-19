@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 두 PC 자체 채팅의 반복 렌더링 제거와 새 메시지 누적 표시
+## 현재 흐름: 치지직 신규 로그인 승인 전 네이티브 HUD 사전 준비
+
+시작 원격 OBS `e13a080829e18bde6d0b4137fd5bef3dc382f9b6`, main `6d1633d3df75c4781051394a5c381ea8275a804f` 확인. 필수 문서 AGENTS → PRODUCT → workflow → architecture → development-plan 순서 준수.
+
+- **D1 사용자 문제:** 지난 [Windows #447/run `39215259769`](https://github.com/andongmin94/chat-view/actions/runs/39215259769)은 Windows x64 빌드 성공, 전체 routine 48/50. 첫 `native-logout cancel`은 **채팅 이전 HUD startup**에서 실패했고, `native-chat-switch memory`는 승인 뒤 **첫 빈 subscribed 프레임 표시**에서 실패했다. 같은 run의 변경된 `native-chat-surface`와 `native-display-client`는 성공했다. 본 수정은 HUD 전체 환경 초기화의 원인을 주장하거나 CI 실패를 숨기지 않는다.
+- **동선 개선:** 기존 `NativeChatConnection::begin`은 브라우저 승인 대기 중 `NativeChatSurface`를 닫아 두고, 서버로부터 승인된 첫 `Receiving` 프레임이 올 때 처음 WebView2 자체 문서를 만들었다. 승인과 첫 글자가 겹칠 때 소유 문서 탐색·nonce 핸드셰이크가 수신과 경쟁한다. 사용자 **로그인 / 연결** 클릭 시 기존 WebView2/CSP/nonce를 사용하는 **텍스트 없는 자체 문서만 사전 준비**하고, 실제 채팅 내용·연결 역할·수신 건수는 검증된 서버 승인/첫 프레임까지 전달하지 않는다. 승인 이후 이미 준비된 문서를 재사용하고 기존 **15초 렌더 대기 예산**을 승인 시점에서 새로 시작한다. 의도적으로 선택한 **외부 채팅 페이지는 승인 전 그대로 두고**, 정상 승인된 시점에만 기존 동작대로 자체 문서로 전환한다. 연결 중지/미승인/승인 취소/보호 해제 없이 우회 없음.
+- **회귀:** 기존 실제 Windows WinHTTP/COM/WebView2 `native-display-client`와 `native-chat-switch` 테스트에서 미승인 중에는 자체 문서 포인터만 준비되고 `rendered_frames()==0`, `rendered_messages()==0`, `membership` 없음 및 `AwaitingApproval`이어야 한다고 검증한다. 이후 합성 승인·빈 subscribed 첫 표시·실제 첫 메시지·외부 전환·같은 승인 복귀·로그아웃/철회는 기존 검사 그대로 유지한다. 원래 간헐적인 WebView2 host startup 실패는 별도 근거가 필요하며 D1을 종료하지 않는다.
+- **검증:** 이 변경의 Windows native routine 실행 결과를 동일 SHA와 연결해 기록한다. platform API/renderer/광고는 그대로이므로 관련 없는 CHZZK·공식 OBS 광고 Actions를 시작하지 않는다. 소스·검사/문서 변경은 OBS만. D1/D2/D4/D6/D7·실계정 G4-06·게임 PC OBS 없는 물리 투컴 G3-04·유료 광고/HP/정산·배포 qualification은 미완료.
+
+## 직전 완료 흐름: 두 PC 자체 채팅의 반복 렌더링 제거와 새 메시지 누적 표시
 
 시작 원격 `OBS` HEAD `41536bbf84ce9d78a988d15c76502ebbe5e81767`, `main` `6d1633d3df75c4781051394a5c381ea8275a804f`를 재확인하고 AGENTS → PRODUCT → workflow → architecture → 이 계획 순서로 읽었다.
 
@@ -249,6 +258,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-먼저 #447에서 재확인된 D1의 **첫 HUD 준비·소유 WebView2 문서 handshake·빈 subscribed 표시** 실패 경계를 구분하고, 기존 네이티브 구현의 첫 표시 신뢰도를 개선한다. 그 뒤 실제 치지직 등록 앱/계정이 준비되면 **OAuth→라이브 첫 메시지→장시간 방송/새 메시지 누적→구독 단절·복귀→철회**를 게임 PC OBS 없는 컴패니언과 송출 PC의 원래 승인 역할로 검증한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
+미승인 단계의 소유 채팅 문서 사전 준비 뒤에는 #447의 남은 **WebView2 host 자체 startup 불안정성**을 종료·복구 안전성 경계 안에서 조사한다. 실제 등록된 치지직 앱/채널이 준비되면 OAuth→첫 텍스트→장시간 채팅/새 메시지 누적→업스트림 단절·복귀→권한 철회를 게임 PC OBS 없는 컴패니언과 송출 PC에서 각각 검증한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

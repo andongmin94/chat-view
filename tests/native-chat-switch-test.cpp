@@ -280,6 +280,11 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
     SendDlgItemMessageW(dialog, 107, BM_SETCHECK, mode == "remembered" ? BST_CHECKED : BST_UNCHECKED, 0);
     command(dialog, 104);
+    expect(chatview::NativeChatSurfaceTestAccess::core(Access::surface(chat)) != nullptr &&
+        Access::surface(chat).rendered_frames() == 0U &&
+        Access::surface(chat).rendered_messages() == 0U &&
+        !Access::membership(chat).has_value(),
+        "own WebView2 document is prewarmed but cannot show chat or establish a role before approval");
     // Force the first subscribed zero-row render before the provider sends
     // the first text. Do not use a retry loop or broaden the 15-second limit.
     await(chat, [&] {

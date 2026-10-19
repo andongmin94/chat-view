@@ -357,7 +357,13 @@ void NativeChatConnection::begin(std::wstring origin, std::wstring credential, b
     // never an extra approval or a value read back from editable controls.
     login_cancel_waiting_ = false; login_url_.clear(); service_origin_ = std::move(bound_origin);
     awaiting_login_ = mode == DisplayAuthentication::Browser || mode == DisplayAuthentication::BrowserRemember;
-    if (awaiting_login_) surface_.close();
+    // Prepare the private, immutable chat document while the system browser
+    // handles consent. This removes the own-document navigation/nonce-handshake
+    // latency from the first approved chat frame. It has NO access to private
+    // chat or credentials until that server lease is validated.
+    // A deliberately selected external page must remain untouched until
+    // explicit approval; the previous switch behavior still applies to it.
+    if (awaiting_login_ && hud_.webview_.external_page_selected()) surface_.close();
     else if (!open_surface()) {
         end(L"자체 채팅 화면을 열지 못했습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");
         return;
@@ -673,8 +679,17 @@ void NativeChatConnection::tick() noexcept
                 show_display_status();
                 if (awaiting_login_) {
                     awaiting_login_ = false; login_url_.clear();
-                    if (!open_surface()) {
-                        end(L"승인 후 채팅 화면을 열지 못했습니다. 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요."); return;
+                    // A prewarmed document is not authorization: only this
+                    // validated server lease can publish private chat. Preserve
+                    // any external page throughout consent, then switch now.
+                    if (hud_.webview_.external_page_selected()) {
+                        if (!open_surface()) {
+                            end(L"승인 후 채팅 화면을 열지 못했습니다. 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요."); return;
+                        }
+                    } else {
+                        // Consent can take much longer than renderer setup;
+                        // reset the 15 s first-frame budget only on approval.
+                        loading_deadline_ = GetTickCount64() + 15000U;
                     }
                     if (dialog_ && IsWindowVisible(dialog_)) SetForegroundWindow(dialog_);
                 }

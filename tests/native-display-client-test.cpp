@@ -194,8 +194,10 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
     for (auto &c : code) if (c >= L'a' && c <= L'f') c = static_cast<wchar_t>(c - (L'a' - L'A'));
     expect(control_text(dialog, 118) == code, "pending confirmation is persistently visible beside reopen");
     expect(client.login_pending() && !client.can_resume_current() &&
-        query() == chatview::NativeChatStatus::AwaitingApproval && !surface.ready(),
-        "pending login is not a display approval or chat document");
+        query() == chatview::NativeChatStatus::AwaitingApproval &&
+        chatview::NativeChatSurfaceTestAccess::core(surface) != nullptr &&
+        surface.rendered_frames() == 0U && surface.rendered_messages() == 0U,
+        "a prewarmed own document has no authorized chat or first-text ACK before browser consent");
     expect(control_text(dialog, 117) == L"브라우저 승인 페이지 다시 열기", "explicit reopen action is labelled");
     RECT button_bounds{}, previous_bounds{}, display_bounds{}, dialog_bounds{};
     expect(GetWindowRect(GetDlgItem(dialog, 117), &button_bounds) &&

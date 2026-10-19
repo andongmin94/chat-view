@@ -934,7 +934,16 @@ def run() -> None:
                     expect(flow.page).to_have_url(f.origin + loser_path)
                     expect(flow.page.locator('[data-login-collection="retry-required"]')).to_contain_text(
                         "자리가 비어도 자동 연결하지 않습니다")
-                    flow.page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True).click()
+                    # The real browser form must finish the new SAME-request
+                    # consent before the initiating app attempts its one-shot
+                    # collection. A clicked button alone does not prove that
+                    # the browser POST and the server's owner/role checks passed.
+                    with flow.page.expect_response(
+                            lambda r: urlsplit(r.url).path == loser_path + "/approve") as recollect:
+                        flow.page.get_by_role("button", name="이 채널과 요청 역할로 연결", exact=True).click()
+                    assert recollect.value.status == 200, "explicit fresh sender consent must succeed"
+                    expect(flow.page.locator('[data-login-collection="awaiting-app"]')).to_contain_text(
+                        "아직 PC 연결 완료가 아닙니다")
                     assert f.command("collection-recollect")["ok"]
                     assert f.command("collection-report")["ok"]
                     campaign.reload()

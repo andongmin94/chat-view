@@ -80,8 +80,15 @@ try {
   const collect = (request: Started) => f.native(`/display/login/${request.id}`, 'ChatView-Login', request.verifier);
   const waitCollectionCadence = async () => {
     assert(collection);
-    await new Promise<void>(resolve => setTimeout(resolve,
-      Math.max(0, LOGIN_POLL_MS - (performance.now() - collection!.lastPollAt))));
+    // BrowserLogin uses the same monotonic performance clock. Waiting for a
+    // fractional setTimeout duration can wake before its strict >= 1000 ms
+    // polling boundary and cause an intermittent 429. Wait for the actual
+    // deadline, without ever retrying a rejected request or changing limits.
+    const due = collection.lastPollAt + LOGIN_POLL_MS;
+    while (performance.now() < due) {
+      await new Promise<void>(resolve => setTimeout(resolve,
+        Math.max(1, Math.ceil(due - performance.now()))));
+    }
   };
   reply({ ready: true, origin: f.origin });
   const input = createInterface({ input: process.stdin });

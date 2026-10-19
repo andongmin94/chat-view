@@ -42,15 +42,24 @@ export function connectNativeChat(document, bridge, render, nonce, clock = globa
     if (closed || event.source !== bridge) return;
     // Host chrome has its own message type and does not count as chat liveness.
     if (!event.data || event.data.type !== 'chat-snapshot') return;
+    let frameId = '';
     try {
+      // The native surface, not the network/server, assigns this ID to each
+      // published frame. A prior render acknowledgement cannot prove that the
+      // current frame reached the owned DOM.
+      if (typeof event.data.frameId !== 'string' ||
+          !/^[1-9][0-9]{0,9}$/.test(event.data.frameId) ||
+          Number(event.data.frameId) > 0xffffffff) throw new Error('Invalid native frame ID');
+      frameId = event.data.frameId;
       if (event.data.version !== 1) throw new Error('Unknown chat protocol');
       const snapshot = nativeChatSnapshot(event.data.snapshot);
       render(document, snapshot);
       lastUpdate = clock.performance.now();
-      bridge.postMessage(`chat-rendered:${nonce}:${document.getElementById('messages').children.length}`);
+      bridge.postMessage(`chat-rendered:${nonce}:${frameId}:${document.getElementById('messages').children.length}`);
     } catch {
       clear();
-      bridge.postMessage(`chat-invalid:${nonce}`);
+      // An invalid or stale frame cannot retire some other in-flight delivery.
+      bridge.postMessage(`chat-invalid:${nonce}:${frameId}`);
     }
   };
   bridge.addEventListener('message', listener);

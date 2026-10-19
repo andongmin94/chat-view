@@ -233,6 +233,7 @@ int main()
         expect(fresh_nonce_json.size() == 34U &&
             fresh_nonce_json.substr(1U, 32U) != old_nonce,
             "reopened private document has a different nonce");
+        const std::wstring current_nonce = fresh_nonce_json.substr(1U, 32U);
         expect_cancelled(core.Get(), first_url);
         expect(surface.ready() && surface.rendered_frames() == 0U &&
             surface.rendered_messages() == 0U,
@@ -242,7 +243,7 @@ int main()
         // JS bridge (an even stronger adversarial case than an old source URL).
         // A separate test observer is the delivery barrier: the production
         // handler has already seen this old-nonce message before we assert.
-        const std::wstring old_ack = L"chat-rendered:" + old_nonce + L":1";
+        const std::wstring old_ack = L"chat-rendered:" + old_nonce + L":1:1";
         const auto observed_old_ack = std::make_shared<bool>(false);
         EventRegistrationToken observe_token{};
         expect(SUCCEEDED(core->add_WebMessageReceived(
@@ -268,6 +269,36 @@ int main()
         await([&] { return surface.rendered_frames() == 1U; }, "fresh counters");
         expect(surface.rendered_messages() == 1U,
             "only the current document's actual Unicode text counts");
+        // The nonce remains valid across frames of one document. Previously a
+        // delayed "count=1" acknowledgement could satisfy a new publication.
+        // Exact frame IDs now prevent duplicates and prior-frame ACKs from
+        // advancing the native first-text milestone, even under forged input.
+        const std::wstring stale_frame_ack = L"chat-rendered:" + current_nonce + L":1:1";
+        const auto stale_seen = std::make_shared<unsigned int>(0U);
+        EventRegistrationToken stale_token{};
+        expect(SUCCEEDED(core->add_WebMessageReceived(
+            Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                [stale_frame_ack, stale_seen](
+                    ICoreWebView2 *, ICoreWebView2WebMessageReceivedEventArgs *args) -> HRESULT {
+                    LPWSTR raw = nullptr;
+                    if (SUCCEEDED(args->TryGetWebMessageAsString(&raw)) &&
+                        raw && stale_frame_ack == raw) ++*stale_seen;
+                    CoTaskMemFree(raw);
+                    return S_OK;
+                }).Get(), &stale_token)), "observe a duplicate ACK inside this owned document");
+        const std::wstring inject_same = L"window.chrome.webview.postMessage('" +
+            stale_frame_ack + L"'); true";
+        expect(evaluate(core.Get(), inject_same.c_str()) == L"true", "send exact old-frame ACK");
+        await([&] { return *stale_seen == 1U; }, "duplicate same-document ACK delivered");
+        expect(surface.rendered_frames() == 1U && surface.rendered_messages() == 1U,
+            "duplicate ID cannot satisfy a new native render");
+        expect(surface.publish(kMessage), "publish another real frame in the same document");
+        await([&] { return surface.rendered_frames() == 2U; }, "new frame ID acknowledged");
+        expect(evaluate(core.Get(), inject_same.c_str()) == L"true", "replay earlier frame ID");
+        await([&] { return *stale_seen == 2U; }, "older ACK delivered after fresh render");
+        core->remove_WebMessageReceived(stale_token);
+        expect(surface.rendered_frames() == 2U && surface.rendered_messages() == 1U,
+            "previous frame ACK cannot count as the new current frame");
         surface.close();
         // Clear and open can be queued together; an old cancelled event must
         // neither authorize its stale document nor invalidate the newer one.

@@ -19,8 +19,10 @@ public:
     NativeChatSurface &operator=(const NativeChatSurface &) = delete;
     [[nodiscard]] bool open(WebViewHost &host) noexcept;
     [[nodiscard]] bool ready() const noexcept;
-    // JSON envelope: {type:"chat-snapshot",version:1,snapshot:{state,received,messages}}.
-    // No JSON is interpolated into executable script or document markup.
+    // Receives the versioned chat-snapshot envelope without server metadata.
+    // Adds a document-local monotonically increasing frameId and accepts only
+    // that exact frame's nonce-bound WebView2 render ACK. No JSON is interpolated
+    // into executable script or document markup.
     [[nodiscard]] bool publish(const std::wstring &envelope) noexcept;
     void close() noexcept;
     [[nodiscard]] unsigned long long rendered_frames() const noexcept;

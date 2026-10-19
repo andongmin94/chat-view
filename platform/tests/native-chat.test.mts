@@ -6,7 +6,7 @@ import { renderChat } from '../web/chat-renderer.js';
 
 const message = { nickname: '한글 <script>', content: '<img src=x onerror=evil()> 😀', messageTime: 1700000000000 };
 const snapshot = { state: 'subscribed', received: 1, messages: [message] };
-const envelope = { type: 'chat-snapshot', version: 1, snapshot };
+const envelope = { type: 'chat-snapshot', version: 1, frameId: '1', snapshot };
 class Element {
   textContent = ''; dir = ''; className = ''; children: Element[] = [];
   scrollHeight = 0; scrollTop = 0; clientHeight = 0;
@@ -31,7 +31,7 @@ test('native bridge displays text through the same renderer and sends counts, ne
   const f = fixture(); assert.deepEqual(f.sent, ['chat-ready:test-nonce']); f.emit(envelope);
   assert.equal(f.list.children[0]?.children[1]?.textContent, message.nickname);
   assert.equal(f.list.children[0]?.children[2]?.textContent, message.content);
-  assert.equal(f.sent.at(-1), 'chat-rendered:test-nonce:1');
+  assert.equal(f.sent.at(-1), 'chat-rendered:test-nonce:1:1');
   assert.doesNotMatch(f.sent.join(''), /PRIVATE|onerror|한글/u); f.close();
 });
 test('native delivery requires the bound bridge, not the undocumented DOM trust flag', () => {
@@ -39,8 +39,28 @@ test('native delivery requires the bound bridge, not the undocumented DOM trust 
   assert.equal(f.list.children.length, 0); assert.equal(f.sent.length, 1);
   f.emit(envelope, false);
   assert.equal(f.list.children.length, 1);
-  assert.equal(f.sent.at(-1), 'chat-rendered:test-nonce:1'); f.close();
+  assert.equal(f.sent.at(-1), 'chat-rendered:test-nonce:1:1'); f.close();
 });
+
+test('per-delivery ACK carries only the exact native frame ID; malformed IDs cannot authorize a render', () => {
+  const f = fixture();
+  f.emit(envelope);
+  assert.equal(f.sent.at(-1), 'chat-rendered:test-nonce:1:1');
+  f.emit({ ...envelope, frameId: '2', snapshot: {
+    state: 'subscribed', received: 1,
+    messages: [{ ...message, content: 'second frame' }],
+  } });
+  assert.equal(f.list.children[0]?.children[2]?.textContent, 'second frame');
+  assert.equal(f.sent.at(-1), 'chat-rendered:test-nonce:2:1');
+  for (const frameId of ['', '0', '01', '-1', '4294967296', 3, null, '3:1']) {
+    f.emit({ ...envelope, frameId });
+    assert.equal(f.list.children.length, 0, 'bad delivery IDs fail closed');
+    assert.equal(f.sent.at(-1), 'chat-invalid:test-nonce:');
+  }
+  assert.doesNotMatch(f.sent.join(''), /onerror|한글|second frame/u);
+  f.close();
+});
+
 test('host-state does not keep a dead chat feed alive', () => {
   const f = fixture(); f.emit(envelope); f.tick(14000);
   f.emit({ type: 'host-state', editing: true }); f.tick(1001);
@@ -58,7 +78,7 @@ test('closing detaches message delivery and timer', () => {
 });
 test('unknown protocol and malformed display data clear old content without throwing', () => {
   const f = fixture(); f.emit(envelope); f.emit({ ...envelope, version: 2 });
-  assert.equal(f.list.children.length, 0); assert.equal(f.sent.at(-1), 'chat-invalid:test-nonce');
+  assert.equal(f.list.children.length, 0); assert.equal(f.sent.at(-1), 'chat-invalid:test-nonce:1');
   f.emit(envelope); f.emit({ ...envelope, snapshot: null }); assert.equal(f.list.children.length, 0); f.close();
 });
 for (const invalid of [null, [], {}, { ...snapshot, state: 'paid' }, { ...snapshot, received: NaN }, { ...snapshot, received: -1 }, { ...snapshot, received: 0 }, { ...snapshot, messages: Array(101).fill(message), received: 101 }, { ...snapshot, messages: [{ ...message, nickname: 'x'.repeat(201) }] }, { ...snapshot, messages: [{ ...message, content: 'x'.repeat(10001) }] }, { ...snapshot, messages: [{ ...message, content: '\u0000' }] }, { ...snapshot, messages: [{ ...message, messageTime: 8640000000000001 }] }]) {

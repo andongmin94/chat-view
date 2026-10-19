@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 치지직 upstream 중단 후 네이티브 HUD의 첫 표시·복구 동작
+## 현재 흐름: WebView2 이전 프레임 ACK로 첫 채팅 표시를 오인하지 않도록 차단
+
+시작 원격 `OBS` HEAD `df1e9335886279865aaa3f3685f92704ce3df0de`, `main` `6d1633d3df75c4781051394a5c381ea8275a804f` 불변 확인. 앞선 네이티브 구독 중단/복귀 수정은 [Windows development #444/run `39207261772`](https://github.com/andongmin94/chat-view/actions/runs/39207261772) **completed/success, Windows x64 CTest 50/50·fail0 (216.94초)**. 실제 WinHTTP→WebView2 gaming/streaming `gateway-provider-loss` 동선과 관련 CTest 모두 성공. 같은 SHA의 [CHZZK contract #110/run `39207261734`](https://github.com/andongmin94/chat-view/actions/runs/39207261734) **completed/success**, Ubuntu/Windows Node22/24 네 job·Node360/360·실 Chromium29/29 성공. 이 결과는 해당 이전 SHA의 합성 개발 검증이지 D1 전체 해결·실계정/물리 투컴 증거는 아니다.
+
+- **실제 UI 결함:** 기존 `NativeChatSurface`는 렌더된 **메시지 줄 수**만 nonce와 함께 받아 `rendered_frames()`를 증가시켰다. 앞 프레임의 WebView2 ACK가 늦게 왔거나 같은 문서에서 재전송되면 새 프레임을 실제로 그리지 않았어도 `NativeChatConnection`의 첫 채팅 렌더 대기값을 만족할 수 있다. 신규 실제 구독 첫 글자와 서버 역할 정보는 맞더라도 화면 성공 근거가 잘못 묶이는 결함이다.
+- **구현:** 서버 송신, WinHTTP 및 `DisplayClient` DTO는 그대로 유지한다. `NativeChatSurface::publish()`가 기존 소유 WebView2 문서 안에만 적용하는 양의 단조 `frameId`를 삽입한다(32비트 상한·2MiB 제한 유지). 임의 페이지로 스크립트를 주입하지 않고 `PostWebMessageAsJson`만 사용한다. 동일 문서 브리지는 검증한 frameId와 실제 DOM 행 수를 nonce와 함께 응답한다. C++는 최신 발행 번호와 정확히 일치하고 이미 처리되지 않은 ACK 또는 invalid 반응만 처리한다. 중복·오래된 번호/nonce·잘못된 ID는 새 첫 표시/중단 복구를 확인하지 못한다. 역할/권한/광고·게임 PC OBS 부재 정책은 변경하지 않는다.
+- **회귀:** `platform/tests/native-chat.test.mts`는 native bridge의 ID 검증·text-free ACK와 malformed ID fail-closed를 검사한다. `tests/native-chat-surface-test.cpp`는 실제 Win32/DirectComposition/WebView2 소유 문서에서 오래된 nonce ACK와 **같은 nonce의 전 프레임 중복 ACK**를 주입해 다음 렌더의 성공으로 세지 않는지 확인한다. 기존 `native-display-client`, `companion-chat`, 영상·송출·OBS 플러그인 보호 회귀를 유지한다.
+- **검증 기록:** 이 신규 기능 SHA의 Windows native development와 CHZZK contract의 실제 성공/실패는 푸시 후 기재한다. 외부 GitHub DNS 제한으로 로컬 전체 git/npm·Windows C++ 실행은 불가했으며 V8 구문/간단한 bridge 송신 검사만 별도로 수행했다. D1, D2, D4, D6, D7·실계정 G4-06·물리 게임 PC OBS 없는 G3-04·광고 시청/HP/정산·배포는 미해결이다.
+
+## 직전 완료 흐름: 치지직 upstream 중단 후 네이티브 HUD의 첫 표시·복구 동작
 
 시작 원격 `OBS` HEAD `cfca0797a445070235859eb7c0d3ac9fe48623b7`, `main` `6d1633d3df75c4781051394a5c381ea8275a804f` 불변. 필수 다섯 문서를 순서대로 읽고 기존 C++/WinHTTP/WebView2 구현을 확인했다.
 
@@ -226,6 +235,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-native HUD에서 구독 중단의 이전 첫 글자 무효화와 같은 승인 수동 복구를 확인한 뒤에는 **실제 치지직 등록 앱/채널에서 OAuth→첫 메시지→장시간 수신→업스트림 단절·재연결→권한 철회**를 두 승인 역할의 기존 WinHTTP/WebView2 HUD까지 연결한다. 계정이 없어도 D1 첫 표시의 반복 신뢰성은 기존 합성 네이티브 경로에서 계속 개선한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
+네이티브 프레임 단위 렌더 ACK를 안정화한 뒤에는 실제 치지직 등록 앱/채널에서 **OAuth→첫 글자→구독 중단/복귀→권한 철회**를 기존 WinHTTP/WebView2 gaming·streaming 역할로 검증한다. 실계정이 없어도 첫 표시 D1의 남은 간헐 원인을 기존 컴패니언/OBS native 경로에서 실질적으로 개선한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

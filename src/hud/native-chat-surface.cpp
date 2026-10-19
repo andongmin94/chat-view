@@ -3,16 +3,33 @@
 #include "hud/webview-host.hpp"
 #include "native-chat-document.hpp"
 #include <bcrypt.h>
+#include <winrt/Windows.Data.Json.h>
 #include <wrl/event.h>
 #include <array>
 #include <cwchar>
 #include <iterator>
+#include <limits>
 
 namespace chatview {
 using Microsoft::WRL::Callback;
 namespace {
 constexpr size_t kMaxEnvelopeCharacters = 2U * 1024U * 1024U;
 constexpr wchar_t kNonceMarker[] = L"__CHATVIEW_NATIVE_NONCE__";
+bool decimal(const wchar_t *&text, wchar_t stop, unsigned int &result) noexcept
+{
+    const wchar_t *begin = text;
+    unsigned int number = 0U;
+    unsigned int length = 0U;
+    for (; *text != stop && *text; ++text) {
+        if (++length > 10U || *text < L'0' || *text > L'9') return false;
+        const unsigned int digit = static_cast<unsigned int>(*text - L'0');
+        if (number > (std::numeric_limits<unsigned int>::max() - digit) / 10U) return false;
+        number = number * 10U + digit;
+    }
+    if (!length || *text != stop || (length > 1U && *begin == L'0')) return false;
+    if (stop != L'\0') ++text;
+    result = number; return true;
+}
 bool matching_source(ICoreWebView2 *webview, const std::wstring &expected) noexcept
 {
     LPWSTR source = nullptr;
@@ -37,7 +54,9 @@ struct NativeChatSurface::State {
     std::wstring document_url;
     std::wstring ready_message;
     std::wstring rendered_prefix;
-    std::wstring invalid_message;
+    std::wstring invalid_prefix;
+    unsigned int issued = 0U;
+    unsigned int acknowledged = 0U;
     unsigned long long frames = 0U;
     unsigned long long rejected = 0U;
     unsigned int messages = 0U;
@@ -79,7 +98,7 @@ bool NativeChatSurface::open(WebViewHost &host) noexcept
         state->host = host.callback_state_; state->identity = host.webview_.Get();
         state->ready_message = L"chat-ready:" + nonce;
         state->rendered_prefix = L"chat-rendered:" + nonce + L":";
-        state->invalid_message = L"chat-invalid:" + nonce;
+        state->invalid_prefix = L"chat-invalid:" + nonce + L":";
         state_ = state; webview_ = host.webview_;
         HRESULT result = webview_->add_NavigationStarting(
             Callback<ICoreWebView2NavigationStartingEventHandler>(
@@ -139,17 +158,21 @@ bool NativeChatSurface::open(WebViewHost &host) noexcept
                     LPWSTR message = nullptr;
                     if (FAILED(args->TryGetWebMessageAsString(&message)) || !message) { CoTaskMemFree(message); return S_OK; }
                     if (wcscmp(message, state->ready_message.c_str()) == 0) state->handshake = true;
-                    else if (state->handshake && wcscmp(message, state->invalid_message.c_str()) == 0) {
-                        ++state->rejected; state->messages = 0U;
-                    } else if (state->handshake && wcsncmp(message, state->rendered_prefix.c_str(), state->rendered_prefix.size()) == 0) {
-                        const wchar_t *digits = message + state->rendered_prefix.size();
-                        unsigned int count = 0U; bool valid = *digits != L'\0';
-                        unsigned int length = 0U;
-                        for (; *digits && valid; ++digits) {
-                            valid = ++length <= 3U && *digits >= L'0' && *digits <= L'9';
-                            if (valid) count = count * 10U + static_cast<unsigned int>(*digits - L'0');
+                    else if (state->handshake &&
+                             wcsncmp(message, state->invalid_prefix.c_str(), state->invalid_prefix.size()) == 0) {
+                        const wchar_t *digits = message + state->invalid_prefix.size();
+                        unsigned int id = 0U;
+                        if (decimal(digits, L'\0', id) && id == state->issued && id > state->acknowledged) {
+                            state->acknowledged = id; ++state->rejected; state->messages = 0U;
                         }
-                        if (valid && count <= 100U) { ++state->frames; state->messages = count; }
+                    } else if (state->handshake &&
+                               wcsncmp(message, state->rendered_prefix.c_str(), state->rendered_prefix.size()) == 0) {
+                        const wchar_t *digits = message + state->rendered_prefix.size();
+                        unsigned int id = 0U, count = 0U;
+                        if (decimal(digits, L':', id) && decimal(digits, L'\0', count) &&
+                            id == state->issued && id > state->acknowledged && count <= 100U) {
+                            state->acknowledged = id; ++state->frames; state->messages = count;
+                        }
                     }
                     CoTaskMemFree(message);
                     return S_OK;
@@ -173,9 +196,24 @@ bool NativeChatSurface::publish(const std::wstring &envelope) noexcept
 {
     if (!ready() || envelope.empty() || envelope.size() > kMaxEnvelopeCharacters ||
         envelope.find(L'\0') != std::wstring::npos) return false;
-    // The document only accepts the versioned chat-snapshot display DTO.
-    // PostWebMessageAsJson validates JSON; data is never ExecuteScript source.
-    return SUCCEEDED(webview_->PostWebMessageAsJson(envelope.c_str()));
+    // Bind every DOM acknowledgement to this exact native delivery, not just
+    // its message count. The server cannot supply or select the frame ID.
+    // Neither the ID nor the chat text is interpolated into executable script.
+    if (state_->issued == std::numeric_limits<unsigned int>::max()) return false;
+    try {
+        auto frame = winrt::Windows::Data::Json::JsonObject::Parse(envelope);
+        const unsigned int id = state_->issued + 1U;
+        frame.Insert(L"frameId", winrt::Windows::Data::Json::JsonValue::CreateStringValue(std::to_wstring(id)));
+        const auto serialized = frame.Stringify();
+        if (serialized.size() > kMaxEnvelopeCharacters) return false;
+        // WebView2 can dispatch callbacks during COM calls. Install the ID
+        // before posting, and roll back only if the call was rejected.
+        state_->issued = id;
+        if (FAILED(webview_->PostWebMessageAsJson(serialized.c_str()))) {
+            state_->issued = id - 1U; return false;
+        }
+        return true;
+    } catch (...) { return false; }
 }
 
 void NativeChatSurface::close() noexcept

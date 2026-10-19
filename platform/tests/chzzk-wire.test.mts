@@ -144,6 +144,7 @@ test('structured Manager options negotiate EIO3 and preserve the ticket over rea
     return { reader, lease };
   };
   const [game, streaming] = await Promise.all([open('gaming'), open('streaming')]);
+  assert.ok(game.lease.membership && streaming.lease.membership);
   assert.equal(game.lease.membership.broadcastSessionId,
     streaming.lease.membership.broadcastSessionId);
   assert.equal(subscribed, 1, 'two private HUDs share one actual Socket.IO upstream');

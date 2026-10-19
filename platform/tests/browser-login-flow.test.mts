@@ -17,7 +17,7 @@ test('app login -> same-browser CHZZK consent -> own chat -> refresh -> signout,
   let upstream!: Socket, subscriptions = 0;
   const ok = (content: unknown) => Response.json({ code: 200, content });
   const api = new ChzzkApi(credentials, async url => {
-    if (url.endsWith('/token')) return ok({ accessToken: 'PRIVATE_ACCESS', refreshToken: 'PRIVATE_REFRESH', tokenType: 'Bearer', expiresIn: '86400' });
+    if (url.endsWith('/token')) return ok({ accessToken: 'PRIVATE_ACCESS', refreshToken: 'PRIVATE_REFRESH', tokenType: 'Bearer', expiresIn: 86400 });
     if (url.endsWith('/users/me')) return ok({ channelId: 'mine', channelName: '내 채널 <script>' });
     if (url.endsWith('/sessions/auth')) return ok({ url: 'https://ssio08.nchat.naver.com/?auth=PRIVATE_TICKET' });
     if (url.includes('/subscribe/chat?')) {
@@ -68,8 +68,8 @@ test('app login -> same-browser CHZZK consent -> own chat -> refresh -> signout,
   assert.equal(result.status, 'approved'); assert.equal(result.lease.sessionScope, 'chat:renew');
   assert.equal((await postNative(`/display/login/${request.id}`, 'ChatView-Login', verifier)).status, 410);
   assert.equal(subscriptions, 1);
-  upstream.emit('CHAT', JSON.stringify({ channelId: 'mine', senderChannelId: 'sender', profile: { nickname: '한글', verifiedMark: false },
-    userRoleCode: 'common_user', content: '승인 완료 😀', messageTime: 1700000000000 }));
+  upstream.emit('CHAT', JSON.stringify({ channelId: 'mine', senderChannelId: 'sender', profile: { nickname: '한글', verifiedMark: false, userRoleCode: 'common_user' },
+    content: '승인 완료 😀', messageTime: 1700000000000 }));
   const peer = new WebSocket(probe.origin.replace('http:', 'ws:') + '/display/events', { headers: { Authorization: `Bearer ${result.lease.token}` } });
   t.after(() => peer.terminate());
   const [frame] = await once(peer, 'message');

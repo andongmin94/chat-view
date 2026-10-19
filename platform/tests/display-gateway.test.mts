@@ -171,7 +171,7 @@ test('creator-authorized probe joins CHZZK session to separate display access wi
   }
   let upstream!: Socket; let upstreams = 0; let globalRevokes = 0;
   const api = new ChzzkApi(credentials, async url => {
-    if (url.endsWith('/token')) return ok({ accessToken: 'PRIVATE_ACCESS', refreshToken: 'PRIVATE_REFRESH', tokenType: 'Bearer', expiresIn: '86400' });
+    if (url.endsWith('/token')) return ok({ accessToken: 'PRIVATE_ACCESS', refreshToken: 'PRIVATE_REFRESH', tokenType: 'Bearer', expiresIn: 86400 });
     if (url.endsWith('/users/me')) return ok({ channelId: 'mine', channelName: '내 채널' });
     if (url.endsWith('/sessions/auth')) return ok({ url: 'https://ssio08.nchat.naver.com/?auth=PRIVATE_TICKET' });
     if (url.endsWith('/revoke')) globalRevokes++;
@@ -198,7 +198,7 @@ test('creator-authorized probe joins CHZZK session to separate display access wi
   const client = await reader(t, probe.origin, lease.token); await client.next();
   assert.equal((await post('/chat/start')).status, 303);
   let frame = await client.next(); while (frame.snapshot.state !== 'subscribed') frame = await client.next();
-  upstream.emit('CHAT', { channelId: 'mine', senderChannelId: 'PRIVATE_SENDER', profile: { nickname: '한글 😀', verifiedMark: false }, userRoleCode: 'common_user', content: '연결 성공', messageTime: 1700000000000 });
+  upstream.emit('CHAT', { channelId: 'mine', senderChannelId: 'PRIVATE_SENDER', profile: { nickname: '한글 😀', verifiedMark: false, userRoleCode: 'common_user' }, content: '연결 성공', messageTime: 1700000000000 });
   frame = await client.next(); assert.equal(frame.snapshot.messages[0]?.content, '연결 성공'); assert.doesNotMatch(JSON.stringify(frame), /PRIVATE_/u);
   const closed = once(client.socket, 'close'); await post('/display/revoke'); await closed;
   assert.equal(globalRevokes, 0); assert.equal(upstreams, 1);

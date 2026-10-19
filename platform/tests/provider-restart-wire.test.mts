@@ -105,6 +105,7 @@ test('interrupted upstream resumes fresh chat on both approved PC sockets; anoth
       open(gameLease.lease.token), open(streamLease.lease.token), open(bobLease.lease.token),
     ]);
     const old = f.chats.get('alice')!;
+    const upstreamsBeforeLoss = f.startedWith.filter(token => token.startsWith('access:alice:')).length;
     const bobChat = f.chats.get('bob')!;
     const oldFrames = [receive(game, 'before-disconnect'), receive(stream, 'before-disconnect')];
     old.publish('before-disconnect');
@@ -126,7 +127,8 @@ test('interrupted upstream resumes fresh chat on both approved PC sockets; anoth
     await Promise.all(returned);
     assert.notEqual(f.chats.get('alice'), old, 'retry uses a new upstream session');
     assert.equal(f.active.get('alice'), 1, 'one upstream feeds both approved PCs');
-    assert.equal(f.startedWith.filter(token => token.startsWith('access:alice:')).length, 2);
+    assert.equal(f.startedWith.filter(token => token.startsWith('access:alice:')).length,
+      upstreamsBeforeLoss + 1, 'disconnect starts exactly one additional upstream');
     assert.equal(f.startedWith.filter(token => token.startsWith('access:bob:')).length, 1);
     assert.equal(f.store.connections('alice').length, 2);
     assert.equal(game.readyState, WebSocket.OPEN);

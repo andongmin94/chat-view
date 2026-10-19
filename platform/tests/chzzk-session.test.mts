@@ -73,6 +73,88 @@ test('acknowledgement before HTTP completion waits, and duplicate connected neve
   assert.equal(f.session.snapshot().state, 'subscribed'); await f.session.stop();
 });
 
+test('provider first text waits privately for both HTTP and SYSTEM subscription confirmations', async () => {
+  let releaseHttp!: () => void;
+  const f = fixture({
+    async subscribeChat() {
+      await new Promise<void>(resolve => { releaseHttp = resolve; });
+    },
+  });
+  const ready = f.session.start('PRIVATE_ACCESS', 'mine');
+  await tick();
+  f.socket.emit('SYSTEM', { type: 'connected', data: { sessionKey: 'PRIVATE_KEY' } });
+  f.socket.emit('CHAT', message('first chat before confirmation'));
+  f.socket.emit('CHAT', { ...message('wrong channel'), channelId: 'other' });
+  f.socket.emit('SYSTEM', system('subscribed'));
+  f.socket.emit('CHAT', JSON.stringify(message('second chat while HTTP is pending')));
+  const pending = f.session.snapshot();
+  assert.equal(pending.state, 'subscribing');
+  assert.equal(pending.received, 0, 'unconfirmed chat is never exposed');
+  assert.deepEqual(pending.messages, [], 'native display sees no pre-approval chat');
+  releaseHttp(); await ready;
+  const delivered = f.session.snapshot();
+  assert.equal(delivered.state, 'subscribed');
+  assert.equal(delivered.received, 2);
+  assert.deepEqual(delivered.messages.map(item => item.content),
+    ['first chat before confirmation', 'second chat while HTTP is pending']);
+  f.socket.emit('CHAT', message('regular chat after confirmation'));
+  assert.equal(f.session.snapshot().received, 3);
+  await f.session.stop();
+});
+
+test('early CHAT remains private until SYSTEM acknowledgement, even after HTTP success', async () => {
+  const f = fixture({ async subscribeChat() {} });
+  const ready = f.session.start('PRIVATE_ACCESS', 'mine');
+  await tick();
+  f.socket.emit('SYSTEM', { type: 'connected', data: { sessionKey: 'PRIVATE_KEY' } });
+  await tick();
+  f.socket.emit('CHAT', message('early before system ack'));
+  f.socket.emit('SYSTEM', system('subscribed', 'other'));
+  assert.equal(f.session.snapshot().state, 'subscribing');
+  assert.equal(f.session.snapshot().received, 0);
+  assert.equal(f.session.snapshot().messages.length, 0);
+  f.socket.emit('SYSTEM', system('subscribed'));
+  await ready;
+  assert.equal(f.session.snapshot().received, 1);
+  assert.equal(f.session.snapshot().messages[0]?.content, 'early before system ack');
+  await f.session.stop();
+});
+
+test('pre-confirmation burst is bounded; subscription failure discards all buffered private chat', async () => {
+  let resolveHttp!: () => void;
+  const f = fixture({
+    async subscribeChat() {
+      await new Promise<void>(resolve => { resolveHttp = resolve; });
+    },
+  });
+  const ready = f.session.start('PRIVATE_ACCESS', 'mine');
+  await tick();
+  f.socket.emit('SYSTEM', { type: 'connected', data: { sessionKey: 'PRIVATE_KEY' } });
+  for (let i = 0; i < MAX_MESSAGES + 50; i++) f.socket.emit('CHAT', message(`buffered ${i}`));
+  assert.equal(f.session.snapshot().received, 0);
+  assert.equal(f.session.snapshot().messages.length, 0);
+  f.socket.emit('SYSTEM', system('subscribed'));
+  resolveHttp(); await ready;
+  const snapshot = f.session.snapshot();
+  assert.equal(snapshot.received, MAX_MESSAGES + 50);
+  assert.equal(snapshot.messages.length, MAX_MESSAGES);
+  assert.equal(snapshot.messages[0]?.content, 'buffered 50');
+  assert.equal(snapshot.messages.at(-1)?.content, 'buffered 149');
+  await f.session.stop();
+
+  const broken = fixture({ async subscribeChat() { throw new Error('PRIVATE_UPSTREAM_ERROR'); } });
+  const rejected = assert.rejects(broken.session.start('PRIVATE_ACCESS', 'mine'));
+  await tick();
+  broken.socket.emit('SYSTEM', { type: 'connected', data: { sessionKey: 'PRIVATE_KEY' } });
+  broken.socket.emit('CHAT', message('never authorized'));
+  await rejected;
+  assert.equal(broken.session.snapshot().state, 'error');
+  assert.equal(broken.session.snapshot().received, 0);
+  assert.deepEqual(broken.session.snapshot().messages, []);
+  assert.equal(broken.socket.connected, false);
+  await broken.session.stop();
+});
+
 for (const end of ['revoked', 'unsubscribed', 'disconnect', 'connect_error', 'error']) {
   test(`${end} closes delivery, clears history, suppresses raw reasons and late messages`, async () => {
     const f = fixture(); await f.begin(); f.socket.emit('CHAT', message());

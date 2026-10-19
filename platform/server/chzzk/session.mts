@@ -23,6 +23,11 @@ export class ChzzkChatSession {
   #state: ChatState = 'idle';
   #messages: ChatMessage[] = [];
   #received = 0;
+  // A valid CHAT frame may arrive while the subscription HTTP response and
+  // session SYSTEM acknowledgement cross in flight. Keep it private until BOTH
+  // confirmations succeed; never publish an unconfirmed frame to a HUD.
+  #pendingMessages: ChatMessage[] = [];
+  #pendingReceived = 0;
   #channelId = '';
   #token?: string;
   #key?: string;
@@ -44,12 +49,18 @@ export class ChzzkChatSession {
   #ready() {
     if (this.#closed || !this.#httpSubscribed || !this.#acknowledged || this.#state === 'subscribed') return;
     this.#state = 'subscribed'; clearTimeout(this.#timer);
+    this.#received += this.#pendingReceived;
+    this.#messages = this.#pendingMessages;
+    this.#pendingMessages = []; this.#pendingReceived = 0;
     this.#resolve?.(); this.#resolve = undefined; this.#reject = undefined;
+    // The first published subscribed snapshot includes the buffered first
+    // text, instead of silently losing it during the provider handshake.
     this.#notify();
   }
   #finish(state: ChatState) {
     if (this.#closed) return;
     this.#closed = true; this.#state = state; this.#messages = [];
+    this.#pendingMessages = []; this.#pendingReceived = 0;
     this.#lifetime.abort(); clearTimeout(this.#timer);
     this.#abortCleanup?.(); this.#abortCleanup = undefined;
     this.#token = undefined; this.#key = undefined;
@@ -97,9 +108,15 @@ export class ChzzkChatSession {
           const socket = this.#factory(url); this.#socket = socket;
           socket.on('SYSTEM', data => { void this.#system(data).catch(() => this.#finish('error')); });
           socket.on('CHAT', data => {
-            if (this.#closed || this.#state !== 'subscribed') return;
+            if (this.#closed || (this.#state !== 'subscribing' && this.#state !== 'subscribed')) return;
             const message = parseChatMessage(data, this.#channelId);
             if (!message) return;
+            if (this.#state === 'subscribing') {
+              this.#pendingReceived++;
+              this.#pendingMessages.push(message);
+              if (this.#pendingMessages.length > MAX_MESSAGES) this.#pendingMessages.shift();
+              return;
+            }
             this.#received++; this.#messages.push(message);
             if (this.#messages.length > MAX_MESSAGES) this.#messages.shift();
             this.#notify();

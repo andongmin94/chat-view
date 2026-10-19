@@ -1,17 +1,18 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-17 (Asia/Seoul). **이 문서가 유일한 현재 작업 목록이다.** 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다. 완료된 조사·중복 기록은 Git 이력에 남긴다.
+갱신: 2026-10-19 (Asia/Seoul). **이 문서가 유일한 현재 작업 목록이다.** 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다. 완료된 조사·중복 기록은 Git 이력에 남긴다.
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 로컬 Stop 도중 게임 PC 승인 실제 철회 → 수동 재동의
+## 현재 흐름: 실제 치지직 세션의 첫 채팅 구독 교차 응답 보존
 
-시작 원격 OBS HEAD `557393e6812fa2a8902789ac1a92a3e269f237dc`, Windows development #442/run `38995801385` **실제 Windows x64 routine 50/50 성공**(다른 creator 메시지 격리·옛 nonce 렌더 ACK 차단 포함)을 확인했다. AGENTS → PRODUCT → development-workflow → architecture → 이 계획 순서로 검토했고 `main`과 게임 PC OBS 비사용을 유지한다.
+시작 `OBS` HEAD `6e5f122812c54bdbe30ebde86cf75daf77e0af3d`; Windows development #443/run `38999543798`는 실제 Windows x64 routine **50/50·fail0** (게임 PC 로컬 Stop 중 해당 승인 철회→거부→명시적 게임 역할 재동의). AGENTS → PRODUCT → development-workflow → architecture → 이 계획 순서로 확인. `main`과 게임 PC OBS 금지는 유지한다.
 
-- **사용자 흐름:** Alice 게임 PC companion에서 원래 브라우저 승인으로 첫 글자를 받고, 사용자가 로컬 Stop→같은 승인으로 복귀→새 글자를 받았다가 두 번째 로컬 Stop을 누른다. 그때 서버 관리자가 **Alice의 정확한 gaming 역할 승인 자체를 철회**한다. 기존 로컬 복귀 버튼은 마지막 확인 시점의 자격일 뿐이므로, 사용자가 눌러도 앱의 실제 `/display/refresh` 요청은 **401/403 거부**돼야 한다. 이때 기존 채팅·연결 수·복귀 가능 자격이 비워지고 다른 계정/저장 권한으로 자동 변경하거나 브라우저를 열어서는 안 된다. Alice가 **새 로그인 / 연결 버튼과 실제 브라우저 gaming 역할 동의**를 다시 거쳐야 새 승인 ID와 첫 자체 HUD DOM 글자 표시가 가능하다. 이후 본인이 명시적으로 로그아웃한 경우에만 신규 승인이 해제되고, Bob의 독립 gaming 승인·저장 정보 및 영상 출력 선택은 유지한다.
-- **기존 경계 재사용:** `NativeChatConnection` / `DisplayClient`의 Denied 상태·`approval_denied_`·DPAPI 다른 계정 차단, 서버 `Creators.removeConnection` / SQLite 역할 FK 삭제와 버전/nonce 바인딩을 수정하지 않는다. `tests/companion-chat-video-test.cpp` 기존 `early-first`에 새 **revoke→denied return→manual browser consent→fresh empty snapshot→new first text→explicit logout**를 연결한다. `tests/companion-chat-video-test.mts`의 실제 HTTP/SQLite/WebSocket synthetic CHZZK는 구 승인 철회, 기존 renewal 거부 **정확히 1회**, 신규 gaming 연결 ID, 브라우저에서의 수동 동의 1회, Bob 계정 승인 불변, 로그인/중지/갱신·로그아웃 횟수를 검사한다. 신규 CTest 항목·서버 API·새 UI/프로세스·별도 인프라는 만들지 않고 기존 45초/15초 시간 한도와 보안 조건을 그대로 둔다.
-- **CI 사용량:** Node 스크립트의 TS 제거 후 문법 파싱, C++↔Node checkpoint 순서 및 조합별 승인·갱신 수 시뮬레이션을 먼저 검증한다. 가능한 한 **관련 코드·문서를 한 커밋에 묶어 단 한 번의 Windows routine**으로 검사하고, 결과에 따라 실패 단계만 수정한다. **실제 CI:** 기능 SHA `8b581b7e653458e7f80912284c13e75d6d6f2e2d`의 [Windows development #443/run `38999543798`](https://github.com/andongmin94/chat-view/actions/runs/38999543798) **completed/success**, 실제 Windows x64 네이티브 컴파일 및 routine **CTest 50/50·fail0 (236.53초)**. 기존 `chat-view-companion-chat-early-first` **18.41초 통과**: 첫 글자→Stop→구 승인 복귀→두 번째 Stop 중 서버에서 원래 gaming connection 삭제→사용자 복귀 시 구 grant 서버 401/403 **1회 거부**→자동 계정 변경·로그인 없음→새 Alice 채널·gaming 역할의 실제 브라우저 명시 동의 **1회**→새 connection ID와 빈 자체 DOM→새 첫 글자→명시적 로그아웃으로 신규 grant만 제거. Bob 독립 gaming 승인/저장 credential·게임 PC OBS 없음/영상 출력 선택 유지. native surface **2.64초**, native logout **18.29초**, chat-switch **18.63초**, companion 기존 chat-video **11.44초** 및 reapproval **19.70초**, public-ad-browser **13.03초** 등 정기 검사 모두 통과. 기능 푸시 **1회 / Windows Actions 신규 1회**, 신규 CTest·시간 연장·서비스 API·통과 판단 완화 없음. 별도 CHZZK contract·공식 OBS·전체 배포 qualification은 이 SHA에서 실행하지 않았다. `[skip ci]` 결과 기록은 새 Windows 잡을 만들지 않는다. 실계정 치지직·실영상/OBS/배포 qualification을 통과한 것으로 주장하지 않는다.
-- **남은 결함:** D1의 간헐 첫 표시 `surface_ready=0`, D2/D4/D6/D7, 실계정 치지직 장시간 첫 수신, 실제 게임 PC OBS 없는 물리 투컴 HUD 제외, 광고 실노출·유료/HP·정산·배포 검증은 아직 남아 있다.
+- **사용자가 체감하는 흐름:** 공식 치지직 [Session API](https://chzzk.gitbook.io/chzzk/chzzk-api/session)는 API에서 `sessionKey`로 채팅 구독을 신청한 뒤 WebSocket `SYSTEM subscribed`와 `CHAT` 이벤트를 보낸다. HTTP 구독 응답과 Socket.IO 이벤트의 도착 순서가 교차하는 첫 연결에서는, 기존 `ChzzkChatSession`이 아직 `subscribed`가 아니라는 이유로 합법적인 초기 `CHAT`을 버릴 수 있었다. 이제 같은 채널의 검증된 **초기 메시지를 최대 100개만 일시 저장**하고, **HTTP 성공과 정확한 채널의 `SYSTEM subscribed` 두 확인이 모두 성립하기 전에는** 브라우저·native 화면·`ChatSnapshot`에 표시하지 않는다. 두 확인 후 최초 `subscribed` snapshot에서 바로 첫 글자를 내보내며, 오류·중지·권한 철회 시 대기 텍스트와 카운트를 삭제한다. 다른 creator·잘못된 프레임·서버 티켓은 기존과 똑같이 거부한다.
+- **가장 작은 코드 수정:** `platform/server/chzzk/session.mts`의 한 소유자/하나의 upstream 내에만 `#pendingMessages`·`#pendingReceived`를 둔다. 새 토큰/쿠키/DB/브라우저 권한/유료 광고 API는 없고 재시도·타임아웃·최대 메시지 개수도 늘리지 않는다. `chzzk-session.test.mts`에서는 HTTP 전/후 ACK 순서, 잘못된 채널, 150개 버스트→최근 100개, HTTP 실패 시 0개 공개를 검증한다. `chzzk-wire.test.mts`에서는 실제 Socket.IO/Engine.IO v3 전송에서 시스템 ACK 전에 보낸 첫 `CHAT`을 첫 snapshot에 포함하고, `chzzk-preview.test.mts`에서는 기존 사용자 브라우저의 첫 자체 채팅 스트림에 그 글자가 즉시 나타나며 Stop 후 삭제되는지 검사한다.
+- **검증 및 한계:** Node 22.16 이상에서 가능한 로컬 구문/대상 회귀를 먼저 확인하고, **관련 수정 1커밋**에 대해서만 CHZZK contract workflow (Node22·24/Ubuntu·Windows, 실제 Socket.IO, 타입·브라우저 격리)를 실행한다. Windows 네이티브/공식 OBS qualification은 관련 native 변경이 없으므로 실행하지 않는다. 합성 제공자·Socket.IO 이벤트 순서의 테스트 통과는 **실계정 치지직 메시지를 받은 증거가 아니다**. 실제 등록 앱의 HTTPS callback·Access Token scope/채널 권한, 실방송 첫 메시지, 장시간 재연결·철회와 물리 투컴을 여전히 별도 검증해야 한다.
+- **남은 결함:** D1 간헐 첫 WebView2 화면 `surface_ready=0`, D2 핸들 증가, D4 OBS 캡처, D6 WGC 영상, D7 OBS/CEF 첫 탐색, G3/G4 실계정·실기기, 광고 실노출/HP·정산/배포 qualification은 미완료다.
+
 
 ## 직전 완료 흐름: 승인 순간 첫 채팅 표시 검증 복구와 Actions 사용량 절감
 
@@ -186,6 +187,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-로컬 Stop과 원격 gaming 승인 실제 철회 후 **기존 토큰 갱신 실패→수동 새 Alice 채널/게임 역할 동의**를 끝까지 확인한 다음, G4-06 실계정 치지직 시스템 브라우저 승인·실제 구독 프레임·자체 HUD 첫 글자/연결 철회와 G3-04 실제 투컴의 읽을 수 있는 HUD/송출 화면 HUD 제외를 우선한다. 제공자 운영 계정·물리 장치는 synthetic 성공과 별도로 입증해야 한다. D1 간헐·D2/D4/D6/D7·유료 광고 실노출/HP·정산·배포 qualification은 미완료다. GitHub Actions는 관련 코드 검토·사전 검사 뒤 한 번에 묶어서 필요한 workflow만 실행한다.
+초기 `CHAT` 유실 경계를 보완한 다음에는 **실제 치지직 애플리케이션의 인증/채팅 읽기 Scope로 OAuth→Session→구독→첫 채팅 한 줄을 챗뷰 자체 화면에서 확인**해야 한다. 현재 대화에 등록 앱 자격·실제 로그인 또는 실제 장비가 없으므로 합성 검증 결과를 이 단계의 통과로 대체하지 않는다. 제공자 권한이 준비되기 전에도 추진 가능한 다음 구현은 **실제 구독이 끊겼다가 재연결될 때 이전 세션의 미확인 첫 글자가 신규 채팅에 합쳐지지 않도록 기존 native/display 경계를 연동 검증**하는 것이다. 별도로 G3 게임 PC에 OBS가 없는 물리 투컴의 읽을 수 있는 HUD 및 깨끗한 영상 검증을 우선하고, D1/D2/D4/D6/D7·광고 실노출·HP/정산·배포 qualification은 미완료다. Actions는 관련 코드 변경을 사전 확인 후 묶어 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

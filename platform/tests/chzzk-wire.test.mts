@@ -57,6 +57,12 @@ test('structured Manager options negotiate EIO3 and preserve the ticket over rea
     async createUserSession() { return issued; },
     async subscribeChat(_token, key) {
       assert.equal(key, 'TEST_KEY'); subscribed++;
+      // Actual EIO3/Socket.IO transport can deliver the first CHAT before
+      // the SYSTEM acknowledgement, while the REST response is still pending.
+      // Do not lose it, and do not expose it until both have succeeded.
+      peer.emit('CHAT', JSON.stringify({ channelId: 'mine', senderChannelId: 'sender',
+        profile: { nickname: '모의 첫 시청자', verifiedMark: false },
+        userRoleCode: 'common_user', content: '첫 채팅', messageTime: 1700000000000 }));
       peer.emit('SYSTEM', JSON.stringify({ type: 'subscribed', data: { eventType: 'CHAT', channelId: 'mine' } }));
     },
     async unsubscribeChat() { unsubscribed++; },
@@ -64,10 +70,12 @@ test('structured Manager options negotiate EIO3 and preserve the ticket over rea
   const session = new ChzzkChatSession(api, () => {});
   t.after(() => session.stop());
   await session.start('TEST_ACCESS', 'mine'); assert.equal(subscribed, 1);
-  assert.equal(session.snapshot().received, 0);
+  assert.equal(session.snapshot().received, 1, 'the first transport CHAT survives the HTTP/SYSTEM ordering');
+  assert.equal(session.snapshot().messages[0]?.content, '첫 채팅');
   peer.emit('CHAT', JSON.stringify({ channelId: 'mine', senderChannelId: 'sender', profile: { nickname: '실제 소켓 / 모의 제공자', verifiedMark: false }, userRoleCode: 'common_user', content: '한글 😀', messageTime: 1700000000000 }));
-  for (let i = 0; session.snapshot().received === 0 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 10));
-  assert.equal(session.snapshot().messages[0]?.content, '한글 😀');
+  for (let i = 0; session.snapshot().received < 2 && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(session.snapshot().received, 2);
+  assert.equal(session.snapshot().messages[1]?.content, '한글 😀');
   await session.stop(); assert.equal(unsubscribed, 1); assert.deepEqual(session.snapshot().messages, []);
 });
 

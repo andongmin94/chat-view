@@ -7,7 +7,7 @@ import { ChzzkApi } from '../server/chzzk/api.mts';
 import { startProbe } from '../tools/chzzk-connect.mts';
 import { renderChat } from '../web/chat-renderer.js';
 
-async function fixture(t: TestContext, expiresIn = '86400') {
+async function fixture(t: TestContext, expiresIn = '86400', earlyFirst = false) {
   const credentials = { clientId: 'app', clientSecret: 'PRIVATE_CLIENT' };
   const ok = (content: unknown) => Response.json({ code: 200, content });
   class Socket extends EventEmitter {
@@ -21,7 +21,14 @@ async function fixture(t: TestContext, expiresIn = '86400') {
     if (url.endsWith('/token')) return ok({ accessToken: 'PRIVATE_ACCESS', refreshToken: 'PRIVATE_REFRESH', tokenType: 'Bearer', expiresIn });
     if (url.endsWith('/users/me')) return ok({ channelId: 'mine', channelName: '내 채널' });
     if (url.endsWith('/sessions/auth')) return ok({ url: 'https://ssio08.nchat.naver.com/?auth=PRIVATE_TICKET' });
-    if (url.includes('/subscribe/chat?')) queueMicrotask(() => socket.emit('SYSTEM', { type: 'subscribed', data: { eventType: 'CHAT', channelId: 'mine' } }));
+    if (url.includes('/subscribe/chat?')) queueMicrotask(() => {
+      if (earlyFirst) socket.emit('CHAT', {
+        channelId: 'mine', senderChannelId: 'viewer',
+        profile: { nickname: '첫 시청자', verifiedMark: false },
+        userRoleCode: 'common_user', content: '승인과 동시에 온 첫 글자', messageTime: 1700000000000,
+      });
+      socket.emit('SYSTEM', { type: 'subscribed', data: { eventType: 'CHAT', channelId: 'mine' } });
+    });
     return ok(null);
   });
   const probe = await startProbe({ credentials, port: 0, api, socketFactory: () => { sockets++; socket = new Socket(); return socket; } });
@@ -62,6 +69,23 @@ test('authenticated browser receives own chat stream; duplicate start does not d
   assert.equal(frame.state, 'stopped'); assert.deepEqual(frame.messages, []);
   await f.post('/chat/start'); assert.equal(f.sockets(), 2);
   assert.equal(f.calls.filter(url => url.endsWith('/sessions/auth')).length, 2);
+});
+
+test('first CHZZK frame during subscribe appears in the first own chat stream snapshot', async t => {
+  const f = await fixture(t, '86400', true);
+  const next = await f.events();
+  assert.equal((await next()).state, 'idle');
+  assert.equal((await f.post('/chat/start')).status, 303);
+  let frame = await next();
+  while (frame.state !== 'subscribed') frame = await next();
+  assert.equal(frame.received, 1, 'the first approved snapshot already has the early message');
+  assert.deepEqual(frame.messages.map(item => item.content), ['승인과 동시에 온 첫 글자']);
+  assert.equal(f.sockets(), 1, 'a single creator upstream supplies the first private display');
+  assert.doesNotMatch(JSON.stringify(frame), /PRIVATE_/u);
+  assert.equal((await f.post('/chat/stop')).status, 303);
+  frame = await next();
+  assert.equal(frame.state, 'stopped');
+  assert.deepEqual(frame.messages, [], 'local Stop clears the early first text');
 });
 
 test('revocation clears the stream and local authorization; no automatic global revoke', async t => {

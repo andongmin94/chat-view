@@ -27,7 +27,7 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(chat-view-native-chat-surface-test PRIVATE
         chat-view-common "${WEBVIEW2_LOADER_LIBRARY}"
-        bcrypt d3d11 dcomp dxgi ole32 shell32 user32)
+        bcrypt d3d11 dcomp dxgi ole32 shell32 user32 windowsapp)
     target_compile_definitions(chat-view-native-chat-surface-test PRIVATE WEBVIEW2_STATIC)
     chatview_enable_win32(chat-view-native-chat-surface-test)
     chatview_enable_warnings(chat-view-native-chat-surface-test)

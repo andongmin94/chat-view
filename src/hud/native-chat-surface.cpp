@@ -4,6 +4,7 @@
 #include "native-chat-document.hpp"
 #include <bcrypt.h>
 #include <winrt/Windows.Data.Json.h>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <wrl/event.h>
 #include <array>
 #include <cwchar>

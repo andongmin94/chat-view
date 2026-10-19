@@ -5,12 +5,39 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
+import type { RawData } from 'ws';
 import { DisplayGateway } from '../server/chat/display-gateway.mts';
 import type { Tokens } from '../server/chzzk/api.mts';
 import { fixture, tokens, nonce, deferred } from './fixtures/service.mts';
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 const pages = ['/account', '/campaigns', '/campaigns/activity'] as const;
+
+// A status/presence update can overtake the chat data on the same display
+// socket. Inspect the received snapshot, not whichever frame arrives first.
+function expectChat(peer: WebSocket, content: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      peer.off('message', onMessage); peer.off('error', onError); peer.off('close', onClose);
+    };
+    const onError = (error: Error) => { cleanup(); reject(error); };
+    const onClose = () => onError(new Error('Display closed before matching chat frame'));
+    const onMessage = (data: RawData, binary: boolean) => {
+      try {
+        assert.equal(binary, false);
+        const frame = JSON.parse(data.toString()) as {
+          type?: string; snapshot?: { messages?: Array<{ content: string }> };
+        };
+        assert.equal(frame.type, 'chat-snapshot');
+        if (!frame.snapshot?.messages?.some(message => message.content === content)) return;
+        cleanup(); resolve(data.toString());
+      } catch (error) { onError(error as Error); }
+    };
+    const timer = setTimeout(() => onError(new Error('Expected matching private chat frame missing')), 3000);
+    peer.on('message', onMessage); peer.once('error', onError); peer.once('close', onClose);
+  });
+}
 function browser(f: Fixture, cookie = '') {
   const state: { cookie: string; csrf: string; view?: string } = { cookie, csrf: '' };
   const collect = (response: Response) => {
@@ -91,9 +118,9 @@ test('expired browser recovers its activity page without new PC approval or live
     assert.deepEqual(f.grants.load('alice'), grant, 'browser proof never replaces the provider grant');
     assert.equal(f.startedWith.length, starts); assert.equal(f.active.get('alice'), 1);
     assert.equal(f.refreshCalls, 0); assert.equal(peer.readyState, WebSocket.OPEN);
-    const frame = once(peer, 'message', { signal: AbortSignal.timeout(3000) });
+    const frame = expectChat(peer, 'chat survives browser recovery');
     f.chats.get('alice')!.publish('chat survives browser recovery');
-    assert.match(String((await frame)[0]), /chat survives browser recovery/u);
+    assert.match(await frame, /chat survives browser recovery/u);
     assert.equal((await f.request('/account', { headers: { Cookie: alice.b.cookie } })).status, 200);
     assert.ok(f.creators.gateway(alice.lease.token));
   } finally { peer?.terminate(); await f.close(); }
@@ -367,11 +394,11 @@ test('browser expiry during sender outage never reauthorizes native streaming or
     assert.deepEqual(f.grants.load('alice'), initialGrant);
     assert.equal(f.startedWith.length, initialStarts);
     assert.equal(f.refreshCalls, 0, 'browser login never refreshes provider grants for streaming approval');
-    const gameMessage = once(gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
-    const senderMessage = once(returnedPeer, 'message', { signal: AbortSignal.timeout(3000) });
+    const gameMessage = expectChat(gamePeer, 'chat survives expired manager and returned sender');
+    const senderMessage = expectChat(returnedPeer, 'chat survives expired manager and returned sender');
     f.chats.get('alice')!.publish('chat survives expired manager and returned sender');
-    assert.match(String((await gameMessage)[0]), /chat survives expired manager and returned sender/u);
-    assert.match(String((await senderMessage)[0]), /chat survives expired manager and returned sender/u);
+    assert.match(await gameMessage, /chat survives expired manager and returned sender/u);
+    assert.match(await senderMessage, /chat survives expired manager and returned sender/u);
   } finally { for (const peer of peers) peer.terminate(); await f.close(); }
 });
 
@@ -458,11 +485,11 @@ test('manager switching to another creator during sender outage never transfers 
     assert.equal(f.startedWith.length, starts);
     assert.equal(f.refreshCalls, 0);
     assert.equal(f.store.find(gaming.sessionToken)?.membership?.role, 'gaming');
-    const gameFrame = once(gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
-    const senderFrame = once(returnedPeer, 'message', { signal: AbortSignal.timeout(3000) });
+    const gameFrame = expectChat(gamePeer, 'game and sender unchanged after manager switched to Bob');
+    const senderFrame = expectChat(returnedPeer, 'game and sender unchanged after manager switched to Bob');
     f.chats.get('alice')!.publish('game and sender unchanged after manager switched to Bob');
-    assert.match(String((await gameFrame)[0]), /game and sender unchanged after manager switched to Bob/u);
-    assert.match(String((await senderFrame)[0]), /game and sender unchanged after manager switched to Bob/u);
+    assert.match(await gameFrame, /game and sender unchanged after manager switched to Bob/u);
+    assert.match(await senderFrame, /game and sender unchanged after manager switched to Bob/u);
 
     assert.equal((await b.post('/account/switch')).status, 303);
     await b.identify('/campaigns', 'alice');
@@ -566,11 +593,11 @@ test('expired management browser cannot reselect a revoked sender before fresh s
     assert.equal(f.startedWith.length, upstreamCount);
     assert.equal(f.refreshCalls, 0);
     assert(f.store.find(bob.lease.sessionToken));
-    const gameFrame = once(gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
-    const senderFrame = once(renewedPeer, 'message', { signal: AbortSignal.timeout(3000) });
+    const gameFrame = expectChat(gamePeer, 'gaming and replacement sender stay live after manual reselect');
+    const senderFrame = expectChat(renewedPeer, 'gaming and replacement sender stay live after manual reselect');
     f.chats.get('alice')!.publish('gaming and replacement sender stay live after manual reselect');
-    assert.match(String((await gameFrame)[0]), /gaming and replacement sender stay live after manual reselect/u);
-    assert.match(String((await senderFrame)[0]), /gaming and replacement sender stay live after manual reselect/u);
+    assert.match(await gameFrame, /gaming and replacement sender stay live after manual reselect/u);
+    assert.match(await senderFrame, /gaming and replacement sender stay live after manual reselect/u);
   } finally { for (const ws of peers) ws.terminate(); await f.close(); }
 });
 
@@ -662,11 +689,11 @@ test('switching management to Bob cannot transfer a revoked Alice streaming gran
     assert.deepEqual(f.grants.load('bob'), bobGrant);
     assert.equal(f.startedWith.length, started);
     assert.equal(f.refreshCalls, 0);
-    const gameFrame = once(gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
-    const senderFrame = once(sender2Peer, 'message', { signal: AbortSignal.timeout(3000) });
+    const gameFrame = expectChat(gamePeer, 'Alice gaming chat survives Bob management and sender replacement');
+    const senderFrame = expectChat(sender2Peer, 'Alice gaming chat survives Bob management and sender replacement');
     f.chats.get('alice')!.publish('Alice gaming chat survives Bob management and sender replacement');
-    assert.match(String((await gameFrame)[0]), /Alice gaming chat survives Bob management and sender replacement/u);
-    assert.match(String((await senderFrame)[0]), /Alice gaming chat survives Bob management and sender replacement/u);
+    assert.match(await gameFrame, /Alice gaming chat survives Bob management and sender replacement/u);
+    assert.match(await senderFrame, /Alice gaming chat survives Bob management and sender replacement/u);
   } finally { for (const ws of peers) ws.terminate(); await f.close(); }
 });
 
@@ -792,10 +819,10 @@ test('a stale manager Stop after sender revocation cannot invalidate the new sen
     assert.equal(f.startedWith.length, started);
     assert.equal(f.refreshCalls, 0);
     assert(f.store.find(gamer.sessionToken) && f.store.find(bob.lease.sessionToken));
-    const gamerReceived = once(gamePeer, 'message', { signal: AbortSignal.timeout(3000) });
-    const senderReceived = once(replacementPeer, 'message', { signal: AbortSignal.timeout(3000) });
+    const gamerReceived = expectChat(gamePeer, 'cross-browser sender handoff keeps game chat');
+    const senderReceived = expectChat(replacementPeer, 'cross-browser sender handoff keeps game chat');
     f.chats.get('alice')!.publish('cross-browser sender handoff keeps game chat');
-    assert.match(String((await gamerReceived)[0]), /cross-browser sender handoff keeps game chat/u);
-    assert.match(String((await senderReceived)[0]), /cross-browser sender handoff keeps game chat/u);
+    assert.match(await gamerReceived, /cross-browser sender handoff keeps game chat/u);
+    assert.match(await senderReceived, /cross-browser sender handoff keeps game chat/u);
   } finally { for (const peer of peers) peer.terminate(); await f.close(); }
 });

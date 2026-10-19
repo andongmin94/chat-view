@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 실제 Socket.IO 중단·재구독과 마지막 PC 승인 해제의 서비스 수명
+## 현재 흐름: 치지직 upstream 중단 후 네이티브 HUD의 첫 표시·복구 동작
+
+시작 원격 `OBS` HEAD `cfca0797a445070235859eb7c0d3ac9fe48623b7`, `main` `6d1633d3df75c4781051394a5c381ea8275a804f` 불변. 필수 다섯 문서를 순서대로 읽고 기존 C++/WinHTTP/WebView2 구현을 확인했다.
+
+- **실제 사용자 문제:** 서버가 치지직 provider 구독 중단을 송출/게임 PC의 기존 승인된 private WebSocket으로 보내도 `NativeChatConnection`은 이전 첫 글자의 WebView2 렌더 ACK를 계속 기억했다. 결과적으로 중단 화면으로 돌아갔어도 첫 표시가 완료됐다고 판단하여 같은 PC의 **현재 승인으로 다시 시도** 버튼이 비활성화될 수 있고, 이전 렌더 ACK가 새 연결 상태를 잘못 회복시킬 수 있었다.
+- **코드:** `DisplayClient`는 이미 검증한 `chat-snapshot`의 `disconnected/error/unsubscribed/revoked/stopped` 상태를 기존 native control 전용 갱신에 표시하고, WebView2의 내용은 종전처럼 연결 메타데이터를 제거한 DTO만 전달한다. `NativeChatConnection`은 `!subscribed` 스냅샷 수신 시 과거 `first_text_rendered_`·`displayed_subscribed_`·`in_flight_subscribed_`을 즉시 초기화하며, **명시적 원래 승인으로의 수동 재시도** 자격을 되살린다. 실제 구독 중단은 서비스와 분리된 자신의 HUD에 알리고 빈 메시지를 표시한다. 새 `subscribed` 메시지는 해당 WebView2 문서가 새 글자를 실제 DOM에 그린 ACK 후에만 첫 텍스트로 인정된다. 서버 측 5회 재시도·토큰·승인·사생활 경계·OBS 영상·광고는 변경하지 않는다.
+- **실제 검증 경로:** `platform/tools/native-display-test.mts`에 하나의 실제 local private WebSocket에서 **첫 Unicode 글자→upstream disconnected→DOM 0줄·native 수신 상태 해제·같은 승인 재시도 버튼 활성화→새 구독 첫 글자만 렌더/ACK→현재 membership 보존→server revoke로 화면 지움**을 공급하는 모드를 추가한다. `tests/native-display-client-test.cpp`는 실제 WinHTTP·WebView2/COM·내장 자체 채팅 문서/nonce를 **게임 PC용 gaming 역할과 송출 PC용 streaming 역할 각각**에서 사용한다. 별도 공급자 계정·실치지직/물리 투컴 테스트는 아니다.
+- **검증:** Windows native development routine과 관련 플랫폼 Node/Chromium 검사를 기능 푸시 뒤 확인해 실제 성공/실패 상태를 기록한다. 해당 native 변경에 필요한 Windows CI는 실행하며, 공식 OBS 광고 합성/자원 반복/패키지 qualification은 새로 필요하지 않다. 로컬 Windows native 환경과 실제 치지직 등록 앱 계정은 이 세션에 없어 실제 검증 완료로 표기하지 않는다. D1 전체와 D2/D4/D6/D7·G4-06·G3-04·실광고/HP/정산·배포는 미해결이다.
+
+## 직전 완료 흐름: 실제 Socket.IO 중단·재구독과 마지막 PC 승인 해제의 서비스 수명
 
 시작 원격 OBS HEAD **7b1ece12a0542215c0e59cb30d964d788992b866**, main **6d1633d3df75c4781051394a5c381ea8275a804f**을 재확인하고 필수 5개 문서를 읽었다.
 
@@ -217,6 +226,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-합성 Socket.IO→Creators→두 private WebSocket과 승인 해제까지 이어지면, **실제 치지직 등록 앱/채널에서 OAuth→첫 메시지→장시간 수신→강제 단절·재연결→권한 철회**를 확인하고 같은 동선을 기존 native WinHTTP/WebView2 HUD에 연결한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
+native HUD에서 구독 중단의 이전 첫 글자 무효화와 같은 승인 수동 복구를 확인한 뒤에는 **실제 치지직 등록 앱/채널에서 OAuth→첫 메시지→장시간 수신→업스트림 단절·재연결→권한 철회**를 두 승인 역할의 기존 WinHTTP/WebView2 HUD까지 연결한다. 계정이 없어도 D1 첫 표시의 반복 신뢰성은 기존 합성 네이티브 경로에서 계속 개선한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

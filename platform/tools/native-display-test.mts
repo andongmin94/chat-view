@@ -15,10 +15,10 @@ assert(executable, 'native test executable required');
 const snapshot = { state: 'subscribed', received: 1, messages: [
   { nickname: '검증 사용자', content: '안녕 😀 <img onerror=evil()>', messageTime: 1700000000000 },
 ] };
-for (const mode of ['gateway', 'gateway-gaming', 'login-cancel', 'login-cancel-unconfirmed', 'login-expiry', 'login-denied', 'cancel', 'local-expiry', 'redirect', 'wrong-scope', 'wrong-role',
+for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gateway-provider-loss-gaming', 'login-cancel', 'login-cancel-unconfirmed', 'login-expiry', 'login-denied', 'cancel', 'local-expiry', 'redirect', 'wrong-scope', 'wrong-role',
   'wrong-session', 'bad-count', 'claimed-capture', 'missing-connection', 'invalid-json', 'binary', 'oversize', 'idle']) {
-  const ui = mode === 'gateway' || mode === 'gateway-gaming' || mode.startsWith('login-');
-  const role = mode === 'gateway-gaming' ? 'gaming' : 'streaming';
+  const ui = mode === 'gateway' || mode === 'gateway-gaming' || mode.startsWith('gateway-provider-loss') || mode.startsWith('login-');
+  const role = mode === 'gateway-gaming' || mode === 'gateway-provider-loss-gaming' ? 'gaming' : 'streaming';
   let origin = '';
   const access = new DisplayAccess(() => ({ id: 'synthetic-owner', expiresAt: performance.now() + 60000 }));
   const issued = access.issue();
@@ -26,7 +26,8 @@ for (const mode of ['gateway', 'gateway-gaming', 'login-cancel', 'login-cancel-u
   const renewal = randomBytes(32).toString('hex');
   const membership = { role: 'gaming' as const, connectionId: randomUUID(), broadcastSessionId: randomUUID() };
   const frameConnection = { ...membership, gamingConnections: 1, streamingConnections: 0, captureState: 'unverified' as const };
-  const gateway = new DisplayGateway(access, () => origin, () => snapshot);
+  let currentSnapshot = snapshot;
+  const gateway = new DisplayGateway(access, () => origin, () => currentSnapshot);
   const sessionGateway = new DisplaySessionGateway(access, () => origin, () => gateway.changed());
   let loginId = '', grantId = '', browserOpened = false, loginStarts = 0, loginPolls = 0, loginCancels = 0;
   let approved = false, denied = false;
@@ -52,6 +53,7 @@ for (const mode of ['gateway', 'gateway-gaming', 'login-cancel', 'login-cancel-u
   const peers = new WebSocketServer({ noServer: true, perMessageDeflate: false });
   const timers: ReturnType<typeof setInterval>[] = [];
   let requests = 0, upgrades = 0, redirected = 0, rendered = false;
+  let providerLost = false, providerReturned = false;
   let child: ReturnType<typeof spawn> | undefined;
   const server = createServer((request, response) => {
     if (ui) {
@@ -136,6 +138,21 @@ for (const mode of ['gateway', 'gateway-gaming', 'login-cancel', 'login-cancel-u
         assert.equal(loginStarts, mode.startsWith('login-') ? 2 : 1);
         sessionGateway.login.approve(loginId);
       }
+      if (/(^|\n)provider-loss\r?\n/u.test(output) && !providerLost) {
+        assert(mode.startsWith('gateway-provider-loss'));
+        providerLost = true;
+        currentSnapshot = { state: 'disconnected', received: 0, messages: [] };
+        gateway.changed();
+      }
+      if (/(^|\n)provider-return\r?\n/u.test(output) && !providerReturned) {
+        assert(mode.startsWith('gateway-provider-loss'));
+        assert(providerLost);
+        providerReturned = true;
+        currentSnapshot = { state: 'subscribed', received: 1, messages: [
+          { nickname: '복구 사용자', content: '새 구독의 첫 채팅 😀', messageTime: 1700000001000 },
+        ] };
+        gateway.changed();
+      }
       if (/(^|\n)rendered\r?\n/u.test(output) && !rendered) {
         rendered = true; assert(grantId); access.revokeSessions(); gateway.changed();
       }
@@ -164,6 +181,8 @@ for (const mode of ['gateway', 'gateway-gaming', 'login-cancel', 'login-cancel-u
     } else assert.equal(requests, 1, `${mode}: no replay of the one-use exchange`);
     assert.equal(redirected, 0, 'credentials never follow a redirect');
     if (ui) assert(rendered, 'native DOM acknowledgement before revocation');
+    if (mode.startsWith('gateway-provider-loss')) assert(providerLost && providerReturned,
+      'the native HUD reported both the upstream interruption and its fresh first chat');
     if (['wrong-scope', 'wrong-role', 'redirect', 'cancel'].includes(mode)) assert.equal(upgrades, 0);
     console.log(`${mode}: passed`);
   } finally {

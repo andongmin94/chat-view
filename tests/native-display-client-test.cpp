@@ -124,7 +124,7 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     chatview::HudWindow hud;
     expect(hud.create(GetModuleHandleW(nullptr), ready.get()), "create production HUD");
-    const bool gaming = mode == "gateway-gaming";
+    const bool gaming = mode == "gateway-gaming" || mode == "gateway-provider-loss-gaming";
     const auto role = gaming ? chatview::DisplayRole::Gaming : chatview::DisplayRole::Streaming;
     browser_probe.origin = origin;
     chatview::NativeChatConnection connection(hud, role, [](HWND window, const wchar_t *url) {
@@ -328,6 +328,36 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
     expect(open() == 1 && dialog == chatview::NativeChatConnectionTestAccess::dialog(connection) &&
         chatview::NativeChatConnectionTestAccess::connection(connection)->membership == approved_membership,
         "opening an approved connection does not replace its membership");
+    if (mode.starts_with("gateway-provider-loss")) {
+        expect(!IsWindowEnabled(GetDlgItem(dialog, 112)),
+               "a live first-text ACK does not offer redundant manual reconnect");
+        std::cout << "provider-loss\n" << std::flush;
+        await([&] {
+            return surface.rendered_messages() == 0U &&
+                   query() == chatview::NativeChatStatus::Connecting &&
+                   IsWindowEnabled(GetDlgItem(dialog, 112)) != FALSE;
+        }, "provider disconnect clears the native first-text claim and enables explicit recovery", &connection);
+        expect(control_text(dialog, 106).find(L"치지직 채팅 구독이 끊겼습니다") != std::wstring::npos &&
+               control_text(dialog, 112) == L"현재 승인으로 채팅 표시 다시 시도",
+               "interrupted subscription explains the loss and permits same-approval retry");
+        expect(evaluate(core.Get(), L"document.querySelectorAll('#messages li').length === 0", connection) == L"true",
+               "old provider chat cannot remain visible during automatic resubscription");
+        expect(chatview::NativeChatConnectionTestAccess::connection(connection)->membership == approved_membership,
+               "transport interruption does not grant or replace a role");
+        std::cout << "provider-return\n" << std::flush;
+        await([&] {
+            return surface.rendered_messages() == 1U &&
+                   query() == chatview::NativeChatStatus::Receiving &&
+                   !IsWindowEnabled(GetDlgItem(dialog, 112));
+        }, "fresh provider first chat restores the original native HUD and disables redundant retry", &connection);
+        expect(evaluate(core.Get(), LR"JS(
+            document.querySelectorAll('#messages li').length === 1 &&
+            document.querySelector('#messages li b').textContent === '복구 사용자' &&
+            document.querySelector('#messages li .content').textContent === '새 구독의 첫 채팅 😀'
+        )JS", connection) == L"true", "fresh chat replaces the old provider session text on the owned DOM");
+        expect(chatview::NativeChatConnectionTestAccess::connection(connection)->membership == approved_membership,
+               "the resumed subscription preserves the original gaming/streaming approval");
+    }
     std::cout << "rendered\n" << std::flush;
     await([&] { return !chatview::NativeChatConnectionTestAccess::active(connection); }, "grant revoke ends native delivery", &connection);
     expect(!chatview::NativeChatConnectionTestAccess::connection(connection), "revocation clears native session state");
@@ -398,7 +428,8 @@ int main(int argc, char **argv)
         const std::wstring origin(origin_line.begin(), origin_line.end()), ticket(ticket_line.begin(), ticket_line.end());
         validate_inputs(origin, ticket);
         const std::string mode = argv[1];
-        if (mode == "gateway" || mode == "gateway-gaming" || mode.starts_with("login-")) {
+        if (mode == "gateway" || mode == "gateway-gaming" ||
+            mode.starts_with("gateway-provider-loss") || mode.starts_with("login-")) {
             expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM startup");
             try { gateway_ui(origin, mode); } catch (...) { CoUninitialize(); throw; }
             CoUninitialize();

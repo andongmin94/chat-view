@@ -661,6 +661,15 @@ void NativeChatConnection::tick() noexcept
                 approval_denied_ = false;
                 force_new_login_ = false;
                 previous_login_code_.clear(); // New consent does not claim the old browser was revoked.
+                if (!update.subscribed) {
+                    // Upstream reconnect can reuse this private WebSocket. Its
+                    // old first-text ACK is not evidence of a new subscription,
+                    // even if that renderer ACK arrives after this snapshot.
+                    first_text_rendered_ = false;
+                    displayed_subscribed_ = false;
+                    in_flight_subscribed_ = false;
+                    displayed_status_.reset();
+                }
                 show_display_status();
                 if (awaiting_login_) {
                     awaiting_login_ = false; login_url_.clear();
@@ -670,7 +679,12 @@ void NativeChatConnection::tick() noexcept
                     if (dialog_ && IsWindowVisible(dialog_)) SetForegroundWindow(dialog_);
                 }
                 reconnecting_ = false; pending_ = std::move(update.envelope); pending_subscribed_ = update.subscribed;
-                notice(update.subscribed ? (remembered_ ? L"채팅 연결을 유지하고 있습니다. 읽기 권한은 자동 갱신됩니다." : L"현재 실행 중 읽기 권한을 자동 갱신합니다. 다음 실행에는 다시 로그인합니다.") : L"서비스에 연결됐습니다. 채팅 구독을 기다립니다.");
+                notice(update.subscribed
+                    ? (remembered_ ? L"채팅 연결을 유지하고 있습니다. 읽기 권한은 자동 갱신됩니다."
+                        : L"현재 실행 중 읽기 권한을 자동 갱신합니다. 다음 실행에는 다시 로그인합니다.")
+                    : (update.chat_interrupted
+                        ? L"치지직 채팅 구독이 끊겼습니다. 서버 자동 복구를 기다리거나 현재 승인으로 표시를 다시 시도하세요."
+                        : L"서비스에 연결됐습니다. 채팅 구독을 기다립니다."));
             }
         }
         if (awaiting_login_) {

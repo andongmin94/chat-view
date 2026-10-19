@@ -5,7 +5,7 @@ export function renderChat(document, snapshot) {
   const list = document.getElementById('messages');
   const labels = {
     idle: '연결 관리에서 채팅 수신을 시작하세요.', connecting: '치지직 소켓 연결 중',
-    subscribing: '채팅 구독 확인 중', disconnected: '연결이 끊겼습니다. 연결 관리에서 다시 시작하세요.',
+    subscribing: '채팅 구독 확인 중', disconnected: '치지직 채팅 연결이 끊겼습니다. 복구되지 않으면 연결 관리에서 다시 시도하세요.',
     revoked: '채팅 권한이 철회됐습니다. 다시 로그인하세요.',
     unsubscribed: '채팅 구독이 취소됐습니다.', error: '채팅 연결 실패. 연결 관리에서 다시 시도하세요.',
     stopped: '채팅 수신이 중지됐습니다.',

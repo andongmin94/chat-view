@@ -228,7 +228,8 @@ DisplayMembership membership(const winrt::Windows::Data::Json::JsonObject &value
     require(connection_id(result.broadcast_session_id) && connection_id(result.connection_id));
     return result;
 }
-bool inspect_frame(std::wstring &frame, const DisplayMembership &expected, DisplayConnectionState &connection, ULONGLONG received_started)
+bool inspect_frame(std::wstring &frame, const DisplayMembership &expected, DisplayConnectionState &connection,
+                   ULONGLONG received_started, bool &chat_interrupted)
 {
     constexpr std::wstring_view states[] = {L"idle", L"connecting", L"subscribing", L"subscribed", L"disconnected", L"revoked", L"unsubscribed", L"error", L"stopped"};
     auto value = winrt::Windows::Data::Json::JsonObject::Parse(frame);
@@ -256,6 +257,8 @@ bool inspect_frame(std::wstring &frame, const DisplayMembership &expected, Displ
     } else require(output_state == L"unknown" && output.Size() == 1U);
     const auto snapshot = value.GetNamedObject(L"snapshot"); const auto state = snapshot.GetNamedString(L"state");
     require(std::find(std::begin(states), std::end(states), std::wstring_view(state)) != std::end(states));
+    chat_interrupted = state == L"disconnected" || state == L"unsubscribed" ||
+                       state == L"error" || state == L"revoked" || state == L"stopped";
     const double count = snapshot.GetNamedNumber(L"received");
     require(std::isfinite(count) && count >= 0 && count <= 9007199254740991.0 &&
             std::floor(count) == count && snapshot.GetNamedArray(L"messages").Size() <= 100U);
@@ -723,11 +726,14 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                     if (kind != WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE) continue;
                     auto envelope = utf16(frame); frame.clear();
                     DisplayConnectionState connection_state;
-                    const bool subscribed = inspect_frame(envelope, approved, connection_state, received_started);
+                    bool chat_interrupted = false;
+                    const bool subscribed = inspect_frame(envelope, approved, connection_state,
+                                                          received_started, chat_interrupted);
                     {
                         std::lock_guard lock(state->mutex);
                         network(WaitForSingleObject(state->cancel.get(), 0) == WAIT_TIMEOUT && GetTickCount64() < expires);
-                        state->latest = {DisplayStatus::Receiving, std::move(envelope), subscribed, std::move(connection_state)};
+                        state->latest = {DisplayStatus::Receiving, std::move(envelope), subscribed,
+                                         std::move(connection_state), chat_interrupted};
                         state->last_frame = GetTickCount64(); state->pending = true;
                         if (!output_ready && !output_token.empty()) {
                             erase(state->output_token); state->output_token = output_token;

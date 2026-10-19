@@ -17,6 +17,9 @@ struct DisplayUpdate {
     std::wstring envelope;
     bool subscribed = false;
     std::optional<DisplayConnectionState> connection;
+    // A terminal upstream subscription state, distinct from a live display
+    // socket or a missing first chat message. Never sent to the renderer.
+    bool chat_interrupted = false;
 };
 // Owner-thread API, worker-owned asynchronous WinHTTP. App-session credentials
 // and connection metadata never enter the private chat renderer or OBS.

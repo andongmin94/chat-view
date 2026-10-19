@@ -118,9 +118,16 @@ struct BrowserProbe {
 void gateway_ui(const std::wstring &origin, const std::string &mode)
 {
     wchar_t temporary[MAX_PATH]{}; expect(GetTempPathW(MAX_PATH, temporary) != 0, "temporary directory");
-    const std::wstring profile = std::wstring(temporary) + L"ChatView-Delivery-" + std::to_wstring(GetCurrentProcessId());
-    expect(CreateDirectoryW(profile.c_str(), nullptr) != FALSE, "isolated WebView2 profile");
-    SetEnvironmentVariableW(L"LOCALAPPDATA", profile.c_str());
+    // This test runs multiple child processes. A PID-derived profile folder
+    // can collide with the previous run's retained WebView2/DPAPI data and
+    // fail before any actual native chat assertion executes.
+    wchar_t unique[MAX_PATH]{};
+    expect(GetTempFileNameW(temporary, L"CVD", 0, unique) != 0, "reserve unique WebView2 profile");
+    expect(DeleteFileW(unique) != FALSE && CreateDirectoryW(unique, nullptr) != FALSE,
+        "isolated WebView2 profile");
+    const std::wstring profile(unique);
+    expect(SetEnvironmentVariableW(L"LOCALAPPDATA", profile.c_str()) != FALSE,
+        "bind private WebView2/DPAPI test profile");
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     chatview::HudWindow hud;
     expect(hud.create(GetModuleHandleW(nullptr), ready.get()), "create production HUD");

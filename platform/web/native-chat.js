@@ -35,7 +35,9 @@ export function nativeChatSnapshot(value) {
 export function connectNativeChat(document, bridge, render, nonce, clock = globalThis) {
   const clear = () => render(document, { state: 'disconnected', received: 0, messages: [] });
   let closed = false;
-  let lastUpdate = clock.performance.now();
+  // This document can be prewarmed while the creator is still approving the
+  // browser login. No private feed exists until its first validated frame.
+  let lastUpdate = null;
   const listener = event => {
     // WebView2 documents source === chrome.webview, not DOM isTrusted.
     // This receiver runs only in the immutable, nonce-bound native document.
@@ -64,7 +66,10 @@ export function connectNativeChat(document, bridge, render, nonce, clock = globa
   };
   bridge.addEventListener('message', listener);
   const watchdog = clock.setInterval(() => {
-    if (clock.performance.now() - lastUpdate > 15000) clear();
+    if (lastUpdate !== null && clock.performance.now() - lastUpdate > 15000) {
+      lastUpdate = null; // Clear only once until a new valid frame arrives.
+      clear();
+    }
   }, 1000);
   render(document, { state: 'idle', received: 0, messages: [] });
   bridge.postMessage(`chat-ready:${nonce}`);

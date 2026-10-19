@@ -73,6 +73,25 @@ test('native WebView2 bridge acknowledges each heartbeat without rebuilding an u
   f.close();
 });
 
+test('prewarmed own document stays idle during browser consent; liveness begins only after first frame', () => {
+  const f = fixture();
+  f.tick(60_000); // The real browser confirmation can stay pending for minutes.
+  assert.equal(f.list.children.length, 0);
+  assert.match(f.status.textContent, /연결 관리/u);
+  assert.deepEqual(f.sent, ['chat-ready:test-nonce'], 'pre-consent document cannot invent chat frames');
+  f.emit(envelope);
+  assert.equal(f.list.children.length, 1);
+  f.tick(14_999);
+  assert.equal(f.list.children.length, 1, 'live chat retains its original 15 second budget');
+  f.tick(2);
+  assert.equal(f.list.children.length, 0);
+  assert.match(f.status.textContent, /끊겼/u);
+  f.emit({ ...envelope, frameId: '2' });
+  assert.equal(f.list.children.length, 1, 'a fresh valid frame restores the same owned DOM');
+  assert.equal(f.sent.at(-1), 'chat-rendered:test-nonce:2:1');
+  f.close();
+});
+
 test('host-state does not keep a dead chat feed alive', () => {
   const f = fixture(); f.emit(envelope); f.tick(14000);
   f.emit({ type: 'host-state', editing: true }); f.tick(1001);

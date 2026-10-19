@@ -307,10 +307,13 @@ int main()
         // Each case supersedes two pending setup navigations without pumping
         // between requests. No retry-on-failure or relaxed DOM/time bounds.
         for (unsigned transition = 0; transition < 4; ++transition) {
+            const std::wstring previous_owned_url = source(core.Get());
             host.show_setup_page();
             expect(host.reload(), "queue prior setup replacement");
             expect(surface.open(host), "private chat supersedes pending setup");
             await([&] { return surface.ready(); }, "new owned document after cancelled setup");
+            expect(source(core.Get()) != previous_owned_url,
+                "the pending old navigation cannot authorize or replace the new owned URL");
             expect(surface.publish(kMessage), "first message after superseded setup");
             await([&] { return surface.rendered_frames() == 1U && surface.rendered_messages() == 1U; },
                 "first real render after superseded setup");

@@ -46,8 +46,6 @@ struct NativeChatSurface::State {
     ICoreWebView2 *identity = nullptr;
     bool active = true;
     bool saw_navigation = false;
-    // Old setup navigation can dispatch before the fresh URL is installed.
-    bool opening = true;
     // A source-scoped nonce handshake from the owned module proves the
     // parsed DOM is usable even if completion callbacks are delayed.
     bool handshake = false;
@@ -112,15 +110,21 @@ bool NativeChatSurface::open(WebViewHost &host) noexcept
                     LPWSTR uri = nullptr;
                     const bool own = SUCCEEDED(args->get_Uri(&uri)) && uri && state->document_url == uri;
                     CoTaskMemFree(uri);
-                    if (!state->attached()) {
-                        // navigate_local_document binds the caller URL before
-                        // Stop() retires the previous document, but binds the
-                        // host URL only after Stop(). Ignore only stale, unowned
-                        // events in that interval; they grant no readiness.
-                        if (state->opening && !own) return S_OK;
-                        state->invalidate(); return S_OK;
-                    }
-                    if (!own || state->saw_navigation || state->handshake ||
+                    // WebView2 may dispatch the superseded setup/clear
+                    // NavigationStarting after Navigate() for this owned
+                    // document already returned. The old synchronous
+                    // "opening" flag was too short and could permanently
+                    // poison this new receiver before its own navigation.
+                    // The host independently cancels every URL except its
+                    // reserved current document, and only an exact owned
+                    // navigation ID plus nonce/source handshake grants ready.
+                    // Ignore foreign starts ONLY until that owned start is
+                    // seen. A later foreign/duplicate start still invalidates
+                    // the receiver and can never deliver private text.
+                    if (!own && !state->saw_navigation && !state->handshake)
+                        return S_OK;
+                    if (!state->attached() || !own || state->saw_navigation ||
+                        state->handshake ||
                         FAILED(args->get_NavigationId(&state->navigation))) {
                         state->invalidate();
                     } else {
@@ -181,7 +185,6 @@ bool NativeChatSurface::open(WebViewHost &host) noexcept
         if (FAILED(result) || !host.navigate_local_document(document.c_str(), state->document_url)) {
             close(); return false;
         }
-        state->opening = false;
         return true;
     } catch (...) { close(); return false; }
 }

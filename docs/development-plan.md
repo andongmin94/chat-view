@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 네이티브 HUD 준비 메시지의 실제 WebView2 생명주기 확인
+## 현재 흐름: 오래된 WebView2 설정 탐색 이벤트가 신규 개인 채팅을 폐기하는 경합 수정
+
+시작 원격 OBS `a4a54051b1b3a6d39f7863b03d047a28d59226db`, main `6d1633d3df75c4781051394a5c381ea8275a804f` 확인. 필수 문서 AGENTS → PRODUCT → workflow → architecture → 이 계획을 순서대로 읽고 기존 Win32·WebView2 문서 수명 코드를 검토했다.
+
+- **직전 D1 실패:** 기능 `e009922e992b6be873c77c1439d6dd1904ec7d7f`의 [Windows development #450/run `39271959085`](https://github.com/andongmin94/chat-view/actions/runs/39271959085)는 **completed/failure, Windows x64 CTest 49/50·실패1 (260.98초)**. 신규 조기/중복 host-ready를 검사하는 `native-chat-switch` 및 `native-display-client`, `native-chat-surface`, `companion-chat-early-first`는 통과했으나 `native-logout retry`의 첫 승인 글자는 **active1/worker1/metadata1/pending_frame1, surface_ready0/frames0/rows0/rejected0/awaiting_render0**으로 렌더 전에 막혔다. 원인 하나로 확정할 수 없고 D1은 열린 상태다.
+- **고친 실제 경합:** `NativeChatSurface::open`에서 신규 소유 문서를 `Navigate`한 직후 `opening=false`로 바꾸는 구조는 이전 setup/clear `NavigationStarting`이 비동기로 **새 Navigate 호출 뒤에 도착할 때** `!own`을 신규 문서의 예상치 못한 탐색으로 간주하여 수신기를 무효화할 수 있었다. 새 소유 URL에 대한 `NavigationStarting`을 실제로 관측하기 **전까지만** 이전 비소유 이벤트를 무시한다. 이전 이벤트는 구독/문서 준비가 될 수 없고, 기존 `WebViewHost::is_navigation_allowed`의 정확한 예약 URL 차단·현재 소유 WebView2 포인터·동일 탐색 ID·source/nonce handshake가 함께 만족되어야만 첫 메시지를 게시할 수 있다. 예상 소유 탐색 후 비소유/중복 탐색·실제 navigation failure는 여전히 즉시 무효화한다. 오래된 동기 `opening` 플래그는 제거한다. 계정/권한/광고/OBS·첫 15초 기한 변경 없음.
+- **회귀:** 실제 `native-chat-surface` CTest에서 이전 setup navigation 두 번을 예약한 직후 새 chat open을 수행하고, 새 채팅 문서 URL이 직전 소유 URL과 다르며 실제 첫 글자를 소유 DOM에 렌더/ACK한 경우만 통과한다. 기존 외부/구 URL 차단, 우회 탐색, 새 nonce와 frameId ACK, WinHTTP→네이티브 개인 HUD/게임 PC 컴패니언·로그아웃 수명 검사를 모두 그대로 유지한다.
+- **검증:** 동일 기능 SHA의 Windows native development CI를 확인해 성공/실패 및 영향 범위를 별도로 기록한다. 실제 CHZZK 계정/등록 앱·물리 투컴 영상 HUD 제외/광고 실노출·HP/정산/배포 qualification은 이번 수정으로 검증되지 않았고 D1/D2/D4/D6/D7·G4-06/G3-04는 미완료다.
+
+## 직전 완료 흐름: 네이티브 HUD 준비 메시지의 실제 WebView2 생명주기 확인
 
 시작 원격 `OBS` HEAD `01843315e4f4f1447e640adf568767383a988856`, `main` HEAD `6d1633d3df75c4781051394a5c381ea8275a804f` 불변. AGENTS → PRODUCT → workflow → architecture → 이 계획 순서로 확인했다.
 
@@ -271,6 +280,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-실제 CI #450에서 확인된 **서버 승인·첫 프레임 수신 이후에도 `NativeChatSurface::ready()`가 0인** 경계를 우선 개선한다. WebView2 소유 문서의 탐색·nonce handshake·실제 호스트 현재성은 그대로 검증하되, 미완료/실패 때 사용자가 원래 승인으로 안전하게 첫 텍스트를 표시할 수 있게 기존 native 수명 경로를 고친다. 실제 등록된 치지직 앱/채널이 준비되면 OAuth→첫 텍스트→장시간 채팅/새 메시지 누적→업스트림 단절·복귀→권한 철회를 게임 PC OBS 없는 컴패니언과 송출 PC에서 각각 검증한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
+새 채팅의 own NavigationStarting 이전에 뒤늦게 도착하는 setup/clear 이벤트로 수신기를 폐기하는 경합을 없앤 뒤에도, 실제 `surface.ready()==0` D1의 남은 원인은 별개로 추적한다. 다음 단계는 사용자 승인과 첫 프레임이 이미 존재할 때 **실패한 개인 문서를 새로운 URL·nonce로 다시 준비하는 안전한 한정 복구**를 검토하고, 현행 15초 시간·원래 승인·보호 경계 안에서 실제 WebView2로 검증하는 것이다. 실제 등록된 치지직 앱/채널이 준비되면 OAuth→첫 텍스트→장시간 채팅/새 메시지 누적→업스트림 단절·복귀→권한 철회를 게임 PC OBS 없는 컴패니언과 송출 PC에서 각각 검증한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

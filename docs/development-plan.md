@@ -12,7 +12,7 @@
 - **실제 문제와 사용자 영향:** `HudWindow::handle_message(kWebViewReadyMessage)`는 큐에 들어온 내부 `WM_APP+40` 메시지만으로 `webview_ready_=true`를 설정하고 설정 다시 읽기·문서 선택/가시성 갱신·런타임 준비 이벤트 신호까지 처리했다. 호스트의 환경·컨트롤러/사전 스크립트 준비가 아직 끝나지 않은 **조기 메시지**, 또는 첫 메시지 렌더 뒤의 **중복/낡은 준비 메시지**가 실제로 준비되지 않은 HUD를 준비됐다고 인정하거나, 이미 보이던 자체 채팅 문서를 다시 탐색할 수 있었다.
 - **코드:** 현재 `WebViewHost::ready()`가 참이고, `HudWindow`가 첫 준비 전이며, 종료 중이 아닐 때 **한 번만** 내부 ready 메시지를 적용한다. 이미 준비됐거나 아직 컨트롤러 준비가 끝나지 않은 경우는 단순히 무시해 기존 런타임 ready event를 조기 설정하거나 자체 채팅/승인·복구를 건드리지 않는다. `WebViewHost` 초기화, 실제 메시지/WinHTTP/웹문서·OBS 보호·CI 제한 시간을 바꾸지 않는다.
 - **검증:** 기존 실제 Windows `tests/native-chat-switch-test.cpp`에서 WebView2 콜백을 메시지 펌프로 처리하기 전에 조기 ready 메시지를 동기로 보낸 뒤 **ready event 미신호**를 검증한다. 진짜 비동기 초기화가 완료되면 정상 첫 수신·빈 구독/첫 문자·승인·수동 복귀 경로를 확인하고, 실제 첫 글자 뒤 중복 ready 메시지를 보내도 `surface.ready()`·렌더 행·원래 membership·첫 텍스트 판정을 훼손하지 않는지 확인한다. 작업이 보장하는 것은 **거짓 ready 차단**이며, D1의 모든 간헐적 호스트 시작 지연을 해결한 것은 아니다.
-- **CI:** 이 기능 SHA의 Windows x64 native development 결과가 나온 뒤 통과·실패를 근거와 함께 기록한다. 실계정 G4-06, 실제 게임 PC OBS 없는 HUD/영상 G3-04, D1의 이전 시간지연, D2/D4/D6/D7, 시청/HP·정산/배포 qualification은 미완료.
+- **실행된 CI:** 기능 `e009922e992b6be873c77c1439d6dd1904ec7d7f`의 [Windows development #450/run `39271959085`](https://github.com/andongmin94/chat-view/actions/runs/39271959085)은 이 작업의 최종 확인 당시 **completed**(Windows x64 `Build and test ChatView`). `Native change scope`는 성공했지만 전체 네이티브 결과는 확정되지 않았으므로 통과·실패로 단정하지 않는다. CHZZK 플랫폼/공식 OBS 광고·반복 자원/패키지 qualification은 이 SHA에서 새로 돌리지 않았다. 실계정 G4-06, 게임 PC OBS 없는 물리 HUD/영상 G3-04, 기존 D1 간헐 시간지연, D2/D4/D6/D7, 시청/HP·정산/배포 qualification은 미완료.
 
 ## 직전 완료 흐름: 치지직 신규 로그인 승인 전 네이티브 HUD 사전 준비
 

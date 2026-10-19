@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 치지직 구독 중단 후 이전 메시지·수신 건수 없이 새 세션 복귀
+## 현재 흐름: 두 PC의 공유 채팅 upstream 재연결 지속성과 권한 격리
+
+시작 원격 OBS HEAD `db157ed796d8ea36ddb457eb24052df33853d6e0`; 이전 CHZZK #100의 Node **346/346**·Chromium **29/29**은 시작점의 증거다. 필수 5개 문서를 지정 순서대로 읽고 OBS에서만 진행한다.
+
+- **사용자 동선:** 동일 치지직 creator의 gaming·streaming 역할이 각 private HUD에서 채팅을 읽는 중 upstream이 끊어진다. 두 화면 모두 이전 메시지·수신 건수를 즉시 비우고 기존 PC 승인/디스플레이 WebSocket은 유지한 채 새 구독의 첫 글자만 받는다. 다른 creator의 채팅·승인은 유지되고, 명시적 provider 권한 철회 시에만 해당 creator의 PC 연결이 닫힌다.
+- **실제 코드 개선:** `Creators.ensureChat()`의 최대 5회 재시도 횟수가 하루 동안 여러 번 발생한 정상 연결 중단까지 누적되어 자동 복귀가 영구 중지될 수 있었다. 60초 이상 `subscribed` 상태를 유지한 upstream이 끊어졌을 때 해당 creator의 재시도 예산만 회복한다. 최초 구독 실패·즉각 재단절은 종전 5회/1·2·4·8·16초 backoff를 유지한다. 갱신, OAuth, 승인, OBS/공개 광고, 토큰 로깅은 건드리지 않는다.
+- **연결 회귀:** 기존 `provider-restart-wire.test.mts`에서 실제 HTTP/SQLite/ws로 gaming·streaming 두 PC와 다른 creator를 연결해 첫 메시지→단절/수신0→자동 재구독/새 첫 메시지→승인 유지→provider 철회 시 해당 두 HUD만 닫힘을 검증한다. 합성 chat fixture는 종료 후 늦은 publish를 무시한다. `provider-restart.test.mts`는 60초 이상의 성공 구독을 6차례 거친 뒤에도 자동 복귀하는지 주입된 시계로 검증한다. 실제 치지직 등록 앱·토큰·라이브 네트워크 및 네이티브 WinHTTP/WebView2·물리 투컴은 별도다.
+- **검증 결과:** 이 기능 커밋의 관련 CHZZK CI 결과는 커밋 후 확인하여 기록한다. 개발 환경에서 외부 GitHub 저장소 git clone은 DNS 접근 제한으로 실행할 수 없었고, 로컬 npm/typecheck 결과를 성공으로 간주하지 않는다.
+
+## 직전 완료 흐름: 치지직 구독 중단 후 이전 메시지·수신 건수 없이 새 세션 복귀
 
 시작 OBS HEAD `731d1b040b56f263287aed1711bf596b7144b6e4`, CHZZK #99/run `39189448824`의 실제 Node 22/24 Ubuntu·Windows 4개 job·Chromium **29/29**, Node **344/344** 성공 확인. AGENTS → PRODUCT → development-workflow → architecture → 이 계획 순으로 읽었고 OBS만 수정한다.
 
@@ -187,6 +196,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-구독 중단→새 구독의 메시지/카운터 격리를 끝내면 **동일 치지직 creator의 게임 PC와 송출 PC가 한 upstream에 붙은 상태에서 채팅 연결이 중단되고 다시 살아날 때** 두 기존 승인된 private HUD에 새 글자만 전달되고, 다른 creator의 채팅·승인은 그대로인지 실서비스 HTTP/SQLite/WebSocket 경계를 검증한다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
+두 PC의 실제 WebSocket/승인 격리와 재구독을 연결한 뒤에는 **실제 CHZZK Socket.IO upstream → 서비스 HTTP/SQLite/WebSocket → 두 네이티브 WinHTTP/WebView2 HUD**를 오랜 시간 연속 구동하며 첫 글자, 중단·복귀와 권한 철회 수명 경계를 검증한다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

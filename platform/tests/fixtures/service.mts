@@ -36,7 +36,7 @@ export async function fixture(options: Options = {}) {
   let grants: ProviderGrants;
   try { grants = new ProviderGrants(store.database, options.key ?? randomBytes(32)); }
   catch (error) { store.close(); throw error; }
-  const chats = new Map<string, { publish: (message: string) => void; revoke: () => void }>();
+  const chats = new Map<string, { publish: (message: string) => void; disconnect: () => void; revoke: () => void }>();
   const gateways: { snapshot: () => unknown; changed: number }[] = [];
   const active = new Map<string, number>();
   const startedWith: string[] = [];
@@ -55,7 +55,7 @@ export async function fixture(options: Options = {}) {
   const creators = new Creators({ api, sessions: store, grants, now,
     createChat(changed) {
       let owner = '', snapshot: ChatSnapshot = { state: 'idle', received: 0, messages: [] }, running = false;
-      const finish = (state: 'stopped' | 'revoked') => {
+      const finish = (state: 'stopped' | 'revoked' | 'disconnected') => {
         if (running) { running = false; active.set(owner, active.get(owner)! - 1); }
         snapshot = { state, received: 0, messages: [] }; changed();
       };
@@ -68,11 +68,12 @@ export async function fixture(options: Options = {}) {
           assert.equal(active.get(owner), 1, 'only one active upstream per creator');
           snapshot = { state: 'subscribed', received: 0, messages: [] }; changed();
           chats.set(owner, { publish(content) {
+            if (!running) return;
             snapshot = { state: 'subscribed', received: snapshot.received + 1, messages: [{
               provider: 'chzzk', channelId: owner, senderChannelId: 'fixture-viewer', nickname: 'Fixture',
               verifiedMark: false, userRoleCode: 'common-user', content, messageTime: now(),
             }] }; changed();
-          }, revoke: () => finish('revoked') });
+          }, disconnect: () => finish('disconnected'), revoke: () => finish('revoked') });
         },
         async stop() { finish('stopped'); return true; },
       };

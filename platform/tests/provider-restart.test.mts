@@ -203,3 +203,28 @@ test('selective and full revocations remain effective across service restart', a
     assert.equal(next.grants.load('alice'), undefined);
   } finally { await d.close(); }
 });
+
+
+test('long healthy subscriptions restore the bounded auto-reconnect budget', { timeout: 18000 }, async () => {
+  let now = Date.now();
+  const f = await fixture({ now: () => now });
+  try {
+    const game = await f.connect('alice', 'gaming');
+    assert.equal(game.lease.membership.role, 'gaming');
+    for (let cycle = 0; cycle < 6; cycle++) {
+      const old = f.chats.get('alice')!;
+      const starts = f.startedWith.length;
+      now += 61_000; // stable uptime without waiting a real minute
+      old.disconnect();
+      for (let check = 0; check < 170 && f.startedWith.length === starts; check++) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      assert.equal(f.startedWith.length, starts + 1, 'auto-reconnect after healthy outage ' + cycle);
+      assert.notEqual(f.chats.get('alice'), old);
+      assert.equal(f.active.get('alice'), 1);
+      assert.equal(f.creators.describe('alice').chatState, 'subscribed');
+    }
+    assert.equal(f.startedWith.length, 7, 'six recoveries require no browser reconsent');
+    assert.equal(f.exchangeCalls, 1, 'provider OAuth was performed only for the initial approval');
+  } finally { await f.close(); }
+});

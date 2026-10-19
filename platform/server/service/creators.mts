@@ -16,6 +16,7 @@ import type { StoredProviderGrant } from './provider-grants.mts';
 // Server-only, short-lived login proof. Never accepted from an HTTP body or URL.
 export type BrowserIdentity = Readonly<{ channel: Channel; revision: number }>;
 
+const STABLE_CHAT_MS = 60_000;
 type Chat = Pick<ChzzkChatSession, 'start' | 'stop' | 'snapshot'>;
 type Gateway = Pick<DisplayGateway, 'changed' | 'upgrade' | 'close' | 'report' | 'outputFor' | 'connectionCounts'>;
 type Provider = Pick<ChzzkApi, 'exchangeCode' | 'getUser' | 'refresh' | 'revoke'>;
@@ -245,12 +246,17 @@ export class Creators {
     const task = (async () => {
       await c.stopping;
       if (this.#closed || c.epoch !== epoch || !c.tokens) throw new DisplayAccessError(503);
+      let subscribedAt: number | undefined;
       const chat = this.#options.createChat(() => {
         if (c.chat !== chat || c.epoch !== epoch || this.#closed) return;
         const state = chat.snapshot().state;
+        if (state === 'subscribed') subscribedAt ??= this.#now();
         if (state === 'revoked') { this.#suspend(c, true); return; }
         c.gateway.changed();
-        if (['disconnected', 'error', 'unsubscribed'].includes(state) && !c.retry && c.retries < 5) {
+        if (['disconnected', 'error', 'unsubscribed'].includes(state)) {
+          // Restore retries after a long healthy subscription, never after a rapid flap.
+          if (subscribedAt !== undefined && this.#now() - subscribedAt >= STABLE_CHAT_MS) c.retries = 0;
+          if (c.retry || c.retries >= 5) return;
           c.retry = setTimeout(() => {
             c.retry = undefined;
             void this.ensureChat(owner).catch(() => {});

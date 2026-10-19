@@ -329,6 +329,8 @@ try {
       assert(conflicted); assert.equal(f.app.login.view(conflicted.id).role, 'streaming');
       assert.equal(f.store.find(alice.lease.sessionToken), undefined);
       assert.equal(selection(), undefined); assert(f.store.find(bob.lease.sessionToken));
+      assert.equal(f.active.get('alice'), 0, 'last sender approval revocation stops unattended chat');
+      assert.equal(f.active.get('bob'), 1, 'other creator upstream stays open');
       assert(peer);
       if (peer.readyState !== WebSocket.CLOSED) await once(peer, 'close', { signal: AbortSignal.timeout(3000) });
       reply({ ok: true }); continue;
@@ -344,6 +346,7 @@ try {
       assert.notEqual(session.membership.connectionId, alice.lease.membership.connectionId);
       assert.equal(session.membership.broadcastSessionId, alice.lease.membership.broadcastSessionId);
       assert.equal(selection(), undefined, 'explicit role approval does not reselect the campaign');
+      assert.equal(f.active.get('alice'), 1, 'new explicit sender approval restores one upstream');
       assert(replacement.outputToken); outputToken = replacement.outputToken; reportSequence = 0;
       await openSender(replacement.token);
       reply({ ok: true }); continue;
@@ -353,7 +356,8 @@ try {
       assert.equal(selection()?.connection_id, replacement.membership.connectionId);
       assert.equal(f.store.connections('alice').length, 1);
       assert(f.store.find(bob.lease.sessionToken));
-      assert.equal(f.startedWith.filter(token => !token.includes(':charlie:')).length, starts);
+      assert.equal(f.startedWith.filter(token => !token.includes(':charlie:')).length, starts + 1,
+        'last approval stopped the old upstream; new sender consent starts exactly one replacement');
       assert.equal(f.refreshCalls, 0);
       reply({ ok: true }); continue;
     }
@@ -521,8 +525,8 @@ try {
       assert.equal(f.creators.describe('alice').presence.gamingConnections, 1);
       assert.equal(f.creators.describe('alice').presence.streamingConnections, 1);
       assert.equal((await (await f.request(`/public/ads/${sourceId}/state`)).json() as {state:string}).state, 'visible');
-      assert.equal(f.startedWith.filter(token => !token.includes(':charlie:')).length, starts,
-        'role-only replacement cannot rotate creator/provider upstream');
+      assert.equal(f.startedWith.filter(token => !token.includes(':charlie:')).length, starts + 1,
+        'new sender consent restarted the upstream once; later role-only changes must not restart it');
       assert.equal(f.refreshCalls, 0);
       assert(f.store.find(bob.lease.sessionToken));
       const gameReceived = once(senderReapproval.gamePeer, 'message', { signal: AbortSignal.timeout(3000) });

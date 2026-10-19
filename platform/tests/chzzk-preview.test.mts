@@ -7,7 +7,7 @@ import { ChzzkApi } from '../server/chzzk/api.mts';
 import { startProbe } from '../tools/chzzk-connect.mts';
 import { renderChat } from '../web/chat-renderer.js';
 
-async function fixture(t: TestContext, expiresIn = '86400', earlyFirst = false) {
+async function fixture(t: TestContext, expiresIn: number | string = 86400, earlyFirst = false) {
   const credentials = { clientId: 'app', clientSecret: 'PRIVATE_CLIENT' };
   const ok = (content: unknown) => Response.json({ code: 200, content });
   class Socket extends EventEmitter {
@@ -24,8 +24,8 @@ async function fixture(t: TestContext, expiresIn = '86400', earlyFirst = false) 
     if (url.includes('/subscribe/chat?')) queueMicrotask(() => {
       if (earlyFirst) socket.emit('CHAT', {
         channelId: 'mine', senderChannelId: 'viewer',
-        profile: { nickname: '첫 시청자', verifiedMark: false },
-        userRoleCode: 'common_user', content: '승인과 동시에 온 첫 글자', messageTime: 1700000000000,
+        profile: { nickname: '첫 시청자', verifiedMark: false, userRoleCode: 'common_user' },
+        content: '승인과 동시에 온 첫 글자', messageTime: 1700000000000,
       });
       socket.emit('SYSTEM', { type: 'subscribed', data: { eventType: 'CHAT', channelId: 'mine' } });
     });
@@ -54,7 +54,7 @@ async function fixture(t: TestContext, expiresIn = '86400', earlyFirst = false) 
       return JSON.parse(raw.slice('data: '.length)) as { state: string; received: number; messages: { content: string }[] };
     };
   }
-  const send = () => socket.emit('CHAT', JSON.stringify({ channelId: 'mine', senderChannelId: 'sender', profile: { nickname: '한글', verifiedMark: false }, userRoleCode: 'common_user', content: '<img onerror=alert(1)>', messageTime: 1700000000000 }));
+  const send = () => socket.emit('CHAT', JSON.stringify({ channelId: 'mine', senderChannelId: 'sender', profile: { nickname: '한글', verifiedMark: false, userRoleCode: 'common_user' }, content: '<img onerror=alert(1)>', messageTime: 1700000000000 }));
   return { probe, get, post, events, send, calls, socket: () => socket, sockets: () => sockets };
 }
 

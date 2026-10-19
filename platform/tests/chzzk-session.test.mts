@@ -12,8 +12,8 @@ import { nativeChatSnapshot } from '../web/native-chat.js';
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 const message = (content = '안녕하세요 <script>alert(1)</script>') => ({
   channelId: 'mine', senderChannelId: 'sender', chatChannelId: 'chat-channel',
-  profile: { nickname: '<img onerror=alert(1)>', verifiedMark: true, badges: [] },
-  userRoleCode: 'common_user', content, emojis: {}, messageTime: 1_700_000_000_000,
+  profile: { nickname: '<img onerror=alert(1)>', verifiedMark: true, badges: [], userRoleCode: 'common_user' },
+  content, emojis: {}, messageTime: 1_700_000_000_000,
 });
 const system = (type: string, channelId = 'mine', eventType = 'CHAT') => ({ type, data: { channelId, eventType } });
 class FakeSocket extends EventEmitter {
@@ -283,6 +283,22 @@ for (const bad of [null, [], '{', 'x'.repeat(65537), { ...message(), messageTime
     assert.equal(parseChatMessage(bad, 'mine'), undefined);
   });
 }
+test('observed CHZZK profile role reaches the own native text snapshot; top-level role alone is not accepted', () => {
+  const original = message('실제 수신 첫 글자 😀');
+  const raw = { ...original, eventSentAt: '2026-07-26T03:14:18.629843820',
+    profile: { ...original.profile, userRoleCode: 'streamer' } };
+  const parsed = parseChatMessage(JSON.stringify(raw), 'mine')!;
+  assert.equal(parsed.userRoleCode, 'streamer');
+  assert.deepEqual(nativeChatSnapshot({ state: 'subscribed', received: 1, messages: [parsed] }), {
+    state: 'subscribed', received: 1,
+    messages: [{ nickname: original.profile.nickname, content: raw.content, messageTime: raw.messageTime }],
+  });
+  assert.equal(parseChatMessage({ ...raw,
+    profile: { nickname: 'fixture', verifiedMark: false }, userRoleCode: 'streamer' }, 'mine'), undefined,
+  'a role outside the observed profile cannot substitute for a missing profile role');
+  assert.equal(parseChatMessage(raw, 'someone-else'), undefined);
+});
+
 test('native identifiers and Unicode text retained; remote profile objects and scripts stay inert', () => {
   const parsed = parseChatMessage(message('한글 日本語 😀 <script>'), 'mine')!;
   assert.equal(parsed.chatChannelId, 'chat-channel'); assert.match(parsed.content, /<script>/u);

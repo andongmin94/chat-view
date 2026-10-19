@@ -53,7 +53,9 @@ export function parseChatMessage(value: unknown, expectedChannelId: string): Cha
       provider: 'chzzk', channelId, senderChannelId: id(event.senderChannelId),
       ...(event.chatChannelId === undefined ? {} : { chatChannelId: id(event.chatChannelId) }),
       nickname: text(profile.nickname, 200), verifiedMark: profile.verifiedMark,
-      userRoleCode: id(event.userRoleCode, 64), content: text(event.content, 10000),
+      // Live CHAT events place the sender's role inside profile, not at the
+      // top level shown by the flattened API field table.
+      userRoleCode: id(profile.userRoleCode, 64), content: text(event.content, 10000),
       messageTime: event.messageTime as number,
     };
     return Object.freeze(message);

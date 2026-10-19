@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 두 PC의 공유 채팅 upstream 재연결 지속성과 권한 격리
+## 현재 흐름: 실측 치지직 OAuth·CHAT 응답 계약으로 첫 수신 차단 해소
+
+시작 원격 OBS HEAD `5b26d65ac5257dd574292a6fa2d5987c92057069`, main `6d1633d3df75c4781051394a5c381ea8275a804f` 불변. AGENTS → PRODUCT → development-workflow → architecture → 이 계획 순으로 읽고 OBS만 작업한다.
+
+- **실사용 결함:** 치지직 공개 문서의 `expiresIn` 문자열 명세와 실제 OAuth **숫자 만료시간**이 다르며, 공식 CHAT 필드 표의 최상위 `userRoleCode`와 실제 메시지의 **`profile.userRoleCode`** 위치가 다르다는 외부 실측 자료를 확인했다. 기존 `ChzzkApi`는 숫자 토큰 응답을 거부하고 `parseChatMessage`는 실제 역할 위치가 다른 정상 채팅을 무음으로 버릴 수 있었다. 이들은 외부 실측을 통한 오류 정정이며, 우리 서비스의 실제 치지직 계정 테스트가 아니다.
+- **코드:** 양의 정수 또는 공식 문서의 정확한 십진 문자열 `expiresIn`만 상한 내에서 안전하게 초 단위로 정규화한다(0·음수·소수·과대 정수·임의 문자/형식 거부). CHAT의 역할은 실제 `profile.userRoleCode`만 검증하고 구식 최상위 역할 우회는 제거한다. 역할·채널 검사, 메시지 메모리 한도, provider token/개인 프로필 차단과 기존 소켓 수명/재연결/승인 경계는 유지한다.
+- **사용자 흐름 검사:** 숫자 OAuth 응답으로 브라우저 인증/갱신/첫 구독을 확인하고, 실제 Socket.IO v2/EIO3/WS 연결에 실제 관측 스키마의 첫·추가 CHAT을 보낸다. `ChzzkChatSession`의 HTTP·SYSTEM 확인/첫 글자 버퍼를 거쳐 한 승인된 gaming/streaming 역할의 **두 실제 private WebSocket HUD 프레임**에 동일 첫 글자·새 글자가 도달하고 provider Stop 시 두 화면의 글자·카운터가 0으로 비워지는지 검사한다. 공식 문서형 문자열 만료시간과 잘못된 필드/채널/메시지도 별도로 검증한다. 게임 PC OBS/공개 광고·설정·인증키 저장·새 데스크톱 프레임워크는 바꾸지 않는다.
+- **실제 검증:** 현재 기능 SHA의 CHZZK CI를 확인한 뒤 여기에 성공/실패를 기록한다. GitHub 커넥터에서 실제 코드를 수정하며 로컬 git clone·npm 환경은 연결되지 않아 로컬 성공으로 주장하지 않는다. 실계정/네이티브 표시 D1·물리 투컴·D2/D4/D6/D7 및 광고 실노출/HP·정산/배포는 그대로 미완료다.
+
+## 직전 완료 흐름: 두 PC의 공유 채팅 upstream 재연결 지속성과 권한 격리
 
 시작 원격 OBS HEAD `db157ed796d8ea36ddb457eb24052df33853d6e0`; 이전 CHZZK #100의 Node **346/346**·Chromium **29/29**은 시작점의 증거다. 필수 5개 문서를 지정 순서대로 읽고 OBS에서만 진행한다.
 
@@ -197,6 +206,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-두 PC의 실제 WebSocket/승인 격리와 재구독을 연결한 뒤에는 **실제 CHZZK Socket.IO upstream → 서비스 HTTP/SQLite/WebSocket → 두 네이티브 WinHTTP/WebView2 HUD**를 오랜 시간 연속 구동하며 첫 글자, 중단·복귀와 권한 철회 수명 경계를 검증한다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
+실측 응답 스키마 기반 첫 글자 처리 후에는 **실제 Socket.IO upstream을 Creators의 자동 재구독과 연결하고, 두 승인된 private HUD로 첫 글자→강제 단절→새 세션 첫 글자→provider 권한 철회를 end-to-end로 검증**한다. 그 다음 등록 앱과 실제 로그인 계정으로 WinHTTP/WebView2 첫 화면까지 확인한다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

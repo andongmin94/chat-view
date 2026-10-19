@@ -51,13 +51,16 @@ function secret(value: unknown, kind: 'invalid-input' | 'response' = 'invalid-in
 function tokens(value: unknown): Tokens {
   const data = record(value);
   const expires = data.expiresIn;
-  if (data.tokenType !== 'Bearer' || typeof expires !== 'string' || !/^[1-9]\d{0,8}$/u.test(expires)) {
-    throw new ChzzkError('response');
-  }
+  // The published contract uses a decimal string; actual token responses
+  // also use an integer. Admit only those two bounded, exact representations.
+  const seconds = typeof expires === 'number' ? expires :
+    typeof expires === 'string' && /^[1-9]\d{0,8}$/u.test(expires) ? Number(expires) : NaN;
+  if (data.tokenType !== 'Bearer' || !Number.isSafeInteger(seconds) ||
+      seconds <= 0 || seconds > 999_999_999) throw new ChzzkError('response');
   return Object.freeze({
     accessToken: secret(data.accessToken, 'response'),
     refreshToken: secret(data.refreshToken, 'response'),
-    expiresIn: Number(expires),
+    expiresIn: seconds,
   });
 }
 

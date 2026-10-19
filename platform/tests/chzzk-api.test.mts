@@ -6,7 +6,7 @@ import { authorizationUrl, ChzzkApi, ChzzkError } from '../server/chzzk/api.mts'
 import type { Fetch } from '../server/chzzk/api.mts';
 
 const credentials = { clientId: 'client-id', clientSecret: 'private-client-secret' };
-const tokenResponse = { accessToken: 'private-access', refreshToken: 'private-refresh', tokenType: 'Bearer', expiresIn: '86400' };
+const tokenResponse = { accessToken: 'private-access', refreshToken: 'private-refresh', tokenType: 'Bearer', expiresIn: 86400 };
 const ok = (content: unknown) => Response.json({ code: 200, message: null, content });
 const client = (fetcher: Fetch) => new ChzzkApi(credentials, fetcher);
 
@@ -37,6 +37,11 @@ test('authorization-code exchange uses JSON, fixed HTTPS origin, cancellation an
   }).exchangeCode('code', 'state');
   assert.deepEqual(result, { accessToken: 'private-access', refreshToken: 'private-refresh', expiresIn: 86400 });
   assert.equal(calls, 1);
+});
+
+test('published decimal-string token expiry also normalizes without silently coercing other types', async () => {
+  const token = await client(async () => ok({ ...tokenResponse, expiresIn: '86400' })).exchangeCode('code', 'state');
+  assert.deepEqual(token, { accessToken: 'private-access', refreshToken: 'private-refresh', expiresIn: 86400 });
 });
 
 test('refresh consumes the supplied refresh token, with no guessed OAuth fields', async () => {
@@ -87,7 +92,14 @@ for (const status of [401, 403, 429, 500]) {
     assert.equal(calls, 1);
   });
 }
-for (const content of [null, [], {}, { ...tokenResponse, expiresIn: 'NaN' }, { ...tokenResponse, expiresIn: '-1' }, { ...tokenResponse, expiresIn: '0' }, { ...tokenResponse, tokenType: 'Basic' }, { ...tokenResponse, refreshToken: '' }, { ...tokenResponse, accessToken: 'has\r\ninjection' }]) {
+for (const content of [null, [], {}, { ...tokenResponse, expiresIn: 'NaN' },
+  { ...tokenResponse, expiresIn: '-1' }, { ...tokenResponse, expiresIn: '0' },
+  { ...tokenResponse, expiresIn: '00042' }, { ...tokenResponse, expiresIn: '1e5' },
+  { ...tokenResponse, expiresIn: 0 }, { ...tokenResponse, expiresIn: -1 },
+  { ...tokenResponse, expiresIn: 1.5 }, { ...tokenResponse, expiresIn: 1_000_000_000 },
+  { ...tokenResponse, expiresIn: null }, { ...tokenResponse, expiresIn: true },
+  { ...tokenResponse, tokenType: 'Basic' }, { ...tokenResponse, refreshToken: '' },
+  { ...tokenResponse, accessToken: 'has\r\ninjection' }]) {
   test('invalid token fields are rejected without body disclosure', async () => {
     await assert.rejects(client(async () => ok(content)).exchangeCode('code', 'state'), ChzzkError);
   });

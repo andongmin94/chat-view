@@ -9,7 +9,7 @@ import type { Fetch } from '../server/chzzk/api.mts';
 import { startProbe } from '../tools/chzzk-connect.mts';
 
 const credentials = { clientId: 'app', clientSecret: 'PRIVATE_CLIENT' };
-const tokenContent = { accessToken: 'PRIVATE_ACCESS', refreshToken: 'PRIVATE_REFRESH', tokenType: 'Bearer', expiresIn: '86400' };
+const tokenContent = { accessToken: 'PRIVATE_ACCESS', refreshToken: 'PRIVATE_REFRESH', tokenType: 'Bearer', expiresIn: 86400 };
 const ok = (content: unknown) => Response.json({ code: 200, content });
 const standard: Fetch = async url => url.endsWith('/users/me') ?
   ok({ channelId: 'my-channel', channelName: '<script>alert(1)</script> 한국어' }) :

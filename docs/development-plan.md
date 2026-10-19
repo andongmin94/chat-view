@@ -4,7 +4,17 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 치지직 신규 로그인 승인 전 네이티브 HUD 사전 준비
+## 현재 흐름: 네이티브 HUD 준비 메시지의 실제 WebView2 생명주기 확인
+
+시작 원격 `OBS` HEAD `01843315e4f4f1447e640adf568767383a988856`, `main` HEAD `6d1633d3df75c4781051394a5c381ea8275a804f` 불변. AGENTS → PRODUCT → workflow → architecture → 이 계획 순서로 확인했다.
+
+- **직전 완료:** 기능 `32de2ff6dfb9eb08de59c558b64c16215a62929c`의 [Windows development #449/run `39219539795`](https://github.com/andongmin94/chat-view/actions/runs/39219539795) **completed/success, Windows x64 routine CTest 50/50·fail0·222.44초**. 전 회차 #448의 프로필 생성 충돌을 고친 `native-display-client` **48.59초**, `native-logout` **21.68초**, `native-chat-switch` **19.96초**, `native-chat-surface` **3.20초** 등 통과. 같은 기능의 [CHZZK #114/run `39219539784`](https://github.com/andongmin94/chat-view/actions/runs/39219539784) 5/5, Node367/367·Chromium29/29 성공. 각각 **합성 개발 검사**로서 실제 계정/물리 투컴 및 D1 반복 안정성 전체는 미검증이다.
+- **실제 문제와 사용자 영향:** `HudWindow::handle_message(kWebViewReadyMessage)`는 큐에 들어온 내부 `WM_APP+40` 메시지만으로 `webview_ready_=true`를 설정하고 설정 다시 읽기·문서 선택/가시성 갱신·런타임 준비 이벤트 신호까지 처리했다. 호스트의 환경·컨트롤러/사전 스크립트 준비가 아직 끝나지 않은 **조기 메시지**, 또는 첫 메시지 렌더 뒤의 **중복/낡은 준비 메시지**가 실제로 준비되지 않은 HUD를 준비됐다고 인정하거나, 이미 보이던 자체 채팅 문서를 다시 탐색할 수 있었다.
+- **코드:** 현재 `WebViewHost::ready()`가 참이고, `HudWindow`가 첫 준비 전이며, 종료 중이 아닐 때 **한 번만** 내부 ready 메시지를 적용한다. 이미 준비됐거나 아직 컨트롤러 준비가 끝나지 않은 경우는 단순히 무시해 기존 런타임 ready event를 조기 설정하거나 자체 채팅/승인·복구를 건드리지 않는다. `WebViewHost` 초기화, 실제 메시지/WinHTTP/웹문서·OBS 보호·CI 제한 시간을 바꾸지 않는다.
+- **검증:** 기존 실제 Windows `tests/native-chat-switch-test.cpp`에서 WebView2 콜백을 메시지 펌프로 처리하기 전에 조기 ready 메시지를 동기로 보낸 뒤 **ready event 미신호**를 검증한다. 진짜 비동기 초기화가 완료되면 정상 첫 수신·빈 구독/첫 문자·승인·수동 복귀 경로를 확인하고, 실제 첫 글자 뒤 중복 ready 메시지를 보내도 `surface.ready()`·렌더 행·원래 membership·첫 텍스트 판정을 훼손하지 않는지 확인한다. 작업이 보장하는 것은 **거짓 ready 차단**이며, D1의 모든 간헐적 호스트 시작 지연을 해결한 것은 아니다.
+- **CI:** 이 기능 SHA의 Windows x64 native development 결과가 나온 뒤 통과·실패를 근거와 함께 기록한다. 실계정 G4-06, 실제 게임 PC OBS 없는 HUD/영상 G3-04, D1의 이전 시간지연, D2/D4/D6/D7, 시청/HP·정산/배포 qualification은 미완료.
+
+## 직전 완료 흐름: 치지직 신규 로그인 승인 전 네이티브 HUD 사전 준비
 
 시작 원격 OBS `e13a080829e18bde6d0b4137fd5bef3dc382f9b6`, main `6d1633d3df75c4781051394a5c381ea8275a804f` 확인. 필수 문서 AGENTS → PRODUCT → workflow → architecture → development-plan 순서 준수.
 
@@ -14,7 +24,7 @@
 - **회귀:** 기존 실제 Windows WinHTTP/COM/WebView2 `native-display-client`와 `native-chat-switch` 테스트에서 미승인 중에는 자체 문서 포인터만 준비되고 `rendered_frames()==0`, `rendered_messages()==0`, `membership` 없음 및 `AwaitingApproval`이어야 한다고 검증한다. 이후 합성 승인·빈 subscribed 첫 표시·실제 첫 메시지·외부 전환·같은 승인 복귀·로그아웃/철회는 기존 검사 그대로 유지한다. 원래 간헐적인 WebView2 host startup 실패는 별도 근거가 필요하며 D1을 종료하지 않는다.
 - **실제 Windows #448 분리:** C++ 신규 미승인 자체 문서 사전 준비 기능 `9f55be329f89003b532cfb59dd3cde7ddb025d02`의 [Windows development #448/run `39218263289`](https://github.com/andongmin94/chat-view/actions/runs/39218263289)은 **completed/failure: Windows x64 빌드 성공, routine CTest 49/50·실패1, 총 201.10초**. 앞선 #447에서 D1로 실패했던 `chat-view-native-logout` **23.26초 성공**, `chat-view-native-chat-switch` **19.62초 성공**(여기에는 신규 pre-consent document/빈 subscribed 테스트 포함), `native-chat-surface` **3.12초 성공**, 다른 OBS·컴패니언·캡처·광고 검사도 성공. 유일하게 `native-display-client`는 **`login-expiry: Native display test failed: isolated WebView2 profile`**, 사용자 채팅/렌더가 시작되기 전의 **테스트 프로필 생성 실패**였다. 기존 PID 조합 임시폴더가 과거 시험 종료 뒤 남은 데이터와 충돌할 수 있어, 기존 `native-logout` 시험과 동일하게 `GetTempFileNameW`→해당 파일 삭제→그 위치에 고유 디렉터리 생성 후 별도 `LOCALAPPDATA`로 지정한다. 검사 제한·승인/메시지 판정을 바꾸지 않는다. #448 성공으로 주장하지 않고 D1 전체를 닫지 않는다.
 - **플랫폼 검증 기능 SHA `32de2ff6dfb9eb08de59c558b64c16215a62929c`: [CHZZK contract #114/run `39219539784`](https://github.com/andongmin94/chat-view/actions/runs/39219539784) **completed/success 5/5**. Ubuntu/Windows × Node22/24 Node **367/367**·실패0, strict TypeScript·잠금 의존성 검사·npm audit 취약점 **0건**. 합성 제공자와 실제 Chromium 관리 브라우저 **29/29 성공**, artifact `12170847890`. 새 native bridge watchdog의 60초 미승인 상태/첫 프레임 뒤 15초 경계 및 복구 회귀 통과. V8에서는 90초 미승인 idle/첫 프레임 응답/15초 만료 단일 비움도 확인했다.
-- **네이티브 검증:** 같은 코드의 [Windows development #449/run `39219539795`](https://github.com/andongmin94/chat-view/actions/runs/39219539795)는 최종 확인 시점 **in_progress**(Windows x64 Build and test ChatView). 이 상태는 **통과·실패 어느 쪽도 아니다**. #448의 PID 기반 임시 폴더 충돌을 제거한 실제 `native-display-client`와 기존 `native-chat-switch`/`native-logout`의 결과는 이 run에서 확인해야 한다. 원래 OBS 광고 워크플로·반복 자원/패키지 qualification은 이번에 실행하지 않았다. 로컬 git clone/npm·Windows 검증은 GitHub DNS/실행환경 제약으로 미실행. D1/D2/D4/D6/D7·실계정 G4-06·게임 PC OBS 없는 물리 투컴 G3-04·유료 광고/HP/정산·배포는 미완료.
+- **네이티브 검증:** `32de2ff6dfb9eb08de59c558b64c16215a62929c`의 [Windows development #449/run `39219539795`](https://github.com/andongmin94/chat-view/actions/runs/39219539795)은 **completed/success, Windows x64 native CTest 50/50·실패0·222.44초**. #448의 이전 임시 폴더 충돌을 해소한 `native-display-client` 48.59초 통과, `native-logout` 21.68초, `native-chat-switch` 19.96초, `native-chat-surface` 3.20초 통과. 반복/배포/실계정/물리 영상 qualification과 D1 전체 종결은 해당하지 않는다.
 
 ## 직전 완료 흐름: 두 PC 자체 채팅의 반복 렌더링 제거와 새 메시지 누적 표시
 
@@ -261,6 +271,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-미승인 단계의 소유 채팅 문서 사전 준비 뒤에는 #447의 남은 **WebView2 host 자체 startup 불안정성**을 종료·복구 안전성 경계 안에서 조사한다. 실제 등록된 치지직 앱/채널이 준비되면 OAuth→첫 텍스트→장시간 채팅/새 메시지 누적→업스트림 단절·복귀→권한 철회를 게임 PC OBS 없는 컴패니언과 송출 PC에서 각각 검증한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
+조기/중복 준비 신호를 현재 WebView2 인스턴스에 묶은 뒤에는, D1의 남은 **WebView2 environment/controller 생성 지연과 첫 소유 문서 준비**를 현재 fault/보호 수명 경계 안에서 검증해 실제 첫 채팅의 안정성을 개선한다. 실제 등록된 치지직 앱/채널이 준비되면 OAuth→첫 텍스트→장시간 채팅/새 메시지 누적→업스트림 단절·복귀→권한 철회를 게임 PC OBS 없는 컴패니언과 송출 PC에서 각각 검증한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

@@ -348,6 +348,11 @@ LRESULT HudWindow::handle_message(
 
     switch (message) {
     case kWebViewReadyMessage:
+        // This is an internal asynchronous completion, not independent
+        // authority to initialize a HUD. An old/duplicate/forged queued
+        // WM_APP message cannot make a not-yet-ready or closed WebView2
+        // appear ready, or navigate away from an already owned chat document.
+        if (shutting_down_ || webview_ready_ || !webview_.ready()) return 0L;
         webview_ready_ = true;
         if (!system_suppressed()) {
             reload_chat_config();

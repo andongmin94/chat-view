@@ -251,6 +251,14 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
             "browser launch is the exact service account route or existing login intent");
         std::cout << "browser-opened\n" << std::flush; return true;
     });
+    // A queued readiness message without a completed WebView2 environment,
+    // controller and registered document bootstrap must never signal the
+    // runtime-ready event or permit an uninitialized HUD to enter service.
+    expect(WaitForSingleObject(ready.get(), 0) == WAIT_TIMEOUT,
+        "WebView2 readiness has not yet completed during synchronous HUD setup");
+    SendMessageW(Access::host(chat), chatview::kWebViewReadyMessage, 0U, 0L);
+    expect(WaitForSingleObject(ready.get(), 0) == WAIT_TIMEOUT,
+        "an early untrusted/stale ready message cannot complete HUD startup");
     hud.show_ready();
     await(chat, [&] { return WaitForSingleObject(ready.get(), 0) == WAIT_OBJECT_0; }, "HUD startup");
     if (mode == "memory") {
@@ -391,6 +399,16 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     expect(text(dialog, 110).find(L"서버 채팅 연결: 게임 0 / 송출 1") != std::wstring::npos,
         "native panel shows the same actual server socket counts as the creator account page");
     expect(Access::first_text_rendered(chat), "first local text render acknowledged");
+    const auto frames_before_duplicate = Access::surface(chat).rendered_frames();
+    const auto original_membership = Access::membership(chat);
+    SendMessageW(Access::host(chat), chatview::kWebViewReadyMessage, 0U, 0L);
+    pump(chat);
+    expect(Access::surface(chat).ready() &&
+           Access::surface(chat).rendered_frames() >= frames_before_duplicate &&
+           Access::surface(chat).rendered_messages() == 1U &&
+           Access::membership(chat) == original_membership &&
+           Access::first_text_rendered(chat),
+        "duplicate host ready cannot replace a live private chat, text ACK or role");
     const auto initial = Access::membership(chat);
     expect(initial.has_value(), "initial approved membership");
     ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(Access::surface(chat));

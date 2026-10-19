@@ -61,6 +61,18 @@ test('per-delivery ACK carries only the exact native frame ID; malformed IDs can
   f.close();
 });
 
+test('native WebView2 bridge acknowledges each heartbeat without rebuilding an unchanged text row', () => {
+  const f = fixture();
+  f.emit(envelope);
+  const row = f.list.children[0];
+  f.emit({ ...envelope, frameId: '2', snapshot: { state: 'subscribed', received: 1,
+    messages: [{ ...message }] } });
+  assert.equal(f.list.children[0], row);
+  assert.equal(f.sent.at(-1), 'chat-rendered:test-nonce:2:1');
+  assert.doesNotMatch(f.sent.join(''), /PRIVATE|onerror|한글/u);
+  f.close();
+});
+
 test('host-state does not keep a dead chat feed alive', () => {
   const f = fixture(); f.emit(envelope); f.tick(14000);
   f.emit({ type: 'host-state', editing: true }); f.tick(1001);

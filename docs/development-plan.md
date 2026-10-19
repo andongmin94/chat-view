@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: WebView2 이전 프레임 ACK로 첫 채팅 표시를 오인하지 않도록 차단
+## 현재 흐름: 두 PC 자체 채팅의 반복 렌더링 제거와 새 메시지 누적 표시
+
+시작 원격 `OBS` HEAD `41536bbf84ce9d78a988d15c76502ebbe5e81767`, `main` `6d1633d3df75c4781051394a5c381ea8275a804f`를 재확인하고 AGENTS → PRODUCT → workflow → architecture → 이 계획 순서로 읽었다.
+
+- **사용자 문제:** 공용 `platform/web/chat-renderer.js`가 동일한 `chat-snapshot`을 받는 서버 5초 heartbeat와 모든 새 메시지마다 최근 최대 100개 `li` DOM을 통째로 다시 만들었다. 빠른 채팅/스크롤 중 불필요한 화면 재생성과 WebView2 작업이 생기며, 이미 보고 있는 메시지의 DOM도 없어졌다.
+- **코드:** 수신 DTO/유효성·WinHTTP·C++ native ACK·개인 정보/광고/OBS는 변경하지 않는다. 기존 단일 native/browser 공용 렌더러에서 `WeakMap`으로 각 메시지 목록의 이전 state/received/최대100 텍스트 세 필드를 메모리 내 비교한다. 완전히 같은 heartbeat는 DOM을 건드리지 않고, 실제 받은 메시지 수가 늘면 이전 목록의 tail과 새 목록의 prefix를 **정확히 텍스트·시간까지 비교**한 경우에만 보존하고 뒤에 새 행을 추가한다. 100개 초과 과거 행을 제거하며, 사용자가 위로 스크롤한 상태는 자동으로 아래로 끌고 가지 않는다. 구독 중단·Stop·revoked·카운터 재시작·변경된 같은 숫자의 내용은 새 화면으로 재생성해 낡은 계정/세션 텍스트가 남지 않는다. `innerHTML` 없이 `textContent`만 사용한다.
+- **실제 검증:** 신규 `platform/tests/chat-renderer.test.mts`에서 동일 heartbeat 불필요 변경 0, 채팅 추가와 100행 캡/중간 수신 누락, 스크롤 보존, 연결 중단·새 세션·스크립트 문자열 격리를 검증한다. `platform/tests/native-chat.test.mts`는 DOM 변경 없는 heartbeat에도 새로운 native frameId ACK가 나오는지 검사한다. 실제 Windows `native-chat-surface` CTest는 WebView2 DOM 동일 `li` identity 유지와 새 행 append, nonce/frame ACK를 확인한다. 실제 치지직 계정과 물리 2PC/게임 화면 검증은 여전히 별도다.
+- **CI:** 이 기능 SHA의 플랫폼/Windows 검증 후 성공·실패 근거를 기록한다. 로컬 git clone/npm과 Windows 검증은 GitHub DNS/런타임 제약으로 불가하며, V8로 렌더러 모듈의 핵심 동작은 사전 실행했다. 미해결 D1/D2/D4/D6/D7, 실제 치지직 G4-06, 물리적 G3-04, 실제 광고·HP·정산·배포는 그대로 유지한다.
+
+## 직전 완료 흐름: WebView2 이전 프레임 ACK로 첫 채팅 표시를 오인하지 않도록 차단
 
 시작 원격 `OBS` HEAD `df1e9335886279865aaa3f3685f92704ce3df0de`, `main` `6d1633d3df75c4781051394a5c381ea8275a804f` 불변 확인. 앞선 네이티브 구독 중단/복귀 수정은 [Windows development #444/run `39207261772`](https://github.com/andongmin94/chat-view/actions/runs/39207261772) **completed/success, Windows x64 CTest 50/50·fail0 (216.94초)**. 실제 WinHTTP→WebView2 gaming/streaming `gateway-provider-loss` 동선과 관련 CTest 모두 성공. 같은 SHA의 [CHZZK contract #110/run `39207261734`](https://github.com/andongmin94/chat-view/actions/runs/39207261734) **completed/success**, Ubuntu/Windows Node22/24 네 job·Node360/360·실 Chromium29/29 성공. 이 결과는 해당 이전 SHA의 합성 개발 검증이지 D1 전체 해결·실계정/물리 투컴 증거는 아니다.
 
@@ -238,6 +247,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-네이티브 프레임 단위 렌더 ACK를 안정화한 뒤에는 실제 치지직 등록 앱/채널에서 **OAuth→첫 글자→구독 중단/복귀→권한 철회**를 기존 WinHTTP/WebView2 gaming·streaming 역할로 검증한다. 실계정이 없어도 첫 표시 D1의 남은 간헐 원인을 기존 컴패니언/OBS native 경로에서 실질적으로 개선한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
+실제 방송에서 빠른 채팅을 보면서 게임 PC 컴패니언과 OBS 송출 PC의 자체 HUD가 새 메시지를 읽기 좋게 누적해 표시하는지 확인하고, 치지직 등록 앱/계정이 준비되면 **OAuth→라이브 첫 글자→장시간 채팅→구독 단절/복귀→권한 철회**를 native WinHTTP/WebView2의 두 승인 역할까지 검증한다. 계정이 없는 동안 D1 첫 표시의 남은 간헐 원인을 기존 synthetic 네이티브 통합 경로에서 개선한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

@@ -317,6 +317,25 @@ int main()
             expect(evaluate(core.Get(), L"document.querySelectorAll('#messages li').length === 1") == L"true",
                 "first text row exists in the latest owned DOM");
         }
+        // The shared browser/native renderer should not destroy every DOM
+        // message when the service repeats the same snapshot on its heartbeat.
+        // The exact ACK is still sent for each delivery, even if no DOM node
+        // needs to change. A new message should only append its own row.
+        expect(evaluate(core.Get(), L"globalThis.unchangedFirstRow = document.querySelector('#messages li'); !!globalThis.unchangedFirstRow") == L"true",
+            "capture the first owned chat DOM row before the repeated heartbeat");
+        expect(surface.publish(kMessage), "repeat unchanged display heartbeat");
+        await([&] { return surface.rendered_frames() == 2U; }, "heartbeat receives its own distinct frame acknowledgement");
+        expect(evaluate(core.Get(), L"document.querySelector('#messages li') === globalThis.unchangedFirstRow") == L"true",
+            "unchanged heartbeat preserves actual WebView2 text row identity");
+        constexpr wchar_t kSecondText[] = LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"subscribed","received":2,"messages":[{"nickname":"모의 사용자 <script>","content":"한글 😀 <img onerror=evil()>","messageTime":1700000000000},{"nickname":"추가 채팅","content":"두 번째 메시지","messageTime":1700000000001}]}})JSON";
+        expect(surface.publish(kSecondText), "new subscribed chat appends on the owned DOM");
+        await([&] { return surface.rendered_frames() == 3U && surface.rendered_messages() == 2U; },
+            "incremental second row gets an exact native frame acknowledgement");
+        expect(evaluate(core.Get(), LR"JS(
+            document.querySelectorAll('#messages li').length === 2 &&
+            document.querySelector('#messages li') === globalThis.unchangedFirstRow &&
+            document.querySelectorAll('#messages li')[1].querySelector('.content').textContent === '두 번째 메시지'
+        )JS") == L"true", "the old visible chat row survives append without HTML injection");
         expect(host.navigate(L"https://www.youtube.com/live_chat?is_popout=1&v=abcdefghijk"), "existing external navigation policy remains usable");
         expect(!surface.publish(kMessage), "external page cannot receive chat");
         surface.close(); host.close(); core.Reset();

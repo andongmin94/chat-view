@@ -215,7 +215,21 @@ int wmain(int argc, wchar_t **argv)
             MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'Q')) != FALSE,
             "request normal companion shutdown");
         child.expect_exit(0U);
-        std::cout << "Companion entry, consent, chat/video selection UI, scoped status, no OBS modules, duplicate and exit passed\n";
+        // Exercise the real shipping HUD WM_CLOSE callback with no output.
+        // The normal Alt+F4/Close path must remain immediate when there is no
+        // separate video HWND whose destruction could expose a desktop.
+        {
+            Child hud_close(argv[1]);
+            choose(await_window(hud_close, kConsentTitle), IDYES);
+            (void)await_window(hud_close, kPanelTitle); // Companion/video guard is fully constructed.
+            const HWND close_target = await_window(hud_close, L"ChatView HUD");
+            DWORD_PTR result = 0U;
+            expect(SendMessageTimeoutW(close_target, WM_CLOSE, 0, 0,
+                SMTO_ABORTIFHUNG, 2000U, &result) != 0,
+                "ordinary HUD Close without a separate output is accepted");
+            hud_close.expect_exit(0U);
+        }
+        std::cout << "Companion entry, consent, chat/video selection UI, scoped status, no OBS modules, duplicate and guarded exit passed\n";
     } catch (const std::exception &error) {
         std::cerr << "Companion test failed: " << error.what() << '\n';
         return 1;

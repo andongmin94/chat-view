@@ -14,7 +14,9 @@
 #include <Windows.h>
 
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <utility>
 
 namespace chatview {
 
@@ -31,6 +33,8 @@ public:
 
     void show_ready();
     void apply_state(const SharedSnapshot &snapshot);
+    // Companion-only voluntary HUD close guard; OBS-managed HUD has none.
+    void set_close_guard(std::function<bool()> guard) { close_guard_ = std::move(guard); }
 
 private:
     friend class NativeChatConnection;
@@ -112,6 +116,7 @@ private:
     bool restart_after_system_resume_ = false;
     bool capture_exclusion_failed_ = false;
     bool shutting_down_ = false;
+    std::function<bool()> close_guard_;
 };
 
 } // namespace chatview

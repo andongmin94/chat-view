@@ -101,6 +101,10 @@ bool dispatch_pending_messages(int &exit_code, chatview::NativeChatConnection &c
         }
         if (companion && !message.hwnd && message.message == WM_HOTKEY &&
             message.wParam == kCompanionQuitHotkey) {
+            // Ordinary quit must respect the same receiver-side safety boundary
+            // as explicitly releasing the separate black output window.
+            // Declining preserves the running companion and its private chat.
+            if (!video.confirm_companion_quit()) continue;
             exit_code = 0;
             return false;
         }
@@ -169,6 +173,7 @@ int run(HINSTANCE instance, const chatview::HudLaunchOptions &options)
 
     chatview::NativeChatConnection chat(hud_window, chatview::display_role_for(options.mode));
     chatview::VideoOutputPanel video(hud_window, companion);
+    if (companion) hud_window.set_close_guard([&video]() noexcept { return video.confirm_companion_quit(); });
     if (!companion) hud_window.show_ready();
 
     chatview::SharedSnapshot initial_snapshot;

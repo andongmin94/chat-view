@@ -655,6 +655,10 @@ LRESULT HudWindow::handle_message(
         }
         break;
     case WM_CLOSE:
+        // Alt+F4/taskbar Close is another voluntary companion exit path.
+        // Never tear down an extant extended-output black cover without the
+        // same default-No receiver-side consent as Ctrl+Alt+Shift+Q.
+        if (close_guard_ && !close_guard_()) return 0L;
         shutting_down_ = true;
         ShowWindow(window_, SW_HIDE);
         PostQuitMessage(0);

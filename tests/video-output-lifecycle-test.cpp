@@ -225,6 +225,37 @@ void release_answer(chatview::VideoOutputPanel &panel, int answer,
     responder.join();
     if (failure) std::rethrow_exception(failure);
 }
+bool quit_answer(chatview::VideoOutputPanel &panel, int answer, bool emergency_during_consent = false,
+                 HWND close_hud = nullptr)
+{
+    const HWND owner = Access::controls(panel);
+    expect(owner != nullptr, "existing protected video panel owns companion quit");
+    std::exception_ptr failure;
+    std::thread responder([&] {
+        HWND dialog = nullptr;
+        try {
+            const auto deadline = GetTickCount64() + 5000;
+            while (!(dialog = find(GetCurrentProcessId(), L"ChatView · 컴패니언 종료 확인"))) {
+                expect(GetTickCount64() < deadline, "companion quit confirmation appears"); Sleep(10);
+            }
+            const HWND decline = GetDlgItem(dialog, IDNO);
+            expect(decline && (GetWindowLongPtrW(decline, GWL_STYLE) & BS_TYPEMASK) == BS_DEFPUSHBUTTON,
+                "companion quit defaults to retaining black output and private chat");
+            if (emergency_during_consent) {
+                expect(PostMessageW(owner, WM_HOTKEY, 0x4342,
+                    MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'B')) != FALSE,
+                    "post an emergency blackout before quit-dialog Yes in the actual nested pump");
+            }
+        } catch (...) { failure = std::current_exception(); }
+        if (dialog) PostMessageW(dialog, WM_COMMAND, static_cast<WPARAM>(failure ? IDNO : answer), 0);
+    });
+    bool accepted = false;
+    if (close_hud) SendMessageW(close_hud, WM_CLOSE, 0, 0); // Real HUD Alt+F4/taskbar close path.
+    else accepted = panel.confirm_companion_quit();
+    responder.join();
+    if (failure) std::rethrow_exception(failure);
+    return accepted;
+}
 void pattern_pixels()
 {
     const HDC dc = CreateCompatibleDC(nullptr);
@@ -537,14 +568,18 @@ void exercise(const wchar_t *source_executable)
     expect(hud_window != nullptr, "visible HUD");
     SetWindowPos(hud_window, nullptr, 40, 40, 300, 220, SWP_NOZORDER | SWP_NOACTIVATE);
     chatview::VideoOutputPanel panel(hud, true);
+    hud.set_close_guard([&panel]() noexcept { return panel.confirm_companion_quit(); });
     const HWND controls = Access::open(panel);
     expect(controls && Access::registered(panel), "real controls register session notifications");
     expect(Access::emergency_registered(panel), "game companion registers Ctrl+Alt+Shift+B");
     {
         chatview::VideoOutputPanel obs_side(hud, false);
-        expect(!Access::emergency_registered(obs_side) && !emergency_black(obs_side),
-            "OBS streaming role never registers or handles the gaming PC blackout hotkey");
+        expect(!Access::emergency_registered(obs_side) && !emergency_black(obs_side) &&
+            !obs_side.confirm_companion_quit(),
+            "OBS streaming role cannot use the gaming PC blackout or quit-confirmation path");
     }
+    expect(panel.confirm_companion_quit(),
+        "companion without any video output can use the original quick quit without a modal prompt");
     MSG other_key{};
     other_key.message = WM_HOTKEY; other_key.wParam = 0x4444;
     expect(!panel.dispatch(other_key), "unrelated keyboard shortcuts remain unhandled");
@@ -731,13 +766,48 @@ void exercise(const wchar_t *source_executable)
     release_answer(panel, IDYES);
     panel.tick();
     expect(!IsWindow(output) && !Access::output(panel) && !Access::cover(panel), "confirmed release occurs after worker completion");
-    // Final close during active GPU work must keep servicing sent DXGI messages.
+    expect(panel.confirm_companion_quit(), "after explicit output release the normal companion quit is immediate");
+
+    // Ordinary Ctrl+Alt+Shift+Q (routed by main.cpp to this production method)
+    // must not silently destroy a live output. Test the actual modal dialog
+    // and WGC/cover HWNDs; the receiving PC is intentionally not simulated.
     start_pixels(panel, game);
-    const HWND final_output = Access::output(panel);
+    const HWND final_output = Access::output(panel), final_cover = Access::cover(panel);
+    expect(!quit_answer(panel, IDNO), "No cancels companion quit while a video output exists");
+    stopped(panel, hud_window);
+    expect(IsWindow(final_output) && Access::output(panel) == final_output &&
+        Access::cover(panel) == final_cover && IsWindowVisible(final_cover) && black() &&
+        !Access::check(panel).active() && !Access::requested(panel),
+        "declined quit retains real black HWND and retires prior WGC/receiver consent");
+    expect(!Access::accept_for_fixture(panel), "declined quit cannot silently restart game pixels");
+
+    start_pixels(panel, game);
+    expect(!quit_answer(panel, IDNO, false, hud_window),
+        "Alt+F4/WM_CLOSE on the real HUD also asks receiver-side consent, default No");
+    stopped(panel, hud_window);
+    expect(IsWindowVisible(hud_window) && IsWindow(final_output) &&
+        Access::output(panel) == final_output && Access::cover(panel) == final_cover &&
+        IsWindowVisible(final_cover) && black() && !Access::requested(panel),
+        "declining HUD Close must not exit, reveal desktop or drop the private chat");
+
+    start_pixels(panel, game);
+    expect(!quit_answer(panel, IDYES, true),
+        "emergency blackout inside quit confirmation supersedes even a later modal Yes");
+    stopped(panel, hud_window);
+    expect(IsWindow(final_output) && Access::output(panel) == final_output &&
+        Access::cover(panel) == final_cover && IsWindowVisible(final_cover) && black() &&
+        !Access::check(panel).active() && !Access::requested(panel),
+        "emergency-cancelled quit cannot close the black output or relaunch video");
+
+    expect(quit_answer(panel, IDYES), "explicit receiver-stop confirmation authorizes ordinary companion quit");
+    expect(IsWindow(final_output) && IsWindowVisible(final_cover) && black() &&
+        !Access::requested(panel) && IsWindowVisible(hud_window),
+        "accepted quit leaves the independent black output and private HUD alive until caller cleanup");
     panel.close();
-    expect(!Access::capture(panel).running() && !IsWindow(final_output) && !Access::registered(panel), "active final close joins before HWND teardown and unregisters notifications");
+    expect(!Access::capture(panel).running() && !IsWindow(final_output) && !Access::registered(panel),
+        "confirmed normal quit performs the existing final worker join and HWND teardown");
     hud.destroy();
-    std::cout << "Production video lifecycle: pattern/confirmation, frame-age masking, lock/resume, power, display/device invalidation, HWND reuse, retarget rejection, release consent and active close passed\n";
+    std::cout << "Production video lifecycle: pattern/confirmation, frame-age masking, lock/resume, power, display/device invalidation, HWND reuse, retarget rejection, receiver-side quit consent and active close passed\n";
 }
 }
 int wmain(int argc, wchar_t **argv)

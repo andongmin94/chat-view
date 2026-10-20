@@ -15,6 +15,9 @@ public:
     VideoOutputPanel(HudWindow &hud, bool companion) noexcept;
     ~VideoOutputPanel();
     bool dispatch(MSG &message) noexcept;
+    // Explicit companion quit. An existing extended output is blacked out and
+    // requires receiver-side stop confirmation before its HWND can be lost.
+    [[nodiscard]] bool confirm_companion_quit() noexcept;
     void tick() noexcept;
     void close() noexcept;
     DWORD wait_timeout() const noexcept;

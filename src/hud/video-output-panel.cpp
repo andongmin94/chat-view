@@ -568,6 +568,39 @@ void VideoOutputPanel::stop(const wchar_t *message) noexcept
     capture_.stop();
     notice(covered ? message : L"검은 덮개를 확인하지 못했습니다. 수신 PC의 장면을 즉시 중지하세요. 캡처 중지를 요청했습니다.");
 }
+bool VideoOutputPanel::confirm_companion_quit() noexcept
+{
+    if (!enabled_ || closing_ || confirming_) return false;
+    // With no separate output HWND, the ordinary companion quit remains a
+    // single shortcut. Chat and browser approval need no new authority.
+    if (!output_) return true;
+
+    // The ordinary quit key must not bypass the default-No release boundary.
+    // Mask before asking. If a Stop is reentered during the synchronous paint,
+    // it wins over this quit consent too.
+    const HWND target = output_;
+    const auto prior_epoch = selection_epoch_;
+    stop(L"컴패니언 종료 요청 · 게임 영상 중지 / 검정 덮개 유지.\n"
+         L"수신 PC의 방송·녹화 입력을 먼저 중지하고 종료 여부를 확인하세요.");
+    if (closing_ || target != output_ || selection_epoch_ != prior_epoch + 1U || !panel_)
+        return false;
+    const auto epoch = selection_epoch_;
+    confirming_ = true;
+    const int answer = MessageBoxW(panel_,
+        L"ChatView를 종료하면 별도 영상 출력창과 검정 덮개도 사라집니다.\n"
+        L"수신 PC에서 이 캡처카드 입력을 계속 사용하면 게임 PC의 바탕화면이나 다른 창이 보일 수 있습니다.\n\n"
+        L"먼저 송출 PC에서 해당 입력을 사용하는 방송·녹화 장면을 중지하고,\n"
+        L"더 이상 수신·기록하지 않는지 직접 확인하세요.\n"
+        L"ChatView는 수신 PC의 중지 여부를 자동으로 확인할 수 없습니다.\n\n"
+        L"수신 PC의 입력을 중지했으며 검정 출력창을 닫고 종료해도 됩니까?",
+        L"ChatView · 컴패니언 종료 확인", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
+    confirming_ = false;
+    if (answer == IDYES && !closing_ && target == output_ && epoch == selection_epoch_)
+        return true;
+    notice(L"컴패니언 종료를 취소했습니다. 검정 출력창과 개인 채팅은 유지합니다.\n"
+           L"영상은 자동 재개되지 않으며 새 시험 패턴·수신 확인이 필요합니다.");
+    return false;
+}
 void VideoOutputPanel::release() noexcept
 {
     if (!output_ || releasing_ || confirming_ || closing_) return;

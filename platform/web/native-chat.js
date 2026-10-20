@@ -4,6 +4,9 @@ const NATIVE_CHAT_STATES = new Set([
   'idle', 'connecting', 'subscribing', 'subscribed', 'disconnected',
   'revoked', 'unsubscribed', 'error', 'stopped',
 ]);
+// Only official CHAT sender roles are allowed through the private display DTO.
+// Unknown provider values never become a privileged-looking label.
+const DISPLAY_ROLES = new Set(['streamer', 'streaming_channel_manager', 'streaming_chat_manager']);
 
 // This is a display DTO, not credentials, executable markup, or window commands.
 export function nativeChatSnapshot(value) {
@@ -27,6 +30,8 @@ export function nativeChatSnapshot(value) {
       nickname: cleanText(message.nickname, 200),
       content: cleanText(message.content, 10000),
       messageTime: message.messageTime,
+      ...(DISPLAY_ROLES.has(message.userRoleCode) ? { userRoleCode: message.userRoleCode } : {}),
+      ...(message.verifiedMark === true ? { verifiedMark: true } : {}),
     };
   });
   return { state: value.state, received: value.received, messages };

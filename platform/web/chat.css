@@ -9,6 +9,17 @@ a { color: #85dfc0; } .notice { color: #bbc1cb; font-size: 13px; }
 li { padding: 12px 4px; border-bottom: 1px solid #323944; }
 b { margin-left: 12px; unicode-bidi: isolate; } time { color: #aab2be; font-size: 12px; }
 .content { display: block; white-space: pre-wrap; unicode-bidi: plaintext; }
+/* Fixed first-party text badges; no remote images or profile HTML. */
+#messages .chat-role, #messages .chat-verified { display: inline-block; margin-left: 6px;
+  padding: 1px 6px; border: 1px solid #648b91; border-radius: 5px;
+  color: #e4f9ff; background: #25464d; font-size: .78em; font-weight: 650;
+  line-height: 1.5; white-space: nowrap; }
+#messages .chat-role.streamer { color: #fff1cf; background: #614513; border-color: #ad8636; }
+#messages .chat-role.streaming_channel_manager { color: #ddf4ff; background: #28506e; }
+#messages .chat-role.streaming_chat_manager { color: #e8defd; background: #4c3670; }
+#messages.chat-high-contrast .chat-role, #messages.chat-high-contrast .chat-verified {
+  background: #000; border-color: #fff; color: #fff; }
+
 @media (max-width: 480px) { body { padding: 16px; } header { gap: 8px; } header span { font-size: 13px; } }
 
 #jump-latest { display: block; margin: 10px auto 0; padding: 9px 18px;

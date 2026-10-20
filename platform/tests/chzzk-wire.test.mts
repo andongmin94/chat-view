@@ -18,7 +18,7 @@ import type { Socket } from 'socket.io';
 const require = createRequire(import.meta.url);
 
 type NativeFrame = { type: string; version: number; snapshot: {
-  state: string; received: number; messages: { nickname: string; content: string }[];
+  state: string; received: number; messages: { nickname: string; content: string; userRoleCode?: string; verifiedMark?: boolean }[];
 }; connection: { role: string; broadcastSessionId: string } };
 function receive(peer: WebSocket, matches: (value: NativeFrame) => boolean): Promise<NativeFrame> {
   return new Promise((resolve, reject) => {
@@ -151,11 +151,18 @@ test('structured Manager options negotiate EIO3 and preserve the ticket over rea
 
   const next = [receive(game.reader, frame => frame.snapshot.received === 3),
     receive(streaming.reader, frame => frame.snapshot.received === 3)];
-  peer.emit('CHAT', JSON.stringify({ channelId: 'mine', senderChannelId: 'sender',
-    profile: { nickname: '실제 소켓', verifiedMark: false, userRoleCode: 'common_user' },
+  peer.emit('CHAT', JSON.stringify({ channelId: 'mine', senderChannelId: 'PRIVATE_SENDER',
+    profile: { nickname: '실제 소켓', verifiedMark: true, userRoleCode: 'streamer',
+      badges: [{ imageUrl: 'https://example.invalid/never-load' }] },
     content: '세 번째 실시간 채팅', messageTime: 1700000000000 }));
   const third = await Promise.all(next);
-  for (const frame of third) assert.equal(frame.snapshot.messages[2]?.content, '세 번째 실시간 채팅');
+  for (const frame of third) {
+    assert.deepEqual(frame.snapshot.messages[2], {
+      nickname: '실제 소켓', content: '세 번째 실시간 채팅', messageTime: 1700000000000,
+      userRoleCode: 'streamer', verifiedMark: true,
+    }, 'both approved PCs receive the same sanitized official-role text metadata');
+    assert.doesNotMatch(JSON.stringify(frame), /PRIVATE_SENDER|imageUrl|never-load/u);
+  }
 
   const cleared = [receive(game.reader, frame => frame.snapshot.state === 'stopped'),
     receive(streaming.reader, frame => frame.snapshot.state === 'stopped')];

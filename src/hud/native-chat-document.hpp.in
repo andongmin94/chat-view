@@ -23,7 +23,12 @@ main{box-sizing:border-box;display:flex;flex-direction:column;height:100%;paddin
 #messages.chat-high-contrast li{background:#000;border:1px solid #fff;color:#fff}
 #messages.chat-high-contrast time{color:#f0f0f0}
 li{display:flex;gap:8px;flex-wrap:wrap;margin:5px 0;padding:7px 10px;border-radius:8px;background:rgba(20,20,24,.78);overflow-wrap:anywhere}
-time{font-size:12px;color:#bbb}b{unicode-bidi:plaintext}.content{white-space:pre-wrap;unicode-bidi:plaintext}
+time{font-size:12px;color:#bbb}b{unicode-bidi:plaintext}.content{white-space:pre-wrap;unicode-bidi:plaintext;flex-basis:100%}
+.chat-role,.chat-verified{display:inline-block;padding:1px 6px;border:1px solid rgba(200,235,240,.85);border-radius:5px;background:rgba(24,69,74,.95);color:#e4f9ff;font-size:.78em;font-weight:650;white-space:nowrap}
+.chat-role.streamer{background:rgba(107,71,20,.97);color:#fff1cf;border-color:#e3bc70}
+.chat-role.streaming_channel_manager{background:rgba(35,80,111,.97)}
+.chat-role.streaming_chat_manager{background:rgba(76,54,112,.97)}
+#messages.chat-high-contrast .chat-role,#messages.chat-high-contrast .chat-verified{background:#000;color:#fff;border-color:#fff}
 </style></head><body><main><p id="status" role="status"></p><div class="chat-readability" role="group" aria-label="채팅 글자 크기와 대비"><span>읽기 설정</span><button id="chat-font-smaller" type="button" aria-label="글자 작게">A−</button><button id="chat-font-larger" type="button" aria-label="글자 크게">A+</button><button id="chat-contrast" type="button" aria-pressed="false">강한 대비</button></div><ol id="messages" aria-label="채팅"></ol><button id="jump-latest" type="button" hidden>최신 채팅</button></main>
 <script type="module" nonce="@CHATVIEW_NONCE@">
 @CHATVIEW_RENDERER@

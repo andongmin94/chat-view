@@ -184,6 +184,50 @@ test('a large unread burst is bounded, and stale session counters reset the hint
   assert.equal(list.children.length, 1);
 });
 
+test('official streamer, channel and chat-manager labels plus verification render as inert text', () => {
+  const { list, document } = fixture();
+  const roles = [
+    { code: 'streamer', label: '스트리머' },
+    { code: 'streaming_channel_manager', label: '채널 관리자' },
+    { code: 'streaming_chat_manager', label: '채팅 운영자' },
+  ];
+  const messages = roles.map(({code}, i) => ({
+    ...message(i + 1), userRoleCode: code, verifiedMark: i === 0,
+  }));
+  renderChat(document, frame(3, messages));
+  for (let i = 0; i < roles.length; i++) {
+    const row = list.children[i]!;
+    assert.equal(row.children[1]?.textContent, message(i + 1).nickname);
+    assert.equal(row.children.at(-1)?.textContent, message(i + 1).content);
+    const badge = row.children.find(el => el.className.includes('chat-role'));
+    assert.equal(badge?.textContent, roles[i]!.label);
+    assert(badge?.className.includes(roles[i]!.code), 'fixed class for official role only');
+  }
+  assert.equal(list.children[0]?.children.find(el => el.className === 'chat-verified')?.textContent, '인증');
+  assert.equal(list.children[1]?.children.some(el => el.className === 'chat-verified'), false);
+  assert.equal(list.children[0]?.children.some(el => el.tag === 'img' || el.tag === 'script'), false);
+
+  const sameRow = list.children[0];
+  renderChat(document, frame(3, messages));
+  assert.equal(list.children[0], sameRow, 'heartbeat does not rebuild role badges');
+  renderChat(document, frame(3, [{ ...messages[0]!, userRoleCode: 'common_user', verifiedMark: false }, ...messages.slice(1)]));
+  assert.notEqual(list.children[0], sameRow, 'changed role with unchanged count and text invalidates stale badge');
+  assert.equal(list.children[0]?.children.some(el => el.className.includes('chat-role')), false);
+  assert.equal(list.children[0]?.children.some(el => el.className === 'chat-verified'), false);
+});
+
+test('unknown role strings, forged badge objects and profile markup cannot become visual authority', () => {
+  const { list, document } = fixture();
+  renderChat(document, frame(1, [{
+    ...message(1), userRoleCode: 'streamer\"><img onerror=evil()>',
+    verifiedMark: 'true', badges: [{ imageUrl: 'https://example.invalid/tracker' }],
+    profile: { nickname: 'forged' },
+  } as any]));
+  assert.equal(list.children.length, 1);
+  assert.deepEqual(list.children[0]?.children.map(el => el.tag), ['time', 'b', 'span']);
+  assert.equal(list.children[0]?.children[2]?.textContent, message(1).content);
+});
+
 test('streamer can increase font, toggle contrast and retain only bounded local display preferences', () => {
   const prefs = new Map<string, string>();
   const { list, smaller, larger, contrast, document } = fixture(prefs);

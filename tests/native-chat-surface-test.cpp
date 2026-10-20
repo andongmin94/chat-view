@@ -99,7 +99,7 @@ void expect_cancelled(ICoreWebView2 *core, const std::wstring &uri)
     core->remove_NavigationStarting(token);
     expect(state->cancelled, "host cancels unowned document");
 }
-constexpr wchar_t kMessage[] = LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"subscribed","received":1,"messages":[{"nickname":"모의 사용자 <script>","content":"한글 😀 <img onerror=evil()>","messageTime":1700000000000}]}})JSON";
+constexpr wchar_t kMessage[] = LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"subscribed","received":1,"messages":[{"nickname":"모의 사용자 <script>","content":"한글 😀 <img onerror=evil()>","messageTime":1700000000000,"userRoleCode":"streamer","verifiedMark":true}]}})JSON";
 }
 int main()
 {
@@ -176,6 +176,17 @@ int main()
             document.querySelector('#messages li .content').textContent === '한글 😀 <img onerror=evil()>' &&
             document.querySelectorAll('#messages script, #messages img').length === 0
         )JS") == L"true", "Unicode preserved and markup inert in actual DOM");
+        expect(evaluate(core.Get(), LR"JS(
+            (() => {
+                const row = document.querySelector('#messages li');
+                const role = row?.querySelector('.chat-role.streamer');
+                const verified = row?.querySelector('.chat-verified');
+                return Boolean(role && verified &&
+                    role.textContent === '스트리머' && verified.textContent === '인증' &&
+                    getComputedStyle(role).display !== 'none' &&
+                    row.querySelectorAll('img,script').length === 0);
+            })()
+        )JS") == L"true", "real native WebView2 displays inert streamer and verified badges");
         expect(!host.navigate(first_url), "private document cannot be entered through external settings");
         expect(!host.navigate(L"http://127.0.0.1:47831/chat"), "loopback settings remain prohibited");
         expect_cancelled(core.Get(), L"data:text/html,untrusted");
@@ -330,7 +341,7 @@ int main()
         await([&] { return surface.rendered_frames() == 2U; }, "heartbeat receives its own distinct frame acknowledgement");
         expect(evaluate(core.Get(), L"document.querySelector('#messages li') === globalThis.unchangedFirstRow") == L"true",
             "unchanged heartbeat preserves actual WebView2 text row identity");
-        constexpr wchar_t kSecondText[] = LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"subscribed","received":2,"messages":[{"nickname":"모의 사용자 <script>","content":"한글 😀 <img onerror=evil()>","messageTime":1700000000000},{"nickname":"추가 채팅","content":"두 번째 메시지","messageTime":1700000000001}]}})JSON";
+        constexpr wchar_t kSecondText[] = LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"subscribed","received":2,"messages":[{"nickname":"모의 사용자 <script>","content":"한글 😀 <img onerror=evil()>","messageTime":1700000000000,"userRoleCode":"streamer","verifiedMark":true},{"nickname":"추가 채팅","content":"두 번째 메시지","messageTime":1700000000001}]}})JSON";
         expect(surface.publish(kSecondText), "new subscribed chat appends on the owned DOM");
         await([&] { return surface.rendered_frames() == 3U && surface.rendered_messages() == 2U; },
             "incremental second row gets an exact native frame acknowledgement");

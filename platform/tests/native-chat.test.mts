@@ -125,6 +125,43 @@ test('display projection drops credentials and unknown fields; identical message
   const result = nativeChatSnapshot({ ...snapshot, received: 2, accessToken: 'PRIVATE', messages: [{ ...message, token: 'PRIVATE' }, message] });
   assert.deepEqual(result.messages, [message, message]); assert.doesNotMatch(JSON.stringify(result), /PRIVATE/u);
 });
+test('native projection admits only fixed official role and verification labels, stripping raw profile data', () => {
+  const cases = [
+    ['streamer', '스트리머'],
+    ['streaming_channel_manager', '채널 관리자'],
+    ['streaming_chat_manager', '채팅 운영자'],
+  ] as const;
+  for (const [role, label] of cases) {
+    const raw = {
+      ...message, userRoleCode: role, verifiedMark: true, senderChannelId: 'PRIVATE_SENDER',
+      profile: { badges: [{ imageUrl: 'https://example.invalid/track' }] },
+      accessToken: 'PRIVATE_ACCESS',
+    };
+    const clean = nativeChatSnapshot({ state: 'subscribed', received: 1, messages: [raw] });
+    assert.deepEqual(clean.messages, [{
+      ...message, userRoleCode: role, verifiedMark: true,
+    }]);
+    assert.doesNotMatch(JSON.stringify(clean), /PRIVATE_|senderChannelId|profile|imageUrl|http/u);
+    const f = fixture();
+    f.emit({ ...envelope, snapshot: { state: 'subscribed', received: 1, messages: [raw] } });
+    const row = f.list.children[0]!;
+    assert.equal(row.children.find(el => el.className.includes('chat-role'))?.textContent, label);
+    assert.equal(row.children.find(el => el.className === 'chat-verified')?.textContent, '인증');
+    assert.equal(row.children.at(-1)?.textContent, message.content);
+    assert.equal(f.sent.at(-1), 'chat-rendered:test-nonce:1:1');
+    assert.doesNotMatch(f.sent.join(''), /PRIVATE|imageUrl|role|인증/u);
+    f.close();
+  }
+  const unknown = nativeChatSnapshot({state: 'subscribed', received: 1, messages: [{
+    ...message, userRoleCode: 'streamer\"><svg onload=evil()>', verifiedMark: 'true',
+  }]});
+  assert.deepEqual(unknown.messages, [message], 'unrecognized values never become a badge');
+  const normal = nativeChatSnapshot({state: 'subscribed', received: 1, messages: [{
+    ...message, userRoleCode: 'common_user', verifiedMark: false,
+  }]});
+  assert.deepEqual(normal.messages, [message], 'ordinary viewer has no privileged-looking marker');
+});
+
 test('all lifecycle states clear content except subscribed', () => {
   for (const state of ['idle', 'connecting', 'subscribing', 'disconnected', 'revoked', 'unsubscribed', 'error', 'stopped']) {
     assert.deepEqual(nativeChatSnapshot({ state, received: 1, messages: [message] }).messages, []);

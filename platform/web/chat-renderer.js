@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Shared by the browser preview and the embedded native HUD. No transport here.
 // A heartbeat repeats chat already shown: preserve DOM rows and scroll position.
+// Server-authenticated CHZZK role codes only. Labels and CSS classes never
+// derive from arbitrary provider text, IDs, URLs or profile badge images.
+const roleNames = new Map([
+  ['streamer', '스트리머'],
+  ['streaming_channel_manager', '채널 관리자'],
+  ['streaming_chat_manager', '채팅 운영자'],
+]);
+const recognizedRole = code => roleNames.has(code) ? code : null;
 const lastRendered = new WeakMap();
 const nearBottom = list => list.scrollHeight - list.scrollTop - list.clientHeight < 80;
 
@@ -76,7 +84,8 @@ function viewFor(document, list) {
   return view;
 }
 const sameMessage = (a, b) => a.nickname === b.nickname &&
-  a.content === b.content && a.messageTime === b.messageTime;
+  a.content === b.content && a.messageTime === b.messageTime &&
+  a.userRoleCode === b.userRoleCode && a.verifiedMark === b.verifiedMark;
 
 function rowFor(document, message) {
   const row = document.createElement('li');
@@ -86,7 +95,20 @@ function rowFor(document, message) {
   time.textContent = new Date(message.messageTime).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   const content = document.createElement('span'); content.className = 'content';
   content.dir = 'auto'; content.textContent = message.content;
-  row.append(time, name, content);
+  row.append(time, name);
+  if (message.userRoleCode) {
+    const role = document.createElement('span');
+    role.className = 'chat-role ' + message.userRoleCode;
+    role.textContent = roleNames.get(message.userRoleCode);
+    row.append(role);
+  }
+  if (message.verifiedMark) {
+    const verified = document.createElement('span');
+    verified.className = 'chat-verified';
+    verified.textContent = '인증';
+    row.append(verified);
+  }
+  row.append(content);
   return row;
 }
 
@@ -108,6 +130,7 @@ export function renderChat(document, snapshot) {
   const messages = snapshot.state === 'subscribed'
     ? snapshot.messages.slice(-100).map(message => ({
         nickname: message.nickname, content: message.content, messageTime: message.messageTime,
+        userRoleCode: recognizedRole(message.userRoleCode), verifiedMark: message.verifiedMark === true,
       }))
     : [];
   const view = viewFor(document, list);

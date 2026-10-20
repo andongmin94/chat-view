@@ -12,6 +12,8 @@
 - **구현:** `VideoOutputPanel::confirm_companion_quit`을 기존 `stop()`/독립 cover/단일 generation 검사의 경계에 추가하고 `main.cpp`의 Q 처리에서 호출한다. `HudWindow`의 명시적 `WM_CLOSE`도 컴패니언 역할에서만 동일 종료 동의를 검사하도록 연결한다. OBS-managed HUD, 세션/채팅 승인, 광고, WGC 캡처 자체, OS 종료·프로세스 충돌 경로는 변경하지 않는다. 신뢰할 수 없는 종료/OS 강제 종료 후 바탕화면 노출 가능성은 여전히 남는다.
 - **회귀:** 기존 실제 Windows HUD/WGC/GDI 출력 수명 시험에서 Q 거부→검정/채팅 유지→새 패턴만 재개, HUD 닫기 거부→HUD 유지, 확인창 내 긴급 검정→나중 '예' 거부, 명시적 정상 종료 동의→검정 유지 후 기존 worker join/HWND 제거를 검사한다. 별도 출력 없는 컴패니언/OBS 역할과 기존 긴급 검정·장치 상실·철회 검사는 유지한다. 두 PC 실물 HDR/HDMI/캡처카드·수신 OBS 정지는 검증한 것으로 세지 않으며 G3-03/G3-04 및 D1/D2/D4/D6/D7·배포 qualification은 미완료다.
 
+- **실행된 기능 SHA `9665f7299b8bb891ed825ba213b49205f8be4e56` 검증:** [Windows development #460/run `39444168466`](https://github.com/andongmin94/chat-view/actions/runs/39444168466) **completed/success**, native scope·Windows x64 **CTest 50/50, 실패0, 총278.15초**. 실제 `video-output-lifecycle` **8.02초**에서 수신 중지 확인의 기본 No, 종료 거부 후 검정 HWND/채팅 보존·재시작 시 새 식별 패턴, HUD `WM_CLOSE` 거부, 확인창 안 긴급 검정의 나중 Yes 무효화 및 승인 후 기존 GPU/HWND 정리를 통과했다. 실제 실행 파일 `companion-launch` **2.59초**에서 출력이 없는 Q/일반 HUD 닫기의 즉시 종료를 통과했다. 기존 `companion-chat-video` **9.14초**, `native-display-client` **55.58초**, `native-logout` **31.88초**, `native-chat-switch` **20.39초**, `public-ad-browser` **12.97초** 등 네이티브 회귀도 성공. 한도·assertion을 완화하지 않았다. 플랫폼 서비스/광고 소스는 바꾸지 않아 CHZZK contract와 공식 OBS 광고 픽셀 시험은 이번에 새로 실행하지 않았다. **실계정 CHZZK/실물 HDMI·캡처카드·수신 OBS 정지/광고 실노출/HP·정산/5회 반복·자원·패키지 qualification은 미완료**, D1/D2/D4/D6/D7·G3-03/G3-04 완료 표기도 그대로다.
+
 ## 직전 완료 흐름: 게임 PC 출력 화면의 SDR·복제·HDR 적합성 미리 표시
 
 시작 원격 `OBS` HEAD `ed6afc54f5449936a009d5df088f58f44bace6fe`, `main` HEAD `6d1633d3df75c4781051394a5c381ea8275a804f`; AGENTS → PRODUCT → development-workflow → architecture → 이 문서 순서로 확인. 이전 [Windows development #458](https://github.com/andongmin94/chat-view/actions/runs/39420676648)은 단일 합성 네이티브 CTest50/50 통과로 보존하며 이번 기능을 대신 검증하지 않는다.
@@ -343,7 +345,7 @@ HUD가 보이면서 수신 영상에는 없어야 한다. HUD 숨김은 보호�
 
 - [x] **G3-01 — 동일 HUD의 OBS 비종속 실행.** companion·로그인·중복 방지·종료, #387 양방향 동일 HWND·gaming 역할·OBS 모듈 부재 통과.
 - [ ] **G3-02 — 동일 계정의 채팅·방송 세션.** 역할 동의·공유·암호화 복원·로그아웃·최근 출력 보고 구현. `8aed41c`/#62 계정 화면은 승인 수/서버 소켓 수를 구분한다. 중지 후 이전 접속 수를 지우며 현재 승인만 복귀한다. 철회/재승인은 #393까지 routine 통과. 기존 승인 충돌 복귀는 #67, 동시 수집 경쟁은 #68/#398까지 통과. 물리 두 PC·장면/소스 전체는 남았다.
-- [ ] **G3-03 — HUD 분리 영상.** WGC→D3D11/D2D·별도 SDR 출력·식별 패턴·기본 No 수신 확인·검정 중지·명시적 해제. **컴패니언 Ctrl+Alt+Shift+B 긴급 검정/채팅 독립성 #456, 모달 확인창 안의 긴급 검정 #458 Windows 합성 통과**. 잠금/전원/화면/장치/대상 상실은 선택 폐기, 자동 재시작 없음. 동기 Stop 우선권·별도 덮개·실제 HWND 보호 확인 유지. 영상만/최대4096; 오디오·인코더·영상 네트워크 없음. D6/하드웨어 남음.
+- [ ] **G3-03 — HUD 분리 영상.** WGC→D3D11/D2D·별도 SDR 출력·식별 패턴·기본 No 수신 확인·검정 중지·명시적 해제. **컴패니언 Ctrl+Alt+Shift+B 긴급 검정/채팅 독립성 #456, 모달 확인창 안의 긴급 검정 #458, 수신 PC 확인 뒤 종료 보호 #460 Windows 합성 통과**. 잠금/전원/화면/장치/대상 상실은 선택 폐기, 자동 재시작 없음. 동기 Stop 우선권·별도 덮개·실제 HWND 보호 확인 유지. 영상만/최대4096; 오디오·인코더·영상 네트워크 없음. D6/하드웨어 남음.
 - [ ] **G3-04 — 설치·실사용·수신 영상.** 게임 PC OBS 없이 확장 SDR HDMI/캡처카드·게임/다중 GPU·자원/지연·잠금/hotplug·HUD 없는 녹화를 검증해야 한다. 화면 전체 캡처로 대체하지 않는다.
 
 ## G4. 치지직부터 자체 플랫폼

@@ -226,19 +226,21 @@ test('retention, result size and per-owner row cap are explicit and bounded', ()
 test('history page distinguishes unmeasured audience metrics, omitted gaps and non-payable totals', () => {
   const f = setup();
   try {
-    const empty = activityPage(f.activity.summary('alice'));
+    const empty = activityPage(f.activity.summary('alice'), f.activity.evidence('alice'));
     assert.match(empty, /아직 저장된 보고가 없습니다/u);
     assert.match(empty, /data-evidence-stage="output"[\s\S]*?data-evidence-state="no-reports"/u);
     assert.match(empty, /data-evidence-stage="audience"[\s\S]*?data-evidence-state="unmeasured"/u);
     assert.match(empty, /data-evidence-stage="exposure"[\s\S]*?data-evidence-state="not-measured"/u);
     f.select(); f.record(1); f.advance(1000); f.record(3);
-    const html = activityPage(f.activity.summary('alice'));
+    const html = activityPage(f.activity.summary('alice'), f.activity.evidence('alice'));
     for (const label of ['비지급 시험 기록', '광고 노출·시청시간이 아닙니다', '미측정', '보고 순번 누락', '미산정', '최근 50건', '1,000건'])
       assert(html.includes(label));
     assert.doesNotMatch(html, /<script|<form|sessionToken|lease-a|onclick=/u);
     assert(!html.includes(f.alice.token)); assert(!html.includes(f.alice.membership!.connectionId));
     assert.match(html, /data-metric="active-ms" data-value="0"/u);
     assert.match(html, /data-evidence-stage="output"[\s\S]*?data-evidence-state="no-active-interval"/u);
+    assert.match(html, /data-sample-coverage="not-applicable"/u);
+    assert.doesNotMatch(html, /data-sample-coverage="unmeasured"/u);
     assert.match(html, /송출 PC 출력 보고 · 관측된 활동/u);
     assert.match(html, /광고 실제 시청 · HP · 보상/u);
   } finally { f.close(); }

@@ -291,7 +291,8 @@ test('observed CHZZK profile role reaches the own native text snapshot; top-leve
   assert.equal(parsed.userRoleCode, 'streamer');
   assert.deepEqual(nativeChatSnapshot({ state: 'subscribed', received: 1, messages: [parsed] }), {
     state: 'subscribed', received: 1,
-    messages: [{ nickname: original.profile.nickname, content: raw.content, messageTime: raw.messageTime }],
+    messages: [{ nickname: original.profile.nickname, content: raw.content, messageTime: raw.messageTime,
+      userRoleCode: 'streamer', verifiedMark: true }],
   });
   assert.equal(parseChatMessage({ ...raw,
     profile: { nickname: 'fixture', verifiedMark: false }, userRoleCode: 'streamer' }, 'mine'), undefined,

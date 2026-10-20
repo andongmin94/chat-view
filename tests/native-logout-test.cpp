@@ -51,7 +51,7 @@ std::wstring control_text(HWND dialog, int id)
 {
     wchar_t value[1024]{}; GetDlgItemTextW(dialog, id, value, 1024); return value;
 }
-void pump(chatview::NativeChatConnection &connection)
+void pump(chatview::NativeChatConnection &connection, bool tick_connection = true)
 {
     MSG message{};
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
@@ -59,14 +59,15 @@ void pump(chatview::NativeChatConnection &connection)
         if (connection.dispatch(message)) continue;
         TranslateMessage(&message); DispatchMessageW(&message);
     }
-    connection.tick();
+    if (tick_connection) connection.tick();
 }
 void await(const std::function<bool()> &predicate, const char *label,
-           chatview::NativeChatConnection &connection, ULONGLONG timeout = 15000U)
+           chatview::NativeChatConnection &connection, ULONGLONG timeout = 15000U,
+           bool tick_connection = true)
 {
     const auto deadline = GetTickCount64() + timeout;
     while (!predicate()) {
-        expect(GetTickCount64() < deadline, label); pump(connection);
+        expect(GetTickCount64() < deadline, label); pump(connection, tick_connection);
         MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
     }
 }
@@ -132,7 +133,7 @@ void run(const std::wstring &origin, const std::wstring &auxiliary, const std::s
             // This models an owned-document startup lost between consent and
             // the first server chat frame, not a second browser authorization.
             await([&] { return !chatview::NativeChatConnectionTestAccess::login_pending(connection); },
-                "approved provider login before local document loss", nullptr);
+                "approved provider login before local document loss", connection, 15000U, false);
             auto &broken = chatview::NativeChatConnectionTestAccess::surface(connection);
             expect(broken.rendered_frames() == 0U, "no private first-render ACK before document loss");
             broken.close();

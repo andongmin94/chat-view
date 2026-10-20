@@ -455,11 +455,10 @@ ${this.#form(b, '/account/cancel', '취소')}
         const review = url.pathname === '/campaigns/activity/review';
         // Read-only, owner-scoped, bounded evidence; filtering never creates a
         // new activity interval or an ad exposure/HP/revenue record.
-        const rows = review
-          ? this.#creators.activity.evidence(b.owner).filter(needsActivityReview)
-          : undefined;
+        const evidence = this.#creators.activity.evidence(b.owner);
+        const rows = review ? evidence.filter(needsActivityReview) : evidence;
         this.#page(response, '시험 캠페인 활동 기록',
-          this.#accountNotice(b) + activityPage(this.#creators.activity.summary(b.owner), rows));
+          this.#accountNotice(b) + activityPage(this.#creators.activity.summary(b.owner), rows, review));
         return;
       }
       if (request.method === 'GET' && url.pathname === '/campaigns') {

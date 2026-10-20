@@ -30,10 +30,41 @@ export function needsActivityReview(row: ActivityEvidenceRow): boolean {
     ((row.state === 'streaming' || row.state === 'both') &&
      (row.audienceCoverageMs === null || row.audienceCoverageMs < row.durationMs));
 }
-function reviewCoverage(row: ActivityEvidenceRow): string {
-  if (row.reason !== 'continuous') return '연속 출력 확인 전 · 합산 제외';
-  return row.audienceCoverageMs === null ? '공식 채널 표본 없음 · 미측정'
-    : `일부 표본만 포함 · ${duration(row.audienceCoverageMs)} / ${duration(row.durationMs)}`;
+// Saved channel sample coverage, not the transient "current viewers" widget.
+// A non-streaming/boundary row is inapplicable, not a zero-viewer measurement.
+function channelEvidence(row: ActivityEvidenceRow): {
+  state: 'not-applicable' | 'unmeasured' | 'partial' | 'covered'; coverage: string; estimate: string;
+} {
+  if (row.reason !== 'continuous')
+    return { state: 'not-applicable', coverage: '보고 경계 · 산정 제외',
+      estimate: '연속 송출 확인 전 — 추정 대상 아님' };
+  if (row.state !== 'streaming' && row.state !== 'both')
+    return { state: 'not-applicable', coverage: '송출 외 구간 · 산정 제외',
+      estimate: '채널 시청자 시간 추정 대상 아님' };
+  if (row.audienceCoverageMs === null)
+    return { state: 'unmeasured', coverage: '공식 채널 표본 없음 · 미측정',
+      estimate: '시청자 0명이 아닌 미측정' };
+  const state = row.audienceCoverageMs < row.durationMs ? 'partial' : 'covered';
+  return {
+    state,
+    coverage: `${state === 'partial' ? '일부 표본만 포함' : '전체 표본 포함'} · ${duration(row.audienceCoverageMs)} / ${duration(row.durationMs)}`,
+    estimate: row.estimatedViewerMs === null ? '추정값 산정 불가'
+      : `${(row.estimatedViewerMs / 60000).toFixed(3)} 시청자·분 (추정)${row.estimatedViewerMs === 0 ? ', 표본 0명' : ''}`,
+  };
+}
+
+function reviewGuidance(row: ActivityEvidenceRow): string {
+  switch (row.reason) {
+    case 'first-report': return '정상 시작 경계일 수 있습니다. 이후 연속 보고가 들어왔는지 확인하세요.';
+    case 'state-change': return '출력 상태가 바뀌었습니다. 새 상태의 연속 보고부터 계산합니다.';
+    case 'connection-change': return '재연결 뒤 새 보고 두 개가 필요합니다. 송출 PC 연결을 확인하세요.';
+    case 'sequence-gap': return '보고 순번이 끊겼습니다. 송출 PC의 보고 연결을 확인하세요.';
+    case 'stale-gap': return '보고 사이가 유효시간을 넘었습니다. 송출 PC 출력 보고를 확인하세요.';
+    case 'clock-change': return '서버 시계가 불연속입니다. 해당 구간을 합산하지 않습니다.';
+    case 'continuous': return row.audienceCoverageMs === null
+      ? '위 공식 채널 표본 상태에서 수집 비활성·조회 실패·목록 범위 등을 확인하세요.'
+      : '표본이 없던 송출 시간은 시청자 0명으로 계산하지 않았습니다.';
+  }
 }
 
 // CSV is downloaded only by an authenticated creator browser. No client
@@ -66,10 +97,9 @@ export function activityCsv(rows: readonly ActivityEvidenceRow[]): string {
 
 // Only server-derived numbers and fixed labels enter this document. No query
 // selector, tokens, private chat, client HTML, or public access to the history.
-export function activityPage(summary: ActivitySummary, reviewRows?: readonly ActivityEvidenceRow[]): string {
+export function activityPage(summary: ActivitySummary, rows: readonly ActivityEvidenceRow[], review = false): string {
   const audience = summary.audience;
-  const review = reviewRows !== undefined;
-  const listedRows = review ? reviewRows.slice(0, 50) : summary.rows;
+  const listedRows = rows.slice(0, 50);
   const download = review ? '/campaigns/activity/review.csv' : '/campaigns/activity.csv';
   // Reported activity, estimated channel-wide viewers and unmeasured
   // advertisement exposure are different evidence; never coerce missing to 0.
@@ -143,7 +173,7 @@ export function activityPage(summary: ActivitySummary, reviewRows?: readonly Act
 <h2 id="activity-history-title">4. 최근 서버 보고 근거</h2>
 <nav aria-label="저장된 근거 보기"><a href="/campaigns/activity">전체 기록</a> ·
 <a href="/campaigns/activity/review">연속성·채널 표본 확인 구간만 보기</a></nav>
-${review ? `<p data-review-count="${reviewRows.length}">확인할 근거 ${reviewRows.length}건 · 첫 보고/상태 전환·순번 누락·재연결 공백, 또는 연속 송출 구간의 채널 시청자 표본 미측정/부분 수집을 보여줍니다.
+${review ? `<p data-review-count="${rows.length}">확인할 근거 ${rows.length}건 · 첫 보고/상태 전환·순번 누락·재연결 공백, 또는 연속 송출 구간의 채널 시청자 표본 미측정/부분 수집을 보여줍니다.
 이 목록은 <strong>오류·광고 노출 실패·시청자 0명을 확정하지 않습니다.</strong>
 첫 보고는 정상적인 시작 경계일 수 있습니다. 위쪽 합계는 여전히 전체 보관 근거이며, 아래 표와 CSV에만 이 필터를 적용합니다.</p>`
 : '<p>전체 서버 보고 내역입니다. 연속성 공백과 채널 시청자 표본 미측정을 따로 확인할 수 있습니다.</p>'}
@@ -151,13 +181,18 @@ ${review ? `<p data-review-count="${reviewRows.length}">확인할 근거 ${revie
 송출·녹화 보고와 <strong>조건부 채널 시청자 추정</strong>만 포함합니다. 광고 실측 노출·HP·수익은 값이 없고, 미측정은 0으로 바꾸지 않습니다. 계정 소유자만 다운로드할 수 있습니다.</p>
 <p>최근 7일 이내에 시작한 구간 중 최대 1,000건을 보관합니다. 동일 상태는 시간 단위로 합칩니다.
 보관 중 ${summary.intervals}건, 수신 보고 ${summary.reports}개, 계산 제외 ${summary.unknownIntervals}건.
-아래는 ${review ? '점검 대상 중 최근 50건' : '최근 50건'}입니다. 전체 방송 이력이나 평생 합계가 아닙니다.</p>
+아래는 ${review ? '점검 대상 중 최근 50건' : '최근 50건'}입니다. 각 행의 채널 시청자 시간은 별도 근거의 <strong>추정</strong>이며 광고 실측값은 아닙니다. 전체 방송 이력이나 평생 합계가 아닙니다.</p>
 ${listedRows.length ? `<div style="overflow-x:auto"><table style="width:100%;text-align:left;font-size:14px;border-collapse:collapse">
 <caption>${review ? '연속성·채널 표본 확인 구간' : '최근 활동 근거'} (서버 수신 시각, UTC)</caption>
-<thead><tr><th>시작 → 마지막 보고</th><th>구분 / 근거</th><th>계산 구간</th>${review ? '<th>확인 지점</th>' : ''}</tr></thead>
-<tbody>${listedRows.map(row => `<tr><td>${date(row.from)}<br>→ ${date(row.to)}</td>
+<thead><tr><th scope="col">시작 → 마지막 보고</th><th scope="col">구분 / 근거</th><th scope="col">계산 구간</th><th scope="col">공식 채널 표본 · 시청자 시간 추정</th>${review ? '<th scope="col">점검 안내</th>' : ''}</tr></thead>
+<tbody>${listedRows.map(row => {
+  const sample = channelEvidence(row);
+  return `<tr><td>${date(row.from)}<br>→ ${date(row.to)}</td>
 <td>${states[row.state]}<br>${reasons[row.reason]}</td>
-<td>${row.state === 'unknown' ? '미산정' : duration(row.durationMs)}</td>${review ? `<td>${reviewCoverage(row as ActivityEvidenceRow)}</td>` : ''}</tr>`).join('')}</tbody></table></div>`
+<td>${row.state === 'unknown' ? '미산정' : duration(row.durationMs)}</td>
+<td data-sample-coverage="${sample.state}" data-sample-covered-ms="${row.audienceCoverageMs ?? ''}" data-estimated-viewer-ms="${row.estimatedViewerMs ?? ''}">${sample.coverage}<br>${sample.estimate}</td>
+${review ? `<td>${reviewGuidance(row)}</td>` : ''}</tr>`;
+}).join('')}</tbody></table></div>`
 : review ? '<p>보관된 출력 보고 중 확인할 구간이 없습니다. 실제 광고 노출이나 시청자 주목이 검증됐다는 뜻은 아닙니다.</p>'
   : '<p>아직 저장된 보고가 없습니다. 캠페인을 선택하고 승인된 송출 연결에서 새 보고를 받아야 합니다.</p>'}
 <p>중지·철회 뒤에도 보관 기간 안의 기록은 남습니다. 재선택·연결 복귀·서버 재시작 전후의

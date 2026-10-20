@@ -4,7 +4,15 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 비지급 송출 활동의 연속성·공식 채널 표본 누락만 선별해 검토
+## 현재 흐름: 저장된 구간별 공식 채널 표본 근거와 조건부 추정을 화면에서 바로 대조
+
+시작 원격 OBS `548a0feddeb4f96cf77d26925c462b8eba9ccc83`, main `6d1633d3df75c4781051394a5c381ea8275a804f`. AGENTS → PRODUCT → workflow → architecture → plan 순서 확인. [CHZZK #120](https://github.com/andongmin94/chat-view/actions/runs/39391696196)·[OBS ad #38](https://github.com/andongmin94/chat-view/actions/runs/39391696212)의 선행 성공은 이번 기능 검증으로 대체하지 않는다.
+
+- **사용자 동선:** 창에서 `/campaigns/activity` 전체 근거나 `/campaigns/activity/review` 확인 대상을 열면 최근 50건 각각에 **공식 채널 표본 적용 시간 / 유효 송출 시간** 및 그 구간의 **비지급 채널 시청자·분 추정치**가 표시된다. 유효 표본에 따른 **0명→숫자 0**, 송출은 있었으나 표본 없음→**미측정**, 일부만 유효→**부분 포함**, 시작/상태 전환·녹화 전용→**추정 비대상**을 구분한다. 확인 화면의 보고 경계·순번 누락·표본 미측정에는 확인할 지점도 안내한다. 실제 광고 실측/HP/지급을 계산하지 않는다.
+- **구현:** 기존 7일/owner/1000행 `CampaignActivity.evidence`를 두 관리 페이지에서도 동일하게 조회하고, 렌더링은 지난 구간에 저장된 `covered_ms` 및 `estimated_viewer_ms`만 읽는다. *현재* 채널 시청자 수를 과거 구간에 소급 적용하지 않는다. 기존 summary는 전체 보관 근거를 유지하며 최근 50행/CSV 최대1000행, 필터/다운로드/인증·Origin·CSRF 경계·공개 광고·네이티브 입력은 변경하지 않는다.
+- **회귀:** 실제 HTTP/SQLite 활동 흐름에서 전체/확인 두 화면과 CSV·계정 격리/로그아웃/읽기 불변을 확인한다. 표본/추정 단위 시험에서 완전 표본, 부분 표본·실제 0명, 비대상, 표본 없는 유효 송출의 렌더링을 검사한다. 검증되지 않은 실방송/실측 광고 시청 또는 HP 완료 판정으로 확대하지 않는다.
+
+## 직전 완료 흐름: 비지급 송출 활동의 연속성·공식 채널 표본 누락만 선별해 검토
 
 시작 원격 OBS `fb94425b73213f9d7a51bbc6ac0c1633c699fb78`, main `6d1633d3df75c4781051394a5c381ea8275a804f` 확인. AGENTS → PRODUCT → workflow → architecture → 이 계획 순서 준수. 앞선 비지급 CSV 기능은 [CHZZK #119/run `39387271597`](https://github.com/andongmin94/chat-view/actions/runs/39387271597) Node374/374·Chromium29/29, 공식 OBS 시험 배너 #37 PNG13/13의 합성 검증을 보존한다.
 

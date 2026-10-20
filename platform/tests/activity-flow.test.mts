@@ -146,6 +146,9 @@ test('creator downloads bounded non-payable CSV evidence; other owners and nativ
     const page = await f.page('/campaigns/activity', alice.b);
     assert.match(page, /href="\/campaigns\/activity\.csv"/u);
     assert.match(page, /미측정은 0으로 바꾸지 않습니다/u);
+    assert.match(page, /data-sample-coverage="unmeasured" data-sample-covered-ms="" data-estimated-viewer-ms=""/u);
+    assert.match(page, /data-sample-coverage="not-applicable"/u);
+    assert.match(page, /시청자 0명이 아닌 미측정/u);
     await f.page('/campaigns', alice.b);
     assert.equal((await f.post('/campaigns/stop', alice.b)).status, 303);
     assert.equal(await csvBody(await exportFor(alice.b.cookie)), csv,
@@ -281,11 +284,19 @@ test('creator reviews only unbracketed or audience-unmeasured report intervals a
     assert.match(html,/상태 전환/u);
     assert.match(html,/오류·광고 노출 실패·시청자 0명을 확정하지 않습니다/u);
     assert.match(html,/위쪽 합계는 여전히 전체 보관 근거/u);
+    assert.match(html,/data-sample-coverage="unmeasured" data-sample-covered-ms="" data-estimated-viewer-ms=""/u);
+    assert.match(html,/data-sample-coverage="not-applicable"/u);
+    assert.match(html,/위 공식 채널 표본 상태에서 수집 비활성·조회 실패·목록 범위 등을 확인하세요/u);
+    assert.match(html,/정상 시작 경계일 수 있습니다/u);
     assert.match(html,/href="\/campaigns\/activity\/review.csv"/u);
     assert.doesNotMatch(html,/PRIVATE|ChatView-Session|ChatView-Output|<script/u);
     const regular=await requestWith('/campaigns/activity',alice.b.cookie);
     assert.equal(regular.status,200);
-    assert.match(await regular.text(),/data-activity-view="all"/u);
+    const regularHtml = await regular.text();
+    assert.match(regularHtml,/data-activity-view="all"/u);
+    assert.match(regularHtml,/data-sample-coverage="unmeasured"/u);
+    assert.match(regularHtml,/data-sample-coverage="not-applicable"/u);
+    assert.doesNotMatch(regularHtml,/위 공식 채널 표본 상태에서 수집 비활성·조회 실패·목록 범위 등을 확인하세요/u);
     const subset=await requestWith('/campaigns/activity/review.csv',alice.b.cookie);
     assert.equal(subset.status,200);
     assert.match(subset.headers.get('content-disposition')??'',/nonpayable-review\.csv/u);

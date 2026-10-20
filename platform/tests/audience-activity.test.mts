@@ -48,10 +48,13 @@ test('last valid sample is held only across accepted consecutive streaming repor
     assert.equal(s.estimatedViewerMs,270000); assert.equal(s.audienceCoverageMs,15000); assert.equal(s.audienceUnmeasuredMs,0);
     assert.equal(s.activeMs,15000); assert.equal(s.audienceMethod,'last-sample-hold');
     assert.equal(s.measuredAdViewerMs,null); assert.equal(s.hp,null); assert.equal(s.revenue,null); assert.equal(s.payable,false);
-    const html=activityPage(s);
+    const html=activityPage(s, f.activity.evidence('alice'));
     assert.match(html,/data-evidence-stage="output"[\s\S]*?data-evidence-state="reported-intervals"/u);
     assert.match(html,/data-evidence-stage="audience"[\s\S]*?data-evidence-state="covered"/u);
     assert.match(html,/data-evidence-stage="exposure"[\s\S]*?data-evidence-state="not-measured"/u);
+    assert.match(html,/data-sample-coverage="covered" data-sample-covered-ms="15000" data-estimated-viewer-ms="270000"/u);
+    assert.match(html,/data-sample-coverage="not-applicable" data-sample-covered-ms="" data-estimated-viewer-ms=""/u);
+    assert.match(html,/전체 표본 포함 · 15\.000초 \/ 15\.000초/u);
     assert.equal(f.sessions.database.prepare('SELECT COUNT(*) AS n FROM campaign_audience').get()!.n,1,'estimates coalesce with activity, not unbounded sample rows');
     const before=s.estimatedViewerMs; f.advance();
     for(let i=0;i<10;i++) assert.equal(f.activity.summary('alice').estimatedViewerMs,before,'reading never extrapolates or accrues');
@@ -67,12 +70,15 @@ test('unknown is null, explicit observed zero is numeric zero, with uncovered st
     assert.equal(f.activity.summary('alice').estimatedViewerMs,null,'one new sample cannot backfill');
     f.advance(); f.report(); const s=f.activity.summary('alice');
     assert.equal(s.estimatedViewerMs,0); assert.equal(s.audienceCoverageMs,5000); assert.equal(s.audienceUnmeasuredMs,10000);
-    const html=activityPage(s);
+    const html=activityPage(s, f.activity.evidence('alice'));
     assert.match(html,/0\.000 시청자·분/u);
     assert.match(html,/data-evidence-state="partial"/u);
     assert.match(html,/유효한 공식 시청자 0명 표본으로 계산된 추정값 0/u);
     assert.match(html,/표본이 없던 송출 구간은 추가하지 않았습니다/u);
     assert.match(html,/data-evidence-state="not-measured"/u);
+    assert.match(html,/data-sample-coverage="partial" data-sample-covered-ms="5000" data-estimated-viewer-ms="0"/u);
+    assert.match(html,/일부 표본만 포함 · 5\.000초 \/ 15\.000초/u);
+    assert.match(html,/0\.000 시청자·분 \(추정\), 표본 0명/u);
   } finally {f.close();}
 });
 
@@ -184,12 +190,12 @@ test('persisted estimates survive restart but expire with parent history; cache 
 test('owner page distinguishes channel estimate, coverage, unmeasured attention and disabled collection', () => {
   const f=fixture();
   try {
-    f.report(); f.advance(); f.report(); const html=activityPage(f.activity.summary('alice'));
+    f.report(); f.advance(); f.report(); const html=activityPage(f.activity.summary('alice'), f.activity.evidence('alice'));
     for(const text of ['12명','1.000 시청자·분','0명으로 대체하지 않음','제공자 표본 시각은 미제공',
       '배너를 본 사람 수가 아니며','미측정 — 노출·시청 계측 없음','계산하지 않음 — 지급 가능한 실적 없음']) assert(html.includes(text));
     for(const secret of ['sample-epoch',f.approval.token,f.approval.membership!.connectionId]) assert(!html.includes(secret));
     f.sample({state:'unavailable',reason:'disabled'});
-    const disabled=activityPage(f.activity.summary('alice'));
+    const disabled=activityPage(f.activity.summary('alice'), f.activity.evidence('alice'));
     assert.match(disabled,/이용 조건·권한·할당량/u);
     assert.match(disabled,/data-evidence-state="covered"/u);
     assert.match(disabled,/현재 시청자 표본과 아래 7일 이내 보존된 추정 합계는 시점이 다를 수 있습니다/u);
@@ -214,11 +220,13 @@ test('owner review queue distinguishes continuity gaps from missing channel samp
     assert(needsActivityReview(continuous),'coalesced streaming history becomes reviewable when only partly sampled');
     const review=evidence.filter(needsActivityReview);
     assert.equal(review.length,2);
-    const html=activityPage(f.activity.summary('alice'),review);
+    const html=activityPage(f.activity.summary('alice'),review,true);
     assert.match(html,/data-activity-view="review"/u);
     assert.match(html,/data-review-count="2"/u);
     assert.match(html,/일부 표본만 포함 · 5\.000초 \/ 10\.000초/u);
-    assert.match(html,/연속 출력 확인 전 · 합산 제외/u);
+    assert.match(html,/보고 경계 · 산정 제외/u);
+    assert.match(html,/data-sample-coverage="partial" data-sample-covered-ms="5000" data-estimated-viewer-ms="60000"/u);
+    assert.match(html,/정상 시작 경계일 수 있습니다/u);
     assert.match(html,/위쪽 합계는 여전히 전체 보관 근거/u);
     assert.match(html,/\/campaigns\/activity\/review\.csv/u);
     assert.match(html,/광고 실제 시청 · HP · 보상/u);
@@ -240,5 +248,9 @@ test('owner review queue distinguishes continuity gaps from missing channel samp
     const recording=zero.activity.evidence('alice').find(row=>
       row.reason==='continuous' && row.state==='recording')!;
     assert(!needsActivityReview(recording),'recording-only time never requires a live audience sample');
+    const page=activityPage(zero.activity.summary('alice'),zero.activity.evidence('alice'));
+    assert.match(page,/data-sample-coverage="covered" data-sample-covered-ms="5000" data-estimated-viewer-ms="0"/u);
+    assert.match(page,/data-sample-coverage="not-applicable"/u);
+    assert.match(page,/송출 외 구간 · 산정 제외/u);
   } finally {zero.close();}
 });

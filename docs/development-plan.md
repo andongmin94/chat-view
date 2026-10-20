@@ -12,6 +12,8 @@
 - **구현:** 기존 `platform/web/chat-renderer.js`에 DOM 목록별 bounded unread/display 상태만 더한다. 원래 `received` 증가만 계수하고 표시 `99+` 제한, 메시지 내용은 여전히 `textContent`만 사용한다. 브라우저 `chat.html/chat.css` 및 내부 `native-chat-document.hpp.in`에 같은 이름의 읽기 전용 버튼을 추가한다. 네이티브 click-through/보호·Edit 잠금, WinHTTP·Socket.IO·제공자 토큰/역할/OBS 공개 배너와 증빙 계측은 바꾸지 않는다. 실제 두 PC와 HUD 없는 HDMI 수신을 확인한 것이 아니다.
 - **검증:** `platform/tests/chat-renderer.test.mts`에 스크롤 중 1·다수 새 메시지 알림, 중복 heartbeat, 버튼 클릭/자발적 스크롤로 종료, 100개 window eviction 시 앵커 보존, 99+ 상한, 새 구독/철회 시 초기화를 추가한다. `native-chat.test.mts`의 C++ ACK 경계 및 `display-gateway.test.mts` fixture를 기존 renderer contract에 맞게 유지한다. 실제 `native-chat-surface-test.cpp`의 WebView2 DOM에서 목록을 위로 스크롤한 뒤 새 메시지 수신→unread 표시→버튼 클릭→철회 시 비움까지 검사한다. 신규 테스트의 CI 성공/실패는 기능 SHA에서 확인한다. 네이티브 renderer DOM 수정에 따라 관련 Windows routine과 CHZZK service/Playwright를 실행한다. D1/D2/D4/D6/D7, 실제 G3-04·G4-06, 광고 실노출/HP/정산·배포는 미완료.
 
+- **초기 CI 실패와 회귀 정정:** 최초 기능 SHA `763939a1d1c57955ae73cdfa21d5171bb8cb2f1f`의 [CHZZK contract #115/run `39375626171`](https://github.com/andongmin94/chat-view/actions/runs/39375626171)은 **completed/failure**, Ubuntu24 Node **369/370·fail1**. 기존 `chzzk-preview.test.mts`의 오래된 미리보기 가짜 DOM은 모르는 요소 ID를 요청해도 실제 채팅 목록을 반환해, 새 `jump-latest`를 목록으로 오인한 `TypeError: view.jump.addEventListener is not a function`이 발생했다. 테스트만 실제 DOM처럼 존재하지 않는 ID에 `null`을 돌려주도록 고친다. 새 알림·클릭·보안 검사는 삭제하거나 대기시간을 늘리지 않고 그대로 유지한다. 변경된 renderer 본체 및 Windows #454 결과는 별개 SHA/CI로 판정한다.
+
 ## 직전 완료 흐름: 승인된 첫 채팅을 유지한 채 WebView2 개인 문서 한 번 복구
 
 시작 `OBS` HEAD `51c7afecffc4e7c63c8a633ee8261556ae3b9c29`, `main` `6d1633d3df75c4781051394a5c381ea8275a804f` 불변 확인. AGENTS → PRODUCT → workflow → architecture → plan 순서로 읽었다.

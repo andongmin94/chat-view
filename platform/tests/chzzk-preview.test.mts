@@ -140,7 +140,9 @@ test('renderer uses text nodes for malicious strings and clears on disconnect', 
     replaceChildren(...elements: Element[]) { this.children = elements; }
   }
   const status = new Element(); const list = new Element();
-  const document = { getElementById: (id: string) => id === 'status' ? status : list, createElement: () => new Element() };
+  const document = { getElementById: (id: string) =>
+    id === 'status' ? status : id === 'messages' ? list : null,
+    createElement: () => new Element() };
   renderChat(document, { state: 'subscribed', received: 1, messages: [{ nickname: '<script>', content: '<img onerror=evil()>', messageTime: 1700000000000 }] });
   assert.equal(list.children[0]?.children[1]?.textContent, '<script>');
   assert.equal(list.children[0]?.children[2]?.textContent, '<img onerror=evil()>');

@@ -21,6 +21,21 @@ const audienceReasons: Record<AudienceReason, string> = {
 const duration = (ms: number) => `${(ms / 1000).toFixed(3)}초`;
 const date = (at: number) => new Date(at).toISOString().replace('T', ' ').replace('Z', ' UTC');
 
+// A creator-facing review queue, never an ad-exposure/payment ledger.
+// First reports and state/sequence/lease gaps need a fresh bracket; even a
+// continuous streaming interval remains reviewable when official *channel*
+// audience sampling covers only part (or none) of that interval.
+export function needsActivityReview(row: ActivityEvidenceRow): boolean {
+  return row.reason !== 'continuous' ||
+    ((row.state === 'streaming' || row.state === 'both') &&
+     (row.audienceCoverageMs === null || row.audienceCoverageMs < row.durationMs));
+}
+function reviewCoverage(row: ActivityEvidenceRow): string {
+  if (row.reason !== 'continuous') return '연속 출력 확인 전 · 합산 제외';
+  return row.audienceCoverageMs === null ? '공식 채널 표본 없음 · 미측정'
+    : `일부 표본만 포함 · ${duration(row.audienceCoverageMs)} / ${duration(row.durationMs)}`;
+}
+
 // CSV is downloaded only by an authenticated creator browser. No client
 // spreadsheet formulas, chat, credentials, payout or verified ad exposure are
 // included. Every dynamic string is escaped and formula-prefixed defensively.
@@ -51,8 +66,11 @@ export function activityCsv(rows: readonly ActivityEvidenceRow[]): string {
 
 // Only server-derived numbers and fixed labels enter this document. No query
 // selector, tokens, private chat, client HTML, or public access to the history.
-export function activityPage(summary: ActivitySummary): string {
+export function activityPage(summary: ActivitySummary, reviewRows?: readonly ActivityEvidenceRow[]): string {
   const audience = summary.audience;
+  const review = reviewRows !== undefined;
+  const listedRows = review ? reviewRows.slice(0, 50) : summary.rows;
+  const download = review ? '/campaigns/activity/review.csv' : '/campaigns/activity.csv';
   // Reported activity, estimated channel-wide viewers and unmeasured
   // advertisement exposure are different evidence; never coerce missing to 0.
   const outputState = summary.reports === 0 ? 'no-reports'
@@ -121,20 +139,27 @@ export function activityPage(summary: ActivitySummary): string {
 </dl></section>
 <p>송출·녹화 동시 구간은 합집합에 한 번만 반영합니다. 공개 배너 조회, 미리보기,
 소스 표시/숨김 이벤트는 기록을 만들거나 시간을 늘리지 않습니다.</p>
-<section aria-labelledby="activity-history-title">
+<section aria-labelledby="activity-history-title" data-activity-view="${review ? 'review' : 'all'}">
 <h2 id="activity-history-title">4. 최근 서버 보고 근거</h2>
-<p><a href="/campaigns/activity.csv" download="chatview-nonpayable-activity.csv">내 비지급 출력 근거 CSV 다운로드 (최대 1,000건)</a><br>
+<nav aria-label="저장된 근거 보기"><a href="/campaigns/activity">전체 기록</a> ·
+<a href="/campaigns/activity/review">연속성·채널 표본 확인 구간만 보기</a></nav>
+${review ? `<p data-review-count="${reviewRows.length}">확인할 근거 ${reviewRows.length}건 · 첫 보고/상태 전환·순번 누락·재연결 공백, 또는 연속 송출 구간의 채널 시청자 표본 미측정/부분 수집을 보여줍니다.
+이 목록은 <strong>오류·광고 노출 실패·시청자 0명을 확정하지 않습니다.</strong>
+첫 보고는 정상적인 시작 경계일 수 있습니다. 위쪽 합계는 여전히 전체 보관 근거이며, 아래 표와 CSV에만 이 필터를 적용합니다.</p>`
+: '<p>전체 서버 보고 내역입니다. 연속성 공백과 채널 시청자 표본 미측정을 따로 확인할 수 있습니다.</p>'}
+<p><a href="${download}" download="chatview-nonpayable-activity.csv">${review ? '확인 구간만' : '내 전체'} 비지급 출력 근거 CSV 다운로드 (최대 1,000건)</a><br>
 송출·녹화 보고와 <strong>조건부 채널 시청자 추정</strong>만 포함합니다. 광고 실측 노출·HP·수익은 값이 없고, 미측정은 0으로 바꾸지 않습니다. 계정 소유자만 다운로드할 수 있습니다.</p>
 <p>최근 7일 이내에 시작한 구간 중 최대 1,000건을 보관합니다. 동일 상태는 시간 단위로 합칩니다.
 보관 중 ${summary.intervals}건, 수신 보고 ${summary.reports}개, 계산 제외 ${summary.unknownIntervals}건.
-아래는 최근 50건입니다. 전체 방송 이력이나 평생 합계가 아닙니다.</p>
-${summary.rows.length ? `<div style="overflow-x:auto"><table style="width:100%;text-align:left;font-size:14px;border-collapse:collapse">
-<caption>최근 활동 근거 (서버 수신 시각, UTC)</caption>
-<thead><tr><th>시작 → 마지막 보고</th><th>구분 / 근거</th><th>계산 구간</th></tr></thead>
-<tbody>${summary.rows.map(row => `<tr><td>${date(row.from)}<br>→ ${date(row.to)}</td>
+아래는 ${review ? '점검 대상 중 최근 50건' : '최근 50건'}입니다. 전체 방송 이력이나 평생 합계가 아닙니다.</p>
+${listedRows.length ? `<div style="overflow-x:auto"><table style="width:100%;text-align:left;font-size:14px;border-collapse:collapse">
+<caption>${review ? '연속성·채널 표본 확인 구간' : '최근 활동 근거'} (서버 수신 시각, UTC)</caption>
+<thead><tr><th>시작 → 마지막 보고</th><th>구분 / 근거</th><th>계산 구간</th>${review ? '<th>확인 지점</th>' : ''}</tr></thead>
+<tbody>${listedRows.map(row => `<tr><td>${date(row.from)}<br>→ ${date(row.to)}</td>
 <td>${states[row.state]}<br>${reasons[row.reason]}</td>
-<td>${row.state === 'unknown' ? '미산정' : duration(row.durationMs)}</td></tr>`).join('')}</tbody></table></div>`
-: '<p>아직 저장된 보고가 없습니다. 캠페인을 선택하고 승인된 송출 연결에서 새 보고를 받아야 합니다.</p>'}
+<td>${row.state === 'unknown' ? '미산정' : duration(row.durationMs)}</td>${review ? `<td>${reviewCoverage(row as ActivityEvidenceRow)}</td>` : ''}</tr>`).join('')}</tbody></table></div>`
+: review ? '<p>보관된 출력 보고 중 확인할 구간이 없습니다. 실제 광고 노출이나 시청자 주목이 검증됐다는 뜻은 아닙니다.</p>'
+  : '<p>아직 저장된 보고가 없습니다. 캠페인을 선택하고 승인된 송출 연결에서 새 보고를 받아야 합니다.</p>'}
 <p>중지·철회 뒤에도 보관 기간 안의 기록은 남습니다. 재선택·연결 복귀·서버 재시작 전후의
 공백은 이어 계산하지 않습니다. 이 화면은 새로고침 시 저장된 기록만 다시 읽습니다.</p>
 <p><a href="/campaigns/activity">기록 새로고침</a> · <a href="/campaigns">캠페인 선택·중지</a> · <a href="/account">내 연결</a></p></section>`;

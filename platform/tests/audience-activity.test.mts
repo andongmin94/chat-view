@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { SessionStore } from '../server/chat/session-store.mts';
 import { Campaigns, TEST_CAMPAIGN } from '../server/ads/campaigns.mts';
 import { CampaignActivity, ACTIVITY_RETENTION_MS } from '../server/ads/activity.mts';
-import { activityCsv, activityPage } from '../server/ads/activity-page.mts';
+import { activityCsv, activityPage, needsActivityReview } from '../server/ads/activity-page.mts';
 import type { AudienceView } from '../server/chzzk/audience.mts';
 import type { OutputAcceptance } from '../server/chat/broadcast-output.mts';
 const base = 1790640000000;
@@ -194,4 +194,51 @@ test('owner page distinguishes channel estimate, coverage, unmeasured attention 
     assert.match(disabled,/data-evidence-state="covered"/u);
     assert.match(disabled,/현재 시청자 표본과 아래 7일 이내 보존된 추정 합계는 시점이 다를 수 있습니다/u);
   } finally {f.close();}
+});
+
+
+test('owner review queue distinguishes continuity gaps from missing channel samples and true sampled zero', () => {
+  const f=fixture();
+  try {
+    f.report(); f.advance(); f.report();
+    let evidence=f.activity.evidence('alice');
+    const first=evidence.find(row=>row.reason==='first-report')!;
+    let continuous=evidence.find(row=>row.reason==='continuous')!;
+    assert(needsActivityReview(first),'a first receipt is a normal unbracketed boundary worth checking');
+    assert(!needsActivityReview(continuous),'a fully covered streaming report is not a missing sample');
+    f.advance(); f.sample({state:'unavailable',reason:'provider-error'}); f.report();
+    evidence=f.activity.evidence('alice');
+    continuous=evidence.find(row=>row.reason==='continuous')!;
+    assert.equal(continuous.durationMs,10000);
+    assert.equal(continuous.audienceCoverageMs,5000);
+    assert(needsActivityReview(continuous),'coalesced streaming history becomes reviewable when only partly sampled');
+    const review=evidence.filter(needsActivityReview);
+    assert.equal(review.length,2);
+    const html=activityPage(f.activity.summary('alice'),review);
+    assert.match(html,/data-activity-view="review"/u);
+    assert.match(html,/data-review-count="2"/u);
+    assert.match(html,/일부 표본만 포함 · 5\.000초 \/ 10\.000초/u);
+    assert.match(html,/연속 출력 확인 전 · 합산 제외/u);
+    assert.match(html,/위쪽 합계는 여전히 전체 보관 근거/u);
+    assert.match(html,/\/campaigns\/activity\/review\.csv/u);
+    assert.match(html,/광고 실제 시청 · HP · 보상/u);
+    assert.doesNotMatch(html,/<script|onerror=|clientSecret|sample-epoch/u);
+    const csv=activityCsv(review);
+    assert.equal(csv.trimEnd().split('\r\n').length,review.length+1);
+    assert.doesNotMatch(csv,/sample-epoch|lease|viewer_id/u);
+  } finally {f.close();}
+
+  const zero=fixture();
+  try {
+    zero.count(0); zero.report(); zero.advance(); zero.report();
+    const rows=zero.activity.evidence('alice');
+    const covered=rows.find(row=>row.reason==='continuous')!;
+    assert.equal(covered.estimatedViewerMs,0);
+    assert.equal(covered.audienceCoverageMs,5000);
+    assert(!needsActivityReview(covered),'real zero viewers is covered evidence, not missing');
+    zero.report(false,true); zero.advance(); zero.report(false,true);
+    const recording=zero.activity.evidence('alice').find(row=>
+      row.reason==='continuous' && row.state==='recording')!;
+    assert(!needsActivityReview(recording),'recording-only time never requires a live audience sample');
+  } finally {zero.close();}
 });

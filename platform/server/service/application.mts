@@ -11,7 +11,7 @@ import type { BrowserIdentity } from './creators.mts';
 import type { Channel } from '../chzzk/api.mts';
 import { readOutputReport } from '../chat/broadcast-output.mts';
 import { Campaigns, CampaignError, TEST_CAMPAIGN } from '../ads/campaigns.mts';
-import { activityCsv, activityPage } from '../ads/activity-page.mts';
+import { activityCsv, activityPage, needsActivityReview } from '../ads/activity-page.mts';
 import { campaignSetupScriptHash, campaignsPage, servePublicAd } from '../ads/pages.mts';
 
 const nonce = () => randomBytes(32).toString('hex');
@@ -431,20 +431,36 @@ ${this.#form(b, '/account/cancel', '취소')}
         b.pending = undefined;
         this.#signInPage(response, b, management, management === '/account' ? 200 : 401); return;
       }
-      if (request.method === 'GET' && url.pathname === '/campaigns/activity.csv') {
-        // Browser cookie + current owner only. Public ad URLs, native display
-        // bearers and output-report capabilities never grant account exports.
+      if (request.method === 'GET' &&
+          (url.pathname === '/campaigns/activity.csv' ||
+           url.pathname === '/campaigns/activity/review.csv')) {
+        // Same cookie-bound creator read for the whole ledger and its review
+        // subset. The query selector remains forbidden by #checkNavigation;
+        // native bearers and public ad URLs never grant these downloads.
         if (!b?.owner) throw new DisplayAccessError(401);
-        const rows = this.#creators.activity.evidence(b.owner);
+        const review = url.pathname === '/campaigns/activity/review.csv';
+        const evidence = this.#creators.activity.evidence(b.owner);
+        const rows = review ? evidence.filter(needsActivityReview) : evidence;
         response.writeHead(200, {
           'Content-Type': 'text/csv; charset=utf-8',
-          'Content-Disposition': 'attachment; filename="chatview-nonpayable-activity.csv"',
+          'Content-Disposition': review
+            ? 'attachment; filename="chatview-nonpayable-review.csv"'
+            : 'attachment; filename="chatview-nonpayable-activity.csv"',
         });
         response.end('\uFEFF' + activityCsv(rows)); return;
       }
-      if (request.method === 'GET' && url.pathname === '/campaigns/activity') {
+      if (request.method === 'GET' &&
+          (url.pathname === '/campaigns/activity' || url.pathname === '/campaigns/activity/review')) {
         if (!b?.owner) throw new DisplayAccessError(401);
-        this.#page(response, '시험 캠페인 활동 기록', this.#accountNotice(b) + activityPage(this.#creators.activity.summary(b.owner))); return;
+        const review = url.pathname === '/campaigns/activity/review';
+        // Read-only, owner-scoped, bounded evidence; filtering never creates a
+        // new activity interval or an ad exposure/HP/revenue record.
+        const rows = review
+          ? this.#creators.activity.evidence(b.owner).filter(needsActivityReview)
+          : undefined;
+        this.#page(response, '시험 캠페인 활동 기록',
+          this.#accountNotice(b) + activityPage(this.#creators.activity.summary(b.owner), rows));
+        return;
       }
       if (request.method === 'GET' && url.pathname === '/campaigns') {
         if (!b?.owner) throw new DisplayAccessError(401);

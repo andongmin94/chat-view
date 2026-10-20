@@ -249,3 +249,71 @@ test('service restart retains private history and selection but never invents ac
     assert.match(await f.page('/campaigns/activity'), /새 관측의 첫 보고/u);
   } finally { await f.close(); rmSync(directory, { recursive: true, force: true }); }
 });
+
+
+test('creator reviews only unbracketed or audience-unmeasured report intervals and downloads the same private subset',
+  { timeout: 18000 }, async () => {
+  const f=await fixture(options);
+  const requestWith= (path:string,cookie?:string,extra:Record<string,string>={}) =>
+    f.request(path,{headers:{...(cookie?{Cookie:cookie}:{}),...extra}});
+  const csvText=async (r:Response) => Buffer.from(await r.arrayBuffer()).toString('utf8');
+  try {
+    for(const path of ['/campaigns/activity/review','/campaigns/activity/review.csv']) {
+      assert.equal((await requestWith(path)).status,401,'review is never a public banner endpoint');
+    }
+    const alice=await f.connect('alice','streaming');
+    const bob=await f.connect('bob','streaming');
+    await select(f,alice.b); await open(f.origin,alice.lease.token);
+    assert.equal((await report(f,alice.lease.outputToken!,1)).status,200);
+    await delay(600); assert.equal((await report(f,alice.lease.outputToken!,2)).status,200);
+    await delay(600); assert.equal((await report(f,alice.lease.outputToken!,3,false,true)).status,200);
+    await delay(600); assert.equal((await report(f,alice.lease.outputToken!,4,false,true)).status,200);
+    const before=f.creators.activity.summary('alice');
+    const evidence=f.creators.activity.evidence('alice');
+    assert.equal(evidence.length,4,'first, streaming, state transition, recording only');
+    const view=await requestWith('/campaigns/activity/review',alice.b.cookie);
+    assert.equal(view.status,200);
+    assert.equal(view.headers.get('cache-control'),'no-store');
+    const html=await view.text();
+    assert.match(html,/data-activity-view="review"/u);
+    assert.match(html,/data-review-count="3"/u);
+    assert.match(html,/공식 채널 표본 없음 · 미측정/u);
+    assert.match(html,/상태 전환/u);
+    assert.match(html,/오류·광고 노출 실패·시청자 0명을 확정하지 않습니다/u);
+    assert.match(html,/위쪽 합계는 여전히 전체 보관 근거/u);
+    assert.match(html,/href="\/campaigns\/activity\/review.csv"/u);
+    assert.doesNotMatch(html,/PRIVATE|ChatView-Session|ChatView-Output|<script/u);
+    const regular=await requestWith('/campaigns/activity',alice.b.cookie);
+    assert.equal(regular.status,200);
+    assert.match(await regular.text(),/data-activity-view="all"/u);
+    const subset=await requestWith('/campaigns/activity/review.csv',alice.b.cookie);
+    assert.equal(subset.status,200);
+    assert.match(subset.headers.get('content-disposition')??'',/nonpayable-review\.csv/u);
+    const csv=await csvText(subset);
+    assert.match(csv,/^\uFEFFevidence_type,campaign_id,/u);
+    const rows=csv.slice(1).trimEnd().split('\r\n');
+    assert.equal(rows.length,4,'header + 3 reviewable evidence rows');
+    assert(!csv.includes('"recording","continuous"'),'recording-only continuous row is not an audience gap');
+    for(const secret of [alice.lease.token,alice.lease.outputToken!,alice.lease.sessionToken])
+      assert(!csv.includes(secret)&&!html.includes(secret));
+    assert.deepEqual(f.creators.activity.summary('alice'),before,'review page and CSV cannot accrue output or viewer estimates');
+
+    const bobPage=await requestWith('/campaigns/activity/review',bob.b.cookie);
+    assert.equal(bobPage.status,200);
+    assert.match(await bobPage.text(),/data-review-count="0"/u);
+    const bobCsv=await csvText(await requestWith('/campaigns/activity/review.csv',bob.b.cookie));
+    assert.equal(bobCsv.slice(1).trimEnd().split('\r\n').length,1);
+    for(const path of ['/campaigns/activity/review','/campaigns/activity/review.csv']) {
+      assert.equal((await requestWith(path,undefined,{Authorization:'Bearer '+alice.lease.token})).status,401);
+      assert.equal((await requestWith(path,alice.b.cookie,{Origin:'https://attacker.example'})).status,403);
+      assert.equal((await requestWith(path+'?owner=bob',alice.b.cookie)).status,403);
+    }
+    await f.page('/campaigns',alice.b);
+    assert.equal((await f.post('/campaigns/stop',alice.b)).status,303);
+    assert.equal((await requestWith('/campaigns/activity/review',alice.b.cookie)).status,200,
+      'explicit campaign stop does not erase bounded owner evidence');
+    await f.post('/logout',alice.b);
+    assert.equal((await requestWith('/campaigns/activity/review',alice.b.cookie)).status,401);
+    assert.equal((await requestWith('/campaigns/activity/review.csv',alice.b.cookie)).status,401);
+  } finally {await f.close();}
+});

@@ -91,13 +91,16 @@ test('creator downloads bounded non-payable CSV evidence; other owners and nativ
   const f = await fixture(options);
   const exportFor = (cookie?: string, extra?: Record<string, string>) =>
     f.request('/campaigns/activity.csv', { headers: { ...(cookie ? { Cookie: cookie } : {}), ...extra } });
+  // Fetch Response.text() intentionally strips a UTF-8 BOM; inspect the
+  // actual attachment bytes so the spreadsheet compatibility check is real.
+  const csvBody = async (r: Response) => Buffer.from(await r.arrayBuffer()).toString('utf8');
   try {
     assert.equal((await exportFor()).status, 401);
     const alice = await f.connect('alice', 'streaming'), bob = await f.connect('bob', 'streaming');
     const empty = await exportFor(bob.b.cookie);
     assert.equal(empty.status, 200);
     assert.equal(empty.headers.get('cache-control'), 'no-store');
-    const emptyCsv = await empty.text();
+    const emptyCsv = await csvBody(empty);
     assert.match(emptyCsv, /^\uFEFFevidence_type,campaign_id,/u);
     assert.equal(emptyCsv.trimEnd().split('\r\n').length, 1, 'no report is not a zero-viewer event');
     await select(f, alice.b);
@@ -112,7 +115,7 @@ test('creator downloads bounded non-payable CSV evidence; other owners and nativ
     assert.match(response.headers.get('content-disposition') ?? '',
       /^attachment; filename="chatview-nonpayable-activity\.csv"$/u);
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
-    const csv = await response.text();
+    const csv = await csvBody(response);
     assert(csv.startsWith('\uFEFFevidence_type,'), 'Excel-friendly UTF-8 CSV with a normal header');
     const [head, ...rows] = csv.slice(1).trimEnd().split('\r\n').map(line => line.split(','));
     assert.equal(head!.length, 14);
@@ -134,7 +137,7 @@ test('creator downloads bounded non-payable CSV evidence; other owners and nativ
     for (const token of [alice.lease.token, alice.lease.outputToken!, alice.lease.sessionToken])
       assert.equal((await exportFor(undefined, { Authorization: `Bearer ${token}` })).status, 401);
     assert.equal((await exportFor(bob.b.cookie)).status, 200);
-    assert.equal((await (await exportFor(bob.b.cookie)).text()).trimEnd().split('\r\n').length, 1);
+    assert.equal((await csvBody(await exportFor(bob.b.cookie))).trimEnd().split('\r\n').length, 1);
     assert.equal((await f.request('/campaigns/activity.csv?owner=alice',
       { headers: { Cookie: bob.b.cookie } })).status, 403);
     assert.equal((await exportFor(alice.b.cookie, { 'Sec-Fetch-Site': 'cross-site' })).status, 403);
@@ -145,7 +148,7 @@ test('creator downloads bounded non-payable CSV evidence; other owners and nativ
     assert.match(page, /미측정은 0으로 바꾸지 않습니다/u);
     await f.page('/campaigns', alice.b);
     assert.equal((await f.post('/campaigns/stop', alice.b)).status, 303);
-    assert.equal((await (await exportFor(alice.b.cookie)).text()), csv,
+    assert.equal(await csvBody(await exportFor(alice.b.cookie)), csv,
       'past bounded non-payable evidence remains accessible after campaign stop');
     assert.equal((await f.post('/logout', alice.b)).status, 303);
     assert.equal((await exportFor(alice.b.cookie)).status, 401);

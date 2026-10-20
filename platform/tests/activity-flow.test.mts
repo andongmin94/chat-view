@@ -86,6 +86,72 @@ test('selected accepted output becomes private non-payable history; public/displ
   } finally { await f.close(); }
 });
 
+test('creator downloads bounded non-payable CSV evidence; other owners and native capabilities cannot read it',
+  { timeout: 18000 }, async () => {
+  const f = await fixture(options);
+  const exportFor = (cookie?: string, extra?: Record<string, string>) =>
+    f.request('/campaigns/activity.csv', { headers: { ...(cookie ? { Cookie: cookie } : {}), ...extra } });
+  try {
+    assert.equal((await exportFor()).status, 401);
+    const alice = await f.connect('alice', 'streaming'), bob = await f.connect('bob', 'streaming');
+    const empty = await exportFor(bob.b.cookie);
+    assert.equal(empty.status, 200);
+    assert.equal(empty.headers.get('cache-control'), 'no-store');
+    const emptyCsv = await empty.text();
+    assert.match(emptyCsv, /^\uFEFFevidence_type,campaign_id,/u);
+    assert.equal(emptyCsv.trimEnd().split('\r\n').length, 1, 'no report is not a zero-viewer event');
+    await select(f, alice.b);
+    await open(f.origin, alice.lease.token);
+    assert.equal((await report(f, alice.lease.outputToken!, 1)).status, 200);
+    await delay(600);
+    assert.equal((await report(f, alice.lease.outputToken!, 2)).status, 200);
+    const original = f.creators.activity.summary('alice');
+    const response = await exportFor(alice.b.cookie);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') ?? '', /^text\/csv; charset=utf-8$/u);
+    assert.match(response.headers.get('content-disposition') ?? '',
+      /^attachment; filename="chatview-nonpayable-activity\.csv"$/u);
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    const csv = await response.text();
+    assert(csv.startsWith('\uFEFFevidence_type,'), 'Excel-friendly UTF-8 CSV with a normal header');
+    const [head, ...rows] = csv.slice(1).trimEnd().split('\r\n').map(line => line.split(','));
+    assert.equal(head!.length, 14);
+    assert.equal(rows.length, 2);
+    const at = (row: string[], column: string) => row[head!.indexOf(column)]!.replace(/^"|"$/gu, '');
+    assert(rows.some(row => at(row, 'report_reason') === 'first-report' &&
+      at(row, 'channel_sample_coverage') === 'unmeasured' &&
+      at(row, 'output_interval_ms') === '0'));
+    assert(rows.some(row => at(row, 'report_reason') === 'continuous' &&
+      at(row, 'output_state') === 'streaming' &&
+      Number(at(row, 'output_interval_ms')) >= 500 &&
+      at(row, 'channel_sample_coverage') === 'unmeasured' &&
+      at(row, 'channel_viewer_estimate_ms') === ''));
+    for (const column of ['measured_ad_view_ms', 'hp', 'revenue'])
+      assert(rows.every(row => at(row, column) === ''), 'never export invented payable evidence');
+    for (const secret of [alice.lease.token, alice.lease.outputToken!,
+      alice.lease.sessionToken, alice.lease.membership.connectionId])
+      assert(!csv.includes(secret), 'download has no display or output credentials');
+    for (const token of [alice.lease.token, alice.lease.outputToken!, alice.lease.sessionToken])
+      assert.equal((await exportFor(undefined, { Authorization: `Bearer ${token}` })).status, 401);
+    assert.equal((await exportFor(bob.b.cookie)).status, 200);
+    assert.equal((await (await exportFor(bob.b.cookie)).text()).trimEnd().split('\r\n').length, 1);
+    assert.equal((await f.request('/campaigns/activity.csv?owner=alice',
+      { headers: { Cookie: bob.b.cookie } })).status, 403);
+    assert.equal((await exportFor(alice.b.cookie, { 'Sec-Fetch-Site': 'cross-site' })).status, 403);
+    assert.deepEqual(f.creators.activity.summary('alice'), original,
+      'downloads do not append, refresh or inflate server output evidence');
+    const page = await f.page('/campaigns/activity', alice.b);
+    assert.match(page, /href="\/campaigns\/activity\.csv"/u);
+    assert.match(page, /미측정은 0으로 바꾸지 않습니다/u);
+    await f.page('/campaigns', alice.b);
+    assert.equal((await f.post('/campaigns/stop', alice.b)).status, 303);
+    assert.equal((await (await exportFor(alice.b.cookie)).text()), csv,
+      'past bounded non-payable evidence remains accessible after campaign stop');
+    assert.equal((await f.post('/logout', alice.b)).status, 303);
+    assert.equal((await exportFor(alice.b.cookie)).status, 401);
+  } finally { await f.close(); }
+});
+
 test('real disconnect, lease renewal, campaign stop/reselect and revoke break the activity interval',
   { timeout: 20000 }, async () => {
   const f = await fixture(options);

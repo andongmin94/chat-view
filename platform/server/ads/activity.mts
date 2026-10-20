@@ -11,6 +11,9 @@ export type ActivityReason = 'first-report' | 'continuous' | 'connection-change'
   'sequence-gap' | 'stale-gap' | 'state-change' | 'clock-change';
 export type ActivityInterval = Readonly<{ from: number; to: number; durationMs: number;
   state: ActivityState; reason: ActivityReason; reports: number }>;
+export type ActivityEvidenceRow = ActivityInterval & Readonly<{
+  campaignId: string; estimatedViewerMs: number | null; audienceCoverageMs: number | null;
+}>;
 type Head = OutputAcceptance & { at: number; tick: number; row: number; campaign: string; audience: AudienceView };
 const stateOf = (r: OutputAcceptance['report']): ActivityState =>
   r.streaming ? (r.recording ? 'both' : 'streaming') : r.recording ? 'recording' : 'idle';
@@ -140,6 +143,26 @@ export class CampaignActivity {
       this.#db.exec('COMMIT');
       this.#heads.set(owner, { ...input, at, tick, row, campaign, audience });
     } catch (error) { this.#db.exec('ROLLBACK'); throw error; }
+  }
+  // Creator-only, bounded retained evidence. This is the saved report ledger,
+  // not current audience sampling and never a billable ad-exposure history.
+  evidence(owner: string): ActivityEvidenceRow[] {
+    this.#expire();
+    const rows = this.#db.prepare(`SELECT a.campaign_id, a.from_at, a.to_at,
+      a.duration_ms, a.state, a.reason, a.reports,
+      v.estimated_viewer_ms, v.covered_ms FROM campaign_activity a
+      LEFT JOIN campaign_audience v ON v.activity_id = a.id
+      WHERE a.owner = ? ORDER BY a.id DESC LIMIT ?`).all(owner, ACTIVITY_ROW_LIMIT);
+    return rows.map(row => ({
+      campaignId: String(row.campaign_id),
+      from: Number(row.from_at), to: Number(row.to_at),
+      durationMs: Number(row.duration_ms), state: row.state as ActivityState,
+      reason: row.reason as ActivityReason, reports: Number(row.reports),
+      // NULL means unmeasured. A persisted numeric zero is a real
+      // sampled zero and must stay distinct in CSV and the account UI.
+      estimatedViewerMs: row.estimated_viewer_ms === null ? null : Number(row.estimated_viewer_ms),
+      audienceCoverageMs: row.covered_ms === null ? null : Number(row.covered_ms),
+    }));
   }
   summary(owner: string) {
     this.#expire();

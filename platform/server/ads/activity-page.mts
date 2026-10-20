@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import type { ActivitySummary, ActivityReason, ActivityState } from './activity.mts';
+import type { ActivitySummary, ActivityEvidenceRow, ActivityReason, ActivityState } from './activity.mts';
 import type { AudienceReason } from '../chzzk/audience.mts';
 const states: Record<ActivityState, string> = {
   streaming: '송출 활성 보고', recording: '녹화 활성 보고', both: '송출·녹화 동시 보고',
@@ -20,6 +20,34 @@ const audienceReasons: Record<AudienceReason, string> = {
 };
 const duration = (ms: number) => `${(ms / 1000).toFixed(3)}초`;
 const date = (at: number) => new Date(at).toISOString().replace('T', ' ').replace('Z', ' UTC');
+
+// CSV is downloaded only by an authenticated creator browser. No client
+// spreadsheet formulas, chat, credentials, payout or verified ad exposure are
+// included. Every dynamic string is escaped and formula-prefixed defensively.
+function cell(value: string | number | null): string {
+  if (value === null) return '';
+  const text = String(value);
+  const safe = /^[=+\-@\t\r\n]/u.test(text) ? "'" + text : text;
+  return '"' + safe.replaceAll('"', '""') + '"';
+}
+export function activityCsv(rows: readonly ActivityEvidenceRow[]): string {
+  const header = [
+    'evidence_type', 'campaign_id', 'from_utc', 'to_utc', 'output_state',
+    'report_reason', 'accepted_reports', 'output_interval_ms',
+    'channel_viewer_estimate_ms', 'channel_sample_covered_ms',
+    'channel_sample_coverage', 'measured_ad_view_ms', 'hp', 'revenue',
+  ];
+  const entries = rows.map(row => [
+    'non-payable-test-output-report', row.campaignId,
+    new Date(row.from).toISOString(), new Date(row.to).toISOString(),
+    row.state, row.reason, row.reports, row.durationMs,
+    row.estimatedViewerMs, row.audienceCoverageMs,
+    row.audienceCoverageMs === null ? 'unmeasured'
+      : row.audienceCoverageMs < row.durationMs ? 'partial' : 'covered',
+    null, null, null, // No measured ad exposure, HP or payable earnings.
+  ].map(value => cell(value)).join(','));
+  return [header.join(','), ...entries].join('\r\n') + '\r\n';
+}
 
 // Only server-derived numbers and fixed labels enter this document. No query
 // selector, tokens, private chat, client HTML, or public access to the history.
@@ -95,6 +123,8 @@ export function activityPage(summary: ActivitySummary): string {
 소스 표시/숨김 이벤트는 기록을 만들거나 시간을 늘리지 않습니다.</p>
 <section aria-labelledby="activity-history-title">
 <h2 id="activity-history-title">4. 최근 서버 보고 근거</h2>
+<p><a href="/campaigns/activity.csv" download="chatview-nonpayable-activity.csv">내 비지급 출력 근거 CSV 다운로드 (최대 1,000건)</a><br>
+송출·녹화 보고와 <strong>조건부 채널 시청자 추정</strong>만 포함합니다. 광고 실측 노출·HP·수익은 값이 없고, 미측정은 0으로 바꾸지 않습니다. 계정 소유자만 다운로드할 수 있습니다.</p>
 <p>최근 7일 이내에 시작한 구간 중 최대 1,000건을 보관합니다. 동일 상태는 시간 단위로 합칩니다.
 보관 중 ${summary.intervals}건, 수신 보고 ${summary.reports}개, 계산 제외 ${summary.unknownIntervals}건.
 아래는 최근 50건입니다. 전체 방송 이력이나 평생 합계가 아닙니다.</p>

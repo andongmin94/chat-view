@@ -211,9 +211,15 @@ test('retention, result size and per-owner row cap are explicit and bounded', ()
     }
     const s = f.activity.summary('alice');
     assert.equal(s.intervals, ACTIVITY_ROW_LIMIT); assert.equal(s.rows.length, 50);
+    const exported = f.activity.evidence('alice');
+    assert.equal(exported.length, ACTIVITY_ROW_LIMIT, 'CSV evidence shares the existing per-owner row cap');
+    assert(exported.every(row => row.campaignId === TEST_CAMPAIGN.id));
+    assert.equal(f.activity.evidence('bob').length, 1, 'other owner's evidence is isolated');
     assert.equal(f.activity.summary('bob').reports, 1);
     f.advance(ACTIVITY_RETENTION_MS + 1000);
     assert.equal(f.activity.summary('alice').reports, 0); assert.equal(f.activity.summary('bob').reports, 0);
+    assert.deepEqual(f.activity.evidence('alice'), [], 'expired evidence is not downloadable');
+    assert.deepEqual(f.activity.evidence('bob'), []);
   } finally { f.close(); }
 });
 

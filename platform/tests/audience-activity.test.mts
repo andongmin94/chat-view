@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { SessionStore } from '../server/chat/session-store.mts';
 import { Campaigns, TEST_CAMPAIGN } from '../server/ads/campaigns.mts';
 import { CampaignActivity, ACTIVITY_RETENTION_MS } from '../server/ads/activity.mts';
-import { activityPage } from '../server/ads/activity-page.mts';
+import { activityCsv, activityPage } from '../server/ads/activity-page.mts';
 import type { AudienceView } from '../server/chzzk/audience.mts';
 import type { OutputAcceptance } from '../server/chat/broadcast-output.mts';
 const base = 1790640000000;
@@ -74,6 +74,43 @@ test('unknown is null, explicit observed zero is numeric zero, with uncovered st
     assert.match(html,/표본이 없던 송출 구간은 추가하지 않았습니다/u);
     assert.match(html,/data-evidence-state="not-measured"/u);
   } finally {f.close();}
+});
+
+test('non-payable CSV distinguishes missing audience evidence from explicitly sampled zero', () => {
+  const f = fixture();
+  try {
+    f.sample({ state: 'unavailable', reason: 'not-found' });
+    f.report(); f.advance(); f.report();
+    f.advance(); f.count(0); f.report();
+    f.advance(); f.report();
+    const evidence = f.activity.evidence('alice');
+    assert.equal(evidence.length, 2);
+    const streaming = evidence.find(row => row.reason === 'continuous')!;
+    assert.equal(streaming.durationMs, 15000);
+    assert.equal(streaming.estimatedViewerMs, 0, 'sampled zero is persisted as numeric 0');
+    assert.equal(streaming.audienceCoverageMs, 5000, 'not all output time had a valid sample');
+    const first = evidence.find(row => row.reason === 'first-report')!;
+    assert.equal(first.estimatedViewerMs, null);
+    assert.equal(first.audienceCoverageMs, null);
+    assert.deepEqual(f.activity.evidence('other-creator'), [], 'no cross-account evidence');
+    const csv = activityCsv(evidence);
+    const [header, ...rows] = csv.trimEnd().split('\r\n').map(line => line.split(','));
+    const field = (row: string[], name: string) =>
+      row[header!.indexOf(name)]!.replace(/^"|"$/gu, '');
+    const sampled = rows.find(row => field(row, 'report_reason') === 'continuous')!;
+    assert.equal(field(sampled, 'channel_viewer_estimate_ms'), '0');
+    assert.equal(field(sampled, 'channel_sample_covered_ms'), '5000');
+    assert.equal(field(sampled, 'channel_sample_coverage'), 'partial');
+    for (const name of ['measured_ad_view_ms', 'hp', 'revenue'])
+      assert.equal(field(sampled, name), '', 'no invented payable evidence');
+    const unmeasured = rows.find(row => field(row, 'report_reason') === 'first-report')!;
+    assert.equal(field(unmeasured, 'channel_viewer_estimate_ms'), '');
+    assert.equal(field(unmeasured, 'channel_sample_coverage'), 'unmeasured');
+    const formula = activityCsv([{ ...streaming, campaignId: '=1+1' }]);
+    assert.match(formula, /"'=1\+1"/u, 'CSV text cannot execute spreadsheet formulas');
+    assert.equal(activityCsv([]).trimEnd().split('\r\n').length, 1,
+      'no samples produces only a header and never a fake zero-viewer row');
+  } finally { f.close(); }
 });
 
 test('recording-only and preview do not yield viewer time, and simultaneous streaming/recording is counted once', () => {

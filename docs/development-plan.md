@@ -1,10 +1,19 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-19 (Asia/Seoul). **이 문서가 유일한 현재 작업 목록이다.** 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다. 완료된 조사·중복 기록은 Git 이력에 남긴다.
+갱신: 2026-10-20 (Asia/Seoul). **이 문서가 유일한 현재 작업 목록이다.** 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다. 완료된 조사·중복 기록은 Git 이력에 남긴다.
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 오래된 WebView2 설정 탐색 이벤트가 신규 개인 채팅을 폐기하는 경합 수정
+## 현재 흐름: 승인된 첫 채팅을 유지한 채 WebView2 개인 문서 한 번 복구
+
+시작 `OBS` HEAD `51c7afecffc4e7c63c8a633ee8261556ae3b9c29`, `main` `6d1633d3df75c4781051394a5c381ea8275a804f` 불변 확인. AGENTS → PRODUCT → workflow → architecture → plan 순서로 읽었다.
+
+- **사용자 문제:** 서버가 현재 로그인·역할·첫 `chat-snapshot`까지 검증해 네이티브 `pending_`에 보관했지만 `NativeChatSurface::ready()==false`인 간헐 D1 상황에서는, 기존 코드는 15초를 소진하고 `client_.stop()`으로 연결을 종료한다. 기존 #450 로그에서 `active1/worker1/metadata1/pending_frame1/surface_ready0`을 실제로 확인했다.
+- **구현:** 기존 `NativeChatConnection::tick()`에서 **검증된 subscribed 스냅샷과 연결 membership이 있고**, 실제 WebView2 문서가 아직 ready가 아니며 로그인·복구·로그아웃·외부 페이지·캡처 위험/보호 실패가 없는 경우에 한해서, **초기 15초 제한의 후반 7.5초 진입 시 개인 `NativeChatSurface`만 단 한 번 새 URL/nonce로 다시 연다**. `first_document_recovery_attempted_` 플래그는 명시적 새 연결/복귀 시작에서만 초기화하고, 자동 시도는 해당 플래그를 재초기화하지 않는다. `loading_deadline_`·`pending_`·검증된 membership·원래 WinHTTP worker/lease를 그대로 유지해 서버 재승인·추가 로그인·토큰 회전·시간 연장 없이 새 문서에 첫 글자를 전달한다. 새 문서에서도 실제 URL/navigation/nonce 소유권·프레임별 ACK가 맞아야 첫 렌더 완료로 인정한다. 준비 실패·15초 초과는 기존 명시적 **현재 승인으로 복귀** 안내로 종료한다.
+- **실제 사용자 흐름 검증:** 기존 `native-logout retry` Windows CTest에서 합성 서버가 브라우저 승인을 완료하고 UI가 아직 첫 프레임을 처리하기 **전**, 사전 준비한 WebView2 소유 문서만 종료해 첫 표시 실패를 재현한다. 최초 확인한 실제 server membership·수신 프레임이 대기한 뒤 자동 재준비 1회와 **원래 15초 마감시간 불변**, 재게시한 Unicode 자체 DOM 글자/ACK, 새 로그인 없이 동일 스트리밍 역할의 정상 로그아웃 및 다른 게임/타 사용자 승인 불변을 확인한다. 기존 실패한 #450의 `native-logout` 검사 자체를 유지하고 기존 15초 검사·provider 인증·보호 경계를 완화하지 않는다.
+- **검증 기록:** 이 기능 SHA의 Windows 개발 CTest를 확인한 뒤 실제 결과와 결함 범위를 기록한다. 관련 없는 CHZZK/공식 OBS 광고·반복/자원/패키지 qualification은 다시 실행하지 않는다. D1 전체/실계정 G4-06, OBS 없는 물리 투컴 G3-04, D2/D4/D6/D7, 시청 실노출/HP·정산·배포는 미완료다.
+
+## 직전 완료 흐름: 오래된 WebView2 설정 탐색 이벤트가 신규 개인 채팅을 폐기하는 경합 수정
 
 시작 원격 OBS `a4a54051b1b3a6d39f7863b03d047a28d59226db`, main `6d1633d3df75c4781051394a5c381ea8275a804f` 확인. 필수 문서 AGENTS → PRODUCT → workflow → architecture → 이 계획을 순서대로 읽고 기존 Win32·WebView2 문서 수명 코드를 검토했다.
 
@@ -280,6 +289,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-새 채팅의 own NavigationStarting 이전에 뒤늦게 도착하는 setup/clear 이벤트로 수신기를 폐기하는 경합을 없앤 뒤에도, 실제 `surface.ready()==0` D1의 남은 원인은 별개로 추적한다. 다음 단계는 사용자 승인과 첫 프레임이 이미 존재할 때 **실패한 개인 문서를 새로운 URL·nonce로 다시 준비하는 안전한 한정 복구**를 검토하고, 현행 15초 시간·원래 승인·보호 경계 안에서 실제 WebView2로 검증하는 것이다. 실제 등록된 치지직 앱/채널이 준비되면 OAuth→첫 텍스트→장시간 채팅/새 메시지 누적→업스트림 단절·복귀→권한 철회를 게임 PC OBS 없는 컴패니언과 송출 PC에서 각각 검증한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
+한 번의 초기 문서 재준비에서도 첫 표시가 불확실한 D1은 미완료로 유지한다. 다음 사용자 동선은 실제 게임 PC(OBS 미설치)와 송출 PC에 존재하는 각각의 ChatView HUD에서 **같은 승인자의 채팅이 사용자 화면에 보이되 수신 영상에는 포함되지 않는지**, 기존 명시적 영상/캡처 보호 범위로 검증하는 것이다. 실제 등록된 치지직 앱/채널이 준비되면 OAuth→첫 텍스트→장시간 채팅/새 메시지 누적→업스트림 단절·복귀→권한 철회를 게임 PC OBS 없는 컴패니언과 송출 PC에서 각각 검증한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

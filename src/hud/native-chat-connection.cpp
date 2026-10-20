@@ -10,6 +10,11 @@
 namespace chatview {
 namespace {
 constexpr int kConnectHotkey = 0x4348;
+// When a verified first subscribed frame is waiting but its owned WebView2
+// document has never become ready, permit one fresh local document with the
+// remaining half of the *existing* first-display budget. No extra consent,
+// network retry, refreshed credential, or extra 15-second window.
+constexpr ULONGLONG kFirstDocumentRecoveryLeadMs = 7500U;
 constexpr int kOrigin = 101, kLocal = 103, kConnect = 104, kDisconnect = 105, kNotice = 106;
 constexpr int kRemember = 107, kForget = 108, kRole = 109, kSession = 110, kVideoScope = 111, kResume = 112, kDisplayStatus = 113;
 constexpr int kManage = 114, kManagementScope = 115, kCompanionVideo = 116, kReopenLogin = 117, kLoginCode = 118, kPreviousLoginCode = 119;
@@ -332,6 +337,7 @@ bool NativeChatConnection::open_surface() noexcept
     if (!surface_.open(hud_.webview_)) return false;
     first_text_rendered_ = false;
     ready_ = false; displayed_subscribed_ = false; awaiting_frame_ = 0; pending_.clear();
+    first_document_recovery_attempted_ = false;
     loading_deadline_ = GetTickCount64() + 15000U;
     return true;
 }
@@ -716,9 +722,33 @@ void NativeChatConnection::tick() noexcept
             end(L"채팅 화면이 수신 데이터를 거부해 표시를 중지했습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");
             return;
         }
-        if (!ready_ && GetTickCount64() >= loading_deadline_) {
+        const ULONGLONG now = GetTickCount64();
+        if (!ready_ && now >= loading_deadline_) {
             end(L"채팅 화면 준비 시간이 초과됐습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");
             return;
+        }
+        // A verified subscription and first native display frame already
+        // exist, but the owned document has not completed its URL/nonce
+        // handshake. Preserve the exact server approval and queued frame.
+        // Recreate only this local document once, before the original 15 s
+        // deadline. A failed fresh navigation still ends via the existing
+        // explicit same-approval return, never silent reauthorization.
+        if (!ready_ && !first_document_recovery_attempted_ &&
+            !awaiting_login_ && !login_cancel_waiting_ && !reconnecting_ &&
+            pending_subscribed_ && !pending_.empty() &&
+            connection_state_.has_value() && client_.running() &&
+            hud_.webview_ready_ && !surface_.ready() &&
+            !hud_.webview_.external_page_selected() &&
+            !hud_.capture_risk_ && hud_.capture_exclusion_intact() &&
+            now < loading_deadline_ &&
+            loading_deadline_ - now <= kFirstDocumentRecoveryLeadMs) {
+            first_document_recovery_attempted_ = true;
+            if (!surface_.open(hud_.webview_)) {
+                end(L"채팅 화면을 다시 준비하지 못했습니다. 기존 승인으로 명시적으로 복귀할 수 있습니다.");
+                return;
+            }
+            notice(L"현재 승인과 첫 채팅은 유지하고, 자체 표시 문서만 다시 준비하고 있습니다.");
+            // Deliberately do not reset loading_deadline_, pending_ or role.
         }
         if (surface_.ready()) ready_ = true;
         hud_.cancel_navigation_retry(); hud_.page_connection_recovery_.reset(); hud_.page_health_watchdog_.disarm();

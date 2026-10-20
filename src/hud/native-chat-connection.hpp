@@ -83,6 +83,7 @@ private:
     bool in_flight_subscribed_ = false;
     bool displayed_subscribed_ = false;
     bool first_text_rendered_ = false; // First text row acknowledged by this owned DOM only.
+    bool first_document_recovery_attempted_ = false; // At most one bounded local retry per approved display start.
     unsigned long long awaiting_frame_ = 0U;
     ULONGLONG render_deadline_ = 0;
     ULONGLONG loading_deadline_ = 0;

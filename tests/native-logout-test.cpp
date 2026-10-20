@@ -21,6 +21,10 @@ struct NativeChatConnectionTestAccess {
     static bool signing_out(NativeChatConnection &c) { return c.signing_out_; }
     static bool running(NativeChatConnection &c) { return c.client_.running(); }
     static bool has_metadata(NativeChatConnection &c) { return c.connection_state_.has_value(); }
+    static bool login_pending(NativeChatConnection &c) { return c.client_.login_pending(); }
+    static bool has_queued_frame(NativeChatConnection &c) { return !c.pending_.empty(); }
+    static bool local_document_retried(NativeChatConnection &c) { return c.first_document_recovery_attempted_; }
+    static ULONGLONG display_deadline(NativeChatConnection &c) { return c.loading_deadline_; }
     static void disable_auto_connect(NativeChatConnection &c) { c.auto_connect_pending_ = false; }
     static void first_display_evidence(NativeChatConnection &c) {
         // Failure-only phase flags. Never print a URL, nonce, credential or chat.
@@ -121,6 +125,31 @@ void run(const std::wstring &origin, const std::wstring &auxiliary, const std::s
         SendDlgItemMessageW(dialog, 107, BM_SETCHECK, remembered ? BST_CHECKED : BST_UNCHECKED, 0);
         click(dialog, 104);
         await([&] { return browser_opened; }, "browser login request", connection);
+        if (mode == "retry") {
+            // The synthetic creator approves asynchronously; do not tick the
+            // native UI before the worker has collected that approval. Retire
+            // only the prewarmed local WebView2 document, never the exact grant.
+            // This models an owned-document startup lost between consent and
+            // the first server chat frame, not a second browser authorization.
+            await([&] { return !chatview::NativeChatConnectionTestAccess::login_pending(connection); },
+                "approved provider login before local document loss", nullptr);
+            auto &broken = chatview::NativeChatConnectionTestAccess::surface(connection);
+            expect(broken.rendered_frames() == 0U, "no private first-render ACK before document loss");
+            broken.close();
+            expect(!broken.ready(), "retiring the local surface cannot manufacture ownership");
+            await([&] {
+                return chatview::NativeChatConnectionTestAccess::has_metadata(connection) &&
+                    chatview::NativeChatConnectionTestAccess::has_queued_frame(connection);
+            }, "first authenticated server frame retained with failed owned document", connection);
+            const auto original_deadline = chatview::NativeChatConnectionTestAccess::display_deadline(connection);
+            await([&] {
+                return chatview::NativeChatConnectionTestAccess::local_document_retried(connection);
+            }, "one local document reprepare within the original 15 second deadline", connection);
+            expect(chatview::NativeChatConnectionTestAccess::display_deadline(connection) == original_deadline &&
+                   !chatview::NativeChatConnectionTestAccess::login_pending(connection) &&
+                   chatview::NativeChatConnectionTestAccess::has_metadata(connection),
+                "single recovery leaves the original time limit and verified approval intact");
+        }
         if (mode != "pending") {
             auto &surface = chatview::NativeChatConnectionTestAccess::surface(connection);
             try {

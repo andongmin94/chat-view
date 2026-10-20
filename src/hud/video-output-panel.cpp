@@ -15,6 +15,7 @@
 namespace chatview {
 namespace {
 constexpr int kVideoHotkey = 0x4356;
+constexpr int kEmergencyBlackHotkey = 0x4342;
 constexpr int kSource = 201, kMonitor = 202, kRefresh = 203, kStart = 204, kStop = 205, kRelease = 206, kNotice = 207, kIdentify = 208, kChat = 209, kStep = 210, kChatHint = 211, kChatStatus = 212;
 constexpr UINT_PTR kPatternTimer = 0x435650;
 constexpr wchar_t kPanelClass[] = L"ChatView.VideoSelection";
@@ -57,6 +58,10 @@ VideoOutputPanel::VideoOutputPanel(HudWindow &hud, bool companion) noexcept : hu
         open_message_ = RegisterWindowMessageW(kOpenCompanionVideoMessageName);
         chat_query_message_ = RegisterWindowMessageW(kQueryNativeChatMessageName);
         hotkey_ = RegisterHotKey(nullptr, kVideoHotkey, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'V') != FALSE;
+        hotkey_black_ = RegisterHotKey(nullptr, kEmergencyBlackHotkey,
+            MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'B') != FALSE;
+        if (!hotkey_black_)
+            OutputDebugStringW(L"[ChatView] Companion emergency blackout hotkey unavailable; use Stop button\n");
     }
 }
 VideoOutputPanel::~VideoOutputPanel() { close(); }
@@ -95,6 +100,15 @@ bool VideoOutputPanel::dispatch(MSG &message) noexcept
         }
         if (message.message == WM_HOTKEY && message.wParam == kVideoHotkey) {
             open(); return true;
+        }
+        if (message.message == WM_HOTKEY && message.wParam == kEmergencyBlackHotkey && !closing_) {
+            // Works without opening/focusing the settings panel. Retire the
+            // receiver pattern and any pending output-window release first,
+            // raise the independent black cover synchronously, then cancel WGC.
+            // Never stop the creator's separate private chat connection.
+            stop(L"긴급 검정 전환 · 게임 영상 중지 / 검정 덮개 유지.\n"
+                 L"재개하려면 새 시험 패턴과 수신 PC 확인이 필요합니다.");
+            return true;
         }
     }
     return panel_ && IsWindowVisible(panel_) && IsDialogMessageW(panel_, &message);
@@ -210,7 +224,10 @@ void VideoOutputPanel::open() noexcept
         add(L"STATIC", L"기존 게임 PC HUD 연결창 · 영상 확인과 별개", 0, kChatHint, 286, 271, 344, 32);
         add(L"STATIC", L"", 0, kChatStatus, 20, 313, 610, 40);
         shown_chat_status_ = nullptr;
-        add(L"STATIC", L"영상 출력 단계 · 채팅 상태와 별개 / 실제 수신 검증 아님", 0, 0, 20, 365, 610, 22);
+        add(L"STATIC", hotkey_black_
+            ? L"영상 출력 단계 · Ctrl+Alt+Shift+B 긴급 검정 · 실제 수신 미검증"
+            : L"긴급 단축키 등록 불가 · 중지 버튼 사용 · 실제 수신 미검증",
+            0, 0, 20, 365, 610, 22);
         add(L"STATIC", L"", 0, kStep, 20, 390, 610, 55);
         add(L"STATIC", L"시험 패턴의 표시 번호·테두리·움직임을 수신 PC에서 직접 확인하세요.\n번호 입력/기기등록은 없습니다. 게임은 확인 후에만 캡처합니다.\n육안 확인은 HUD 제외나 수신 영상의 자동 검증이 아닙니다.\n영상만/SDR. 출력 창 해제·앱 종료 뒤에는 바탕화면이 보일 수 있습니다.", 0, 0, 20, 455, 610, 80);
         add(L"STATIC", L"대기 중 · 투컴 영상 미검증", 0, kNotice, 20, 541, 610, 73);
@@ -641,6 +658,7 @@ void VideoOutputPanel::close() noexcept
     if (panel_) DestroyWindow(panel_);
     panel_ = nullptr;
     if (hotkey_) UnregisterHotKey(nullptr, kVideoHotkey);
-    hotkey_ = false;
+    if (hotkey_black_) UnregisterHotKey(nullptr, kEmergencyBlackHotkey);
+    hotkey_ = false; hotkey_black_ = false;
 }
 }

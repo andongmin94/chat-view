@@ -46,7 +46,8 @@ private:
     HudWindow &hud_;
     UINT open_message_ = 0U, chat_query_message_ = 0U;
     const wchar_t *shown_chat_status_ = nullptr; // Static local-status label only.
-    bool enabled_ = false, hotkey_ = false, requested_ = false, releasing_ = false;
+    bool enabled_ = false, hotkey_ = false, hotkey_black_ = false;
+    bool requested_ = false, releasing_ = false;
     bool notifications_ = false, session_blocked_ = false, suspended_ = false;
     bool confirming_ = false, closing_ = false;
     std::uint64_t selection_epoch_ = 0;

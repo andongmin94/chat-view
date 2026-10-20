@@ -27,6 +27,7 @@ struct VideoOutputPanelTestAccess {
     static bool intact(VideoOutputPanel &p) { return p.output_intact(); }
     static bool requested(VideoOutputPanel &p) { return p.requested_; }
     static bool registered(VideoOutputPanel &p) { return p.notifications_; }
+    static bool emergency_registered(VideoOutputPanel &p) { return p.hotkey_black_; }
     static bool releasing(VideoOutputPanel &p) { return p.releasing_; }
     static bool choices_empty(VideoOutputPanel &p) { return p.sources_.empty() && p.monitors_.empty(); }
     static auto &capture(VideoOutputPanel &p) { return p.capture_; }
@@ -77,6 +78,14 @@ struct VideoOutputPanelTestAccess {
 namespace {
 using Access = chatview::VideoOutputPanelTestAccess;
 void expect(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
+bool emergency_black(chatview::VideoOutputPanel &panel)
+{
+    MSG event{};
+    event.message = WM_HOTKEY; // Thread-scoped, as in the actual companion owner loop.
+    event.wParam = 0x4342; // kEmergencyBlackHotkey, Ctrl+Alt+Shift+B.
+    event.lParam = MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'B');
+    return panel.dispatch(event);
+}
 std::wstring stage(HWND controls)
 {
     wchar_t value[512]{};
@@ -316,8 +325,8 @@ void resize_stop_restart(chatview::VideoOutputPanel &panel, HWND controls, HWND 
     // capture is still active. Pixel/state replay below is separately synthetic.
     expect(Access::capture(panel).running(), "capture active at resize stop request");
     const auto stop_at = GetTickCount64();
-    SendMessageW(controls, WM_COMMAND, 205, 0);
-    expect(GetTickCount64() - stop_at < 200, "panel stop does not join resize/GPU work");
+    expect(emergency_black(panel), "companion consumes emergency blackout without opening a dialog");
+    expect(GetTickCount64() - stop_at < 200, "emergency blackout does not join resize/GPU work");
     expect(!Access::requested(panel) && !Access::check(panel).active() && IsWindowVisible(cover) && preserved(),
         "stop synchronously latches and covers without retiring a live target");
     late.content_at_ms = GetTickCount64(); Access::apply_snapshot(panel, late);
@@ -368,8 +377,8 @@ void cancel_release_restart(chatview::VideoOutputPanel &panel, HWND controls, HW
     // is deterministic; it does not claim to stall a driver or outrun a release
     // that has already destroyed its windows.
     const auto stop_at = GetTickCount64();
-    SendMessageW(controls, WM_COMMAND, 205, 0);
-    expect(GetTickCount64() - stop_at < 200, "cancelling release does not join GPU teardown");
+    expect(emergency_black(panel), "emergency blackout cancels a pending output-window release");
+    expect(GetTickCount64() - stop_at < 200, "emergency cancellation does not join GPU teardown");
     expect(!Access::releasing(panel) && !Access::requested(panel) && !Access::check(panel).active(),
         "later Stop cancels release as well as capture and pattern");
     stopped(panel, hud); // Includes the tick after worker completion.
@@ -377,8 +386,8 @@ void cancel_release_restart(chatview::VideoOutputPanel &panel, HWND controls, HW
         Access::source(panel) == game && IsWindowVisible(cover), "cancelled release retains both HWNDs and live source");
     await([&] { return output_pixels(RGB(0,0,0), {0,0,320,240}); }, "cancelled release retains nine black output samples", 2000);
     GetDlgItemTextW(controls, 207, notice, 512);
-    expect(std::wstring_view(notice).find(L"출력 창 해제를 취소했습니다") != std::wstring_view::npos,
-        "Stop reports cancellation rather than a completed release");
+    expect(std::wstring_view(notice).find(L"긴급 검정 전환") != std::wstring_view::npos,
+        "emergency stop reports a new black output, not a completed release");
     late.content_at_ms = GetTickCount64(); Access::apply_snapshot(panel, late);
     SendMessageW(cover, WM_TIMER, 0x435650, 0); panel.tick();
     expect(!Access::releasing(panel) && !Access::requested(panel) && !Access::capture(panel).running() &&
@@ -505,6 +514,15 @@ void exercise(const wchar_t *source_executable)
     chatview::VideoOutputPanel panel(hud, true);
     const HWND controls = Access::open(panel);
     expect(controls && Access::registered(panel), "real controls register session notifications");
+    expect(Access::emergency_registered(panel), "game companion registers Ctrl+Alt+Shift+B");
+    {
+        chatview::VideoOutputPanel obs_side(hud, false);
+        expect(!Access::emergency_registered(obs_side) && !emergency_black(obs_side),
+            "OBS streaming role never registers or handles the gaming PC blackout hotkey");
+    }
+    MSG other_key{};
+    other_key.message = WM_HOTKEY; other_key.wParam = 0x4444;
+    expect(!panel.dispatch(other_key), "unrelated keyboard shortcuts remain unhandled");
     SetWindowPos(controls, nullptr, 20, 350, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     expect(!IsWindowEnabled(GetDlgItem(controls, 204)), "game conversion is disabled before a pattern is painted");
     expect(stage(controls).find(L"1/5") != std::wstring::npos,
@@ -554,6 +572,17 @@ void exercise(const wchar_t *source_executable)
     expect(std::wstring_view(notice).find(label.data()) != std::wstring_view::npos,
         "same read-only visual identifier appears in the panel");
     expect(IsWindowEnabled(GetDlgItem(controls, 204)), "conversion enabled only after local painting");
+    const HWND initial_output = Access::output(panel), initial_cover = Access::cover(panel);
+    expect(emergency_black(panel), "emergency blackout can retire a pattern before any game capture begins");
+    expect(!Access::check(panel).active() && !Access::requested(panel) &&
+        !IsWindowEnabled(GetDlgItem(controls, 204)) &&
+        Access::output(panel) == initial_output && Access::cover(panel) == initial_cover &&
+        IsWindowVisible(initial_cover) && black() && IsWindowVisible(hud_window),
+        "pattern emergency stop keeps the same black output/HUD without implicit receiver consent");
+    expect(!Access::accept_for_fixture(panel),
+        "a cancelled visual check cannot start capture");
+    Access::pattern(panel, game);
+    await(cyan_bar, "new manual identification pattern after emergency blackout");
     const HWND checked_output = Access::output(panel), checked_cover = Access::cover(panel);
     expect(Access::accept_for_fixture(panel), "fresh local check consumed before capture transition");
     expect(!Access::check(panel).active() && !IsWindowEnabled(GetDlgItem(controls, 204)) &&

@@ -46,6 +46,7 @@ struct VideoOutputPanelTestAccess {
     static auto &check(VideoOutputPanel &p) { return p.check_; }
     static auto epoch(VideoOutputPanel &p) { return p.selection_epoch_; }
     static bool requested(VideoOutputPanel &p) { return p.requested_; }
+    static bool emergency_registered(VideoOutputPanel &p) { return p.hotkey_black_; }
     static HWND source(VideoOutputPanel &p) { return p.source_; }
     static void pulse(VideoOutputPanel &p) {
         if (!p.requested_ && !p.check_.active()) { p.tick(); return; }
@@ -806,10 +807,20 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
     flow.wait([&] { return !IsWindowVisible(cover) && pixels(RGB(20,100,180)); }, "initial WGC video pixels", 10000);
     pause_return("capture", L"capture-return");
     expect(!IsWindowVisible(cover) && pixels(RGB(20,100,180)), "chat stop/return leaves selected video playing");
-    command(controls, 205);
-    flow.wait([&] { return !Video::capture(video).running() && IsWindowVisible(cover) && pixels(RGB(0,0,0)); }, "video stop retains black output", 2000);
+    expect(Video::emergency_registered(video), "OBS-free companion registers emergency video blackout shortcut");
+    MSG urgent{};
+    urgent.message = WM_HOTKEY; urgent.wParam = 0x4342; // Ctrl+Alt+Shift+B.
+    urgent.lParam = MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'B');
+    const auto emergency_at = GetTickCount64();
+    expect(video.dispatch(urgent) && GetTickCount64() - emergency_at < 200U &&
+           !Video::requested(video) && IsWindowVisible(cover),
+        "in-game emergency shortcut synchronously masks video without focusing the panel");
+    flow.wait([&] { return !Video::capture(video).running() && IsWindowVisible(cover) && pixels(RGB(0,0,0)); },
+        "emergency shortcut retains nine black output pixels", 2000);
+    expect(!Video::check(video).active() && !Video::accept(video),
+        "urgent stop retires visual receiver consent and cannot silently restart video");
     expect(Chat::membership(chat) && Chat::membership(chat)->membership == approved && Chat::first_text(chat),
-        "video stop leaves chat receiving on the same approval");
+        "emergency video blackout leaves the readable private chat and exact gaming approval live");
     const auto before = Chat::surface(chat).rendered_frames(); flow.checkpoint("video-stopped");
     flow.received(L"video-stopped-chat-live", before);
     command(controls, 203); // Real target enumeration, no automatic selection.

@@ -10,13 +10,19 @@ const envelope = { type: 'chat-snapshot', version: 1, frameId: '1', snapshot };
 class Element {
   textContent = ''; dir = ''; className = ''; children: Element[] = [];
   scrollHeight = 0; scrollTop = 0; clientHeight = 0;
+  hidden = true;
+  private readonly listeners = new Map<string, () => void>();
+  addEventListener(name: string, fn: () => void) { this.listeners.set(name, fn); }
+  fire(name: string) { this.listeners.get(name)?.(); }
   set innerHTML(_value: string) { throw new Error('HTML injection'); }
   append(...children: Element[]) { this.children.push(...children); }
   replaceChildren(...children: Element[]) { this.children = children; }
 }
 function fixture() {
-  const status = new Element(); const list = new Element();
-  const document = { getElementById: (id: string) => id === 'status' ? status : list, createElement: () => new Element() };
+  const status = new Element(); const list = new Element(); const jump = new Element();
+  const document = { getElementById: (id: string) =>
+    id === 'status' ? status : id === 'messages' ? list : id === 'jump-latest' ? jump : null,
+    createElement: () => new Element() };
   let listener: (event: any) => void = () => {};
   let watchdog = () => {}; let now = 0; const sent: string[] = [];
   const bridge = {
@@ -25,7 +31,7 @@ function fixture() {
   };
   const clock = { performance: { now: () => now }, setInterval(callback: () => void) { watchdog = callback; return 1; }, clearInterval() { watchdog = () => {}; } };
   const close = connectNativeChat(document, bridge, renderChat, 'test-nonce', clock as any);
-  return { status, list, sent, close, emit(data: unknown, trusted = true, source: unknown = bridge) { listener({ data, isTrusted: trusted, source }); }, tick(ms: number) { now += ms; watchdog(); } };
+  return { status, list, jump, sent, close, emit(data: unknown, trusted = true, source: unknown = bridge) { listener({ data, isTrusted: trusted, source }); }, tick(ms: number) { now += ms; watchdog(); } };
 }
 test('native bridge displays text through the same renderer and sends counts, never private content', () => {
   const f = fixture(); assert.deepEqual(f.sent, ['chat-ready:test-nonce']); f.emit(envelope);

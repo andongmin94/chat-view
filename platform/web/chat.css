@@ -10,3 +10,10 @@ li { padding: 12px 4px; border-bottom: 1px solid #323944; }
 b { margin-left: 12px; unicode-bidi: isolate; } time { color: #aab2be; font-size: 12px; }
 .content { display: block; white-space: pre-wrap; unicode-bidi: plaintext; }
 @media (max-width: 480px) { body { padding: 16px; } header { gap: 8px; } header span { font-size: 13px; } }
+
+#jump-latest { display: block; margin: 10px auto 0; padding: 9px 18px;
+  border: 1px solid #4c8d7b; border-radius: 999px; color: #f2f4f6;
+  background: #245447; font: inherit; font-size: 14px; cursor: pointer; }
+#jump-latest:hover { background: #306d5c; }
+#jump-latest:focus-visible { outline: 2px solid #a6f5d8; outline-offset: 3px; }
+#jump-latest[hidden] { display: none; }

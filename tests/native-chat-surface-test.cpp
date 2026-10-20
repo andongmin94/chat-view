@@ -339,6 +339,58 @@ int main()
             document.querySelector('#messages li') === globalThis.unchangedFirstRow &&
             document.querySelectorAll('#messages li')[1].querySelector('.content').textContent === '두 번째 메시지'
         )JS") == L"true", "the old visible chat row survives append without HTML injection");
+        // Streamer UX: when reading older text, new provider messages should
+        // add a bounded unread hint without stealing the scroll position.
+        // This is the real immutable WebView2 renderer, not a browser mock.
+        const auto history = [](int count) {
+            std::wstring json = LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"subscribed","received":)JSON";
+            json += std::to_wstring(count);
+            json += LR"JSON(,"messages":[)JSON";
+            for (int i = 0; i < count; ++i) {
+                if (i) json += L",";
+                json += LR"JSON({"nickname":"검증 사용자","content":"채팅 )JSON";
+                json += std::to_wstring(i + 1);
+                json += LR"JSON(","messageTime":)JSON";
+                json += std::to_wstring(1700000000000LL + i);
+                json += L"}";
+            }
+            json += L"]}}";
+            return json;
+        };
+        expect(surface.publish(history(8)), "fill own chat to exercise a scrolled-up history");
+        await([&] { return surface.rendered_frames() == 4U &&
+                            surface.rendered_messages() == 8U; }, "eight native messages rendered");
+        expect(evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            list.style.flex = '0 0 100px';
+            list.style.height = '100px';
+            list.scrollTop = 0;
+            return list.scrollHeight - list.clientHeight > 80 &&
+                document.getElementById('jump-latest').hidden;
+        })())JS") == L"true", "existing messages are scrollable without a false unread hint");
+        expect(surface.publish(history(9)), "deliver one genuinely new chat while reading history");
+        await([&] { return surface.rendered_frames() == 5U &&
+                            surface.rendered_messages() == 9U; }, "new native text and exact ACK");
+        expect(evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            const latest = document.getElementById('jump-latest');
+            return !latest.hidden && latest.textContent.includes('새 채팅 1개') &&
+                list.scrollTop === 0 && list.querySelectorAll('li').length === 9;
+        })())JS") == L"true", "scrolled-up native HUD displays unread text without jumping");
+        expect(evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            const latest = document.getElementById('jump-latest');
+            latest.click();
+            return latest.hidden && list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+        })())JS") == L"true", "explicit latest action returns to the newest native chat row");
+        expect(surface.publish(LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"revoked","received":9,"messages":[]}})JSON"),
+               "revoke clears the unread UI and private text");
+        await([&] { return surface.rendered_frames() == 6U &&
+                            surface.rendered_messages() == 0U; }, "revoked native HUD clears private text");
+        expect(evaluate(core.Get(), LR"JS(
+            document.getElementById('jump-latest').hidden &&
+            document.querySelectorAll('#messages li').length === 0
+        )JS") == L"true", "revocation clears unread hint and all previous native chat rows");
         expect(host.navigate(L"https://www.youtube.com/live_chat?is_popout=1&v=abcdefghijk"), "existing external navigation policy remains usable");
         expect(!surface.publish(kMessage), "external page cannot receive chat");
         surface.close(); host.close(); core.Reset();

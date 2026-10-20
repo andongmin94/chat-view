@@ -68,7 +68,9 @@ test('display frame strips private fields and is accepted by the existing native
   const replies: string[] = [];
   const bridge = { addEventListener(_event: string, fn: (event: unknown) => void) { listener = fn; },
     removeEventListener() {}, postMessage(reply: string) { replies.push(reply); } };
-  const document = { getElementById() { return { children: { length: 1 } }; } };
+  const document = { getElementById(id: string) {
+    return id === 'jump-latest' ? null : { children: { length: 1 } };
+  } };
   const close = connectNativeChat(document, bridge, (_doc: unknown, snapshot: unknown) => { rendered = snapshot; }, 'nonce');
   try {
     const frame = JSON.parse(raw);

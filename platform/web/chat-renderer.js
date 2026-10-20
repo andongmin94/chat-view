@@ -2,6 +2,34 @@
 // Shared by the browser preview and the embedded native HUD. No transport here.
 // A heartbeat repeats chat already shown: preserve DOM rows and scroll position.
 const lastRendered = new WeakMap();
+const nearBottom = list => list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+
+// Status and unread messages are local to each private display document.
+// They never enter the CHZZK gateway, native WebView2 ACK, or public output.
+function updateJump(view) {
+  if (!view.jump) return;
+  view.jump.hidden = view.unread === 0;
+  if (view.unread) view.jump.textContent =
+    `새 채팅 ${view.unread > 99 ? '99+' : view.unread}개 · 최신으로`;
+}
+function viewFor(document, list) {
+  let view = lastRendered.get(list);
+  if (view) return view;
+  view = { snapshot: null, unread: 0, jump: document.getElementById('jump-latest') };
+  lastRendered.set(list, view);
+  if (view.jump) {
+    view.jump.addEventListener('click', () => {
+      list.scrollTop = list.scrollHeight;
+      view.unread = 0;
+      updateJump(view);
+    });
+    list.addEventListener('scroll', () => {
+      if (nearBottom(list)) { view.unread = 0; updateJump(view); }
+    });
+    updateJump(view);
+  }
+  return view;
+}
 const sameMessage = (a, b) => a.nickname === b.nickname &&
   a.content === b.content && a.messageTime === b.messageTime;
 
@@ -37,13 +65,21 @@ export function renderChat(document, snapshot) {
         nickname: message.nickname, content: message.content, messageTime: message.messageTime,
       }))
     : [];
-  const previous = lastRendered.get(list);
+  const view = viewFor(document, list);
+  const previous = view.snapshot;
   if (previous && previous.state === snapshot.state &&
       previous.received === snapshot.received &&
       previous.messages.length === messages.length &&
       messages.every((message, i) => sameMessage(message, previous.messages[i]))) return;
 
-  const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  const wasNearBottom = nearBottom(list);
+  if (snapshot.state !== 'subscribed' ||
+      (previous && snapshot.received < previous.received)) view.unread = 0;
+  else if (previous?.state === 'subscribed' && !wasNearBottom &&
+           snapshot.received > previous.received) {
+    view.unread = Math.min(100, view.unread + snapshot.received - previous.received);
+  }
+  if (wasNearBottom) view.unread = 0;
   // CHZZK appends messages and retains up to 100. Check their content before
   // reusing nodes: duplicate text does not identify a delivery or a session.
   let kept = 0;
@@ -57,11 +93,17 @@ export function renderChat(document, snapshot) {
     }
   }
   if (kept) {
+    const oldHeight = list.scrollHeight;
     for (let i = 0; i < previous.messages.length - kept; i++) list.removeChild(list.firstChild);
+    // When the 100-message window moves forward, keep a scrolled-up reader
+    // anchored to the same surviving text rather than jumping by one row.
+    if (!wasNearBottom) list.scrollTop =
+      Math.max(0, list.scrollTop - (oldHeight - list.scrollHeight));
     for (const message of messages.slice(kept)) list.appendChild(rowFor(document, message));
   } else {
     list.replaceChildren(...messages.map(message => rowFor(document, message)));
   }
-  if (nearBottom) list.scrollTop = list.scrollHeight;
-  lastRendered.set(list, { state: snapshot.state, received: snapshot.received, messages });
+  if (wasNearBottom) list.scrollTop = list.scrollHeight;
+  view.snapshot = { state: snapshot.state, received: snapshot.received, messages };
+  updateJump(view);
 }

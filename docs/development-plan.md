@@ -4,7 +4,15 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 승인된 첫 채팅을 유지한 채 WebView2 개인 문서 한 번 복구
+## 현재 흐름: 채팅을 읽는 중 새 글자 알림과 최신 줄로 복귀
+
+시작 `OBS` HEAD `699c4aa3309770092a56de973a6770323d76fa72`, `main` HEAD `6d1633d3df75c4781051394a5c381ea8275a804f` 재확인. 필수 문서 순서/OBS-only 원칙 보존. 직전 기능 `d5a2167190fba16305add72e87dbc5968a0ca82d`의 [Windows development #453/run `39360136781`](https://github.com/andongmin94/chat-view/actions/runs/39360136781) **completed/success, Windows x64 개발 CTest 50/50·실패0**. 단일 합성 CI이며 D1 반복/실계정/물리 영상 지원 증거는 아니다.
+
+- **사용자 동선:** 동일 렌더러를 쓰는 OBS 기반 송출 PC 자체 HUD, OBS 없는 gaming companion HUD, 그리고 브라우저 채팅 미리보기에서 이전 채팅을 읽으려고 위로 스크롤하면 **새 채팅 N개 · 최신으로** 버튼이 표시된다. 같은 5초 heartbeat는 추가 건수로 세지 않는다. 사용자가 새 버튼을 누르거나 스스로 최신 줄까지 스크롤하면 알림은 사라진다. 100개 이전 메시지 제거 시 살아 있는 메시지의 시각 위치를 지키고, 단절·Stop·권한 철회·새 세션은 알림과 이전 내역을 함께 비운다.
+- **구현:** 기존 `platform/web/chat-renderer.js`에 DOM 목록별 bounded unread/display 상태만 더한다. 원래 `received` 증가만 계수하고 표시 `99+` 제한, 메시지 내용은 여전히 `textContent`만 사용한다. 브라우저 `chat.html/chat.css` 및 내부 `native-chat-document.hpp.in`에 같은 이름의 읽기 전용 버튼을 추가한다. 네이티브 click-through/보호·Edit 잠금, WinHTTP·Socket.IO·제공자 토큰/역할/OBS 공개 배너와 증빙 계측은 바꾸지 않는다. 실제 두 PC와 HUD 없는 HDMI 수신을 확인한 것이 아니다.
+- **검증:** `platform/tests/chat-renderer.test.mts`에 스크롤 중 1·다수 새 메시지 알림, 중복 heartbeat, 버튼 클릭/자발적 스크롤로 종료, 100개 window eviction 시 앵커 보존, 99+ 상한, 새 구독/철회 시 초기화를 추가한다. `native-chat.test.mts`의 C++ ACK 경계 및 `display-gateway.test.mts` fixture를 기존 renderer contract에 맞게 유지한다. 실제 `native-chat-surface-test.cpp`의 WebView2 DOM에서 목록을 위로 스크롤한 뒤 새 메시지 수신→unread 표시→버튼 클릭→철회 시 비움까지 검사한다. 신규 테스트의 CI 성공/실패는 기능 SHA에서 확인한다. 네이티브 renderer DOM 수정에 따라 관련 Windows routine과 CHZZK service/Playwright를 실행한다. D1/D2/D4/D6/D7, 실제 G3-04·G4-06, 광고 실노출/HP/정산·배포는 미완료.
+
+## 직전 완료 흐름: 승인된 첫 채팅을 유지한 채 WebView2 개인 문서 한 번 복구
 
 시작 `OBS` HEAD `51c7afecffc4e7c63c8a633ee8261556ae3b9c29`, `main` `6d1633d3df75c4781051394a5c381ea8275a804f` 불변 확인. AGENTS → PRODUCT → workflow → architecture → plan 순서로 읽었다.
 
@@ -290,6 +298,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-한 번의 초기 문서 재준비에서도 첫 표시가 불확실한 D1은 미완료로 유지한다. 다음 사용자 동선은 실제 게임 PC(OBS 미설치)와 송출 PC에 존재하는 각각의 ChatView HUD에서 **같은 승인자의 채팅이 사용자 화면에 보이되 수신 영상에는 포함되지 않는지**, 기존 명시적 영상/캡처 보호 범위로 검증하는 것이다. 실제 등록된 치지직 앱/채널이 준비되면 OAuth→첫 텍스트→장시간 채팅/새 메시지 누적→업스트림 단절·복귀→권한 철회를 게임 PC OBS 없는 컴패니언과 송출 PC에서 각각 검증한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
+공용 텍스트 읽기 경험을 개선한 뒤에는 **실제 OBS 없는 게임 PC와 송출 PC의 화면**에서 같은 계정으로 로그인→메시지 확인→스크롤/새 채팅 알림→채팅 문서 복귀→실제 HUD 없는 영상 수신을 검증해야 한다. 물리적 SDR 외부 디스플레이/캡처카드와 CHZZK 등록 앱이 없는 환경에서는 이 하드웨어·실계정 검증을 완료했다고 주장하지 않는다. 실제 등록된 치지직 앱/채널이 준비되면 OAuth→첫 텍스트→장시간 채팅/새 메시지 누적→업스트림 단절·복귀→권한 철회를 게임 PC OBS 없는 컴패니언과 송출 PC에서 각각 검증한다. 실제 개인정보·토큰은 저장소/검사 로그에 남기지 않는다. 실제 등록 앱/OAuth·채팅 읽기 scope가 준비되면 G4-06의 **실제 치지직 첫 글자·장시간 수신·철회**를 synthetic 밖에서 확인한다. 게임 PC에 OBS 없는 실제 영상/HUD 분리 G3-04, D1/D2/D4/D6/D7, 광고 실노출/HP·정산·배포 qualification은 계속 미완료이며 관련 CI만 묶어 실행한다.
 
 main·장기 브랜치·강제 push·게임 PC OBS·자동 장면 변경·렌더 ACK 수익 환산·비밀값 로그/커밋은 사용하지 않는다.

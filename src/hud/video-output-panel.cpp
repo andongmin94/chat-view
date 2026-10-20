@@ -9,6 +9,7 @@
 #include <wtsapi32.h>
 #include <dbt.h>
 #include <bcrypt.h>
+#include <algorithm>
 #include <cwchar>
 #include <stdexcept>
 
@@ -16,40 +17,93 @@ namespace chatview {
 namespace {
 constexpr int kVideoHotkey = 0x4356;
 constexpr int kEmergencyBlackHotkey = 0x4342;
-constexpr int kSource = 201, kMonitor = 202, kRefresh = 203, kStart = 204, kStop = 205, kRelease = 206, kNotice = 207, kIdentify = 208, kChat = 209, kStep = 210, kChatHint = 211, kChatStatus = 212;
+constexpr int kSource = 201, kMonitor = 202, kRefresh = 203, kStart = 204, kStop = 205, kRelease = 206, kNotice = 207, kIdentify = 208, kChat = 209, kStep = 210, kChatHint = 211, kChatStatus = 212, kMonitorHint = 213;
 constexpr UINT_PTR kPatternTimer = 0x435650;
 constexpr wchar_t kPanelClass[] = L"ChatView.VideoSelection";
 constexpr wchar_t kOutputClass[] = L"ChatView.WindowVideoOutput";
 VideoRect rectangle(RECT r) noexcept { return {r.left, r.top, r.right, r.bottom}; }
 bool equal(RECT a, RECT b) noexcept { return EqualRect(&a, &b) != FALSE; }
-// An active GDI source with multiple target paths is a clone. Fail closed on
-// topology/advanced-color query errors rather than guessing a safe output.
-bool extended_sdr(const wchar_t *output, const wchar_t *source)
+// Read the same active GDI/SDR paths for both user-facing selection guidance
+// and the final protected-start check. A failed or incomplete Windows query
+// stays Unknown; it must never become a supposedly suitable output.
+struct VideoPaths {
+    unsigned output = 0, source = 0;
+    bool advanced_color = false, inspected = false;
+};
+VideoPaths active_video_paths(const wchar_t *output, const wchar_t *source = nullptr)
 {
     UINT32 path_count = 0, mode_count = 0;
     if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &path_count, &mode_count) != ERROR_SUCCESS ||
-        !path_count || path_count > 64 || mode_count > 256) return false;
+        !path_count || path_count > 64 || mode_count > 256) return {};
     std::vector<DISPLAYCONFIG_PATH_INFO> paths(path_count);
     std::vector<DISPLAYCONFIG_MODE_INFO> modes(mode_count);
-    if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &path_count, paths.data(), &mode_count, modes.data(), nullptr) != ERROR_SUCCESS) return false;
+    if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &path_count, paths.data(),
+                           &mode_count, modes.data(), nullptr) != ERROR_SUCCESS) return {};
     paths.resize(path_count);
-    unsigned output_paths = 0, source_paths = 0;
+    VideoPaths result{};
     for (const auto &path : paths) {
         DISPLAYCONFIG_SOURCE_DEVICE_NAME name{};
         name.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
-        name.header.size = sizeof(name); name.header.adapterId = path.sourceInfo.adapterId; name.header.id = path.sourceInfo.id;
-        if (DisplayConfigGetDeviceInfo(&name.header) != ERROR_SUCCESS) return false;
+        name.header.size = sizeof(name);
+        name.header.adapterId = path.sourceInfo.adapterId; name.header.id = path.sourceInfo.id;
+        if (DisplayConfigGetDeviceInfo(&name.header) != ERROR_SUCCESS) return {};
         const bool destination = std::wcscmp(name.viewGdiDeviceName, output) == 0;
-        const bool origin = std::wcscmp(name.viewGdiDeviceName, source) == 0;
+        const bool origin = source && std::wcscmp(name.viewGdiDeviceName, source) == 0;
         if (!destination && !origin) continue;
         DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO color{};
         color.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
-        color.header.size = sizeof(color); color.header.adapterId = path.targetInfo.adapterId; color.header.id = path.targetInfo.id;
-        if (DisplayConfigGetDeviceInfo(&color.header) != ERROR_SUCCESS || color.advancedColorEnabled) return false;
-        if (destination) ++output_paths;
-        if (origin) ++source_paths;
+        color.header.size = sizeof(color); color.header.adapterId = path.targetInfo.adapterId;
+        color.header.id = path.targetInfo.id;
+        if (DisplayConfigGetDeviceInfo(&color.header) != ERROR_SUCCESS) return {};
+        result.advanced_color = result.advanced_color || color.advancedColorEnabled;
+        if (destination) ++result.output;
+        if (origin) ++result.source;
     }
-    return output_paths == 1 && source_paths == 1 && std::wcscmp(source, output) != 0;
+    result.inspected = true;
+    return result;
+}
+VideoOutputCandidate monitor_candidate(const MONITORINFOEXW &monitor)
+{
+    const auto &r = monitor.rcMonitor;
+    const auto paths = active_video_paths(monitor.szDevice);
+    return video_output_candidate((monitor.dwFlags & MONITORINFOF_PRIMARY) != 0,
+        r.right - r.left, r.bottom - r.top, paths.inspected, paths.output, paths.advanced_color);
+}
+bool extended_sdr(const wchar_t *output, const wchar_t *source)
+{
+    if (std::wcscmp(source, output) == 0) return false;
+    const auto paths = active_video_paths(output, source);
+    return paths.inspected && paths.output == 1 && paths.source == 1 && !paths.advanced_color;
+}
+const wchar_t *monitor_label(VideoOutputCandidate candidate) noexcept
+{
+    switch (candidate) {
+    case VideoOutputCandidate::Ready: return L"확장 SDR 후보 · 수신 확인 필요";
+    case VideoOutputCandidate::Primary: return L"주 화면 · 사용 불가";
+    case VideoOutputCandidate::Duplicate: return L"복제 경로 · 사용 불가";
+    case VideoOutputCandidate::AdvancedColor: return L"HDR/고급 색상 · 사용 불가";
+    case VideoOutputCandidate::Oversized: return L"지원 해상도 초과 · 사용 불가";
+    case VideoOutputCandidate::Unknown: return L"경로 확인 불가 · 사용 불가";
+    }
+    return L"경로 확인 불가 · 사용 불가";
+}
+const wchar_t *monitor_help(VideoOutputCandidate candidate) noexcept
+{
+    switch (candidate) {
+    case VideoOutputCandidate::Ready:
+        return L"확장 SDR 후보입니다. 게임/HUD와 분리 후 시험 패턴·수신 확인이 필요합니다.";
+    case VideoOutputCandidate::Primary:
+        return L"주 화면에는 출력하지 않습니다. Windows에서 별도 화면을 '확장'으로 설정하세요.";
+    case VideoOutputCandidate::Duplicate:
+        return L"복제 출력은 HUD가 송출될 위험이 있습니다. Windows에서 '확장'으로 바꾸세요.";
+    case VideoOutputCandidate::AdvancedColor:
+        return L"HDR/고급 색상 출력은 지원하지 않습니다. Windows에서 해당 화면의 HDR을 끄세요.";
+    case VideoOutputCandidate::Oversized:
+        return L"출력 크기는 가로·세로 최대 4096px입니다. Windows에서 해상도를 낮추세요.";
+    case VideoOutputCandidate::Unknown:
+        return L"Windows 출력 경로를 확인하지 못했습니다. 디스플레이 설정 후 목록을 새로고침하세요.";
+    }
+    return L"출력 경로를 확인하지 못했습니다.";
 }
 }
 VideoOutputPanel::VideoOutputPanel(HudWindow &hud, bool companion) noexcept : hud_(hud), enabled_(companion)
@@ -128,6 +182,15 @@ void VideoOutputPanel::show_chat_status() noexcept
         : (status == NativeChatStatus::Connecting || status == NativeChatStatus::Receiving)
             ? L"채팅 표시 확인 · 연결창 열기"
             : L"자체 채팅 연결창 열기");
+}
+void VideoOutputPanel::show_monitor_hint() noexcept
+{
+    if (!panel_) return;
+    const auto selected = SendDlgItemMessageW(panel_, kMonitor, CB_GETCURSEL, 0, 0);
+    const wchar_t *hint = L"목록에서 출력 화면을 선택하세요. 표시된 후보도 실제 수신 검증 전입니다.";
+    if (selected >= 0 && static_cast<size_t>(selected) < monitors_.size())
+        hint = monitor_help(monitors_[static_cast<size_t>(selected)].candidate);
+    SetDlgItemTextW(panel_, kMonitorHint, hint);
 }
 void VideoOutputPanel::show_step() noexcept
 {
@@ -211,6 +274,7 @@ void VideoOutputPanel::open() noexcept
         add(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, kSource, 20, 48, 610, 180);
         add(L"STATIC", L"별도 확장 출력 (캡처카드 입력) · 복제/주 화면/HDR는 허용하지 않습니다.", 0, 0, 20, 94, 610, 24);
         add(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, kMonitor, 20, 124, 610, 150);
+        add(L"STATIC", L"출력 화면의 SDR/복제/HDR 상태를 확인 중입니다.", 0, kMonitorHint, 20, 153, 610, 21);
         add(L"BUTTON", L"1. 시험 패턴 표시", BS_PUSHBUTTON | WS_TABSTOP, kIdentify, 20, 177, 235, 32);
         add(L"BUTTON", L"2. 수신 확인 · 게임 출력", BS_PUSHBUTTON | WS_TABSTOP, kStart, 270, 177, 360, 32);
         add(L"BUTTON", L"목록 새로고침", BS_PUSHBUTTON | WS_TABSTOP, kRefresh, 20, 223, 190, 32);
@@ -260,11 +324,14 @@ void VideoOutputPanel::refresh()
         try {
             if (c.self->monitors_.size() >= 16) return FALSE;
             MONITORINFOEXW info{}; info.cbSize = sizeof(info);
-            if (GetMonitorInfoW(monitor, &info) && !(info.dwFlags & MONITORINFOF_PRIMARY)) c.self->monitors_.push_back({monitor, info});
+            if (GetMonitorInfoW(monitor, &info)) c.self->monitors_.push_back({monitor, info});
             return TRUE;
         } catch (...) { *c.failed = true; return FALSE; }
     }, reinterpret_cast<LPARAM>(&context));
     if (failed) throw std::runtime_error("Video selection unavailable");
+    // Show primary/clone/HDR/unknown as explanatory *non-selectable* options.
+    // A candidate is a screen configuration only, not proven private video.
+    for (auto &monitor : monitors_) monitor.candidate = monitor_candidate(monitor.info);
     // A failed insertion must not shift labels away from validated entries.
     const auto append = [&](int control, const wchar_t *label, size_t index) {
         if (SendDlgItemMessageW(panel_, control, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label)) != static_cast<LRESULT>(index))
@@ -276,7 +343,8 @@ void VideoOutputPanel::refresh()
             const auto &monitor = monitors_[i];
             const auto &r = monitor.info.rcMonitor;
             const std::wstring label = std::wstring(monitor.info.szDevice) + L" · " +
-                std::to_wstring(r.right - r.left) + L"×" + std::to_wstring(r.bottom - r.top);
+                std::to_wstring(r.right - r.left) + L"×" + std::to_wstring(r.bottom - r.top) +
+                L" · " + monitor_label(monitor.candidate);
             append(kMonitor, label.c_str(), i);
         }
     } catch (...) {
@@ -285,7 +353,11 @@ void VideoOutputPanel::refresh()
         SendDlgItemMessageW(panel_, kMonitor, CB_RESETCONTENT, 0, 0);
         throw;
     }
-    notice(monitors_.empty() ? L"별도 확장 화면이 없습니다. 복제 화면을 출력 대상으로 사용하지 않습니다." : L"게임 창과 별도 출력 화면을 선택하세요. 자동 선택/재시작하지 않습니다.");
+    show_monitor_hint();
+    const bool candidate = std::any_of(monitors_.begin(), monitors_.end(),
+        [](const Monitor &monitor) { return monitor.candidate == VideoOutputCandidate::Ready; });
+    notice(candidate ? L"확장 SDR 후보를 표시했습니다. 게임 창과 출력 화면을 직접 선택하고 시험 패턴으로 수신을 확인하세요."
+        : L"사용 가능한 확장 SDR 후보가 없습니다. Windows 디스플레이에서 확장/SDR 상태를 확인하고 새로고침하세요.");
 }
 bool VideoOutputPanel::topology(bool inspect_paths) const noexcept
 {
@@ -317,6 +389,11 @@ void VideoOutputPanel::identify()
     }
     const auto chosen = sources_[static_cast<size_t>(source)];
     const auto destination = monitors_[static_cast<size_t>(monitor)];
+    if (destination.candidate != VideoOutputCandidate::Ready) {
+        show_monitor_hint();
+        notice(L"선택한 화면은 별도 SDR 출력 대상으로 허용되지 않습니다. 위 이유를 확인하고 Windows 설정을 변경한 뒤 새로고침하세요.");
+        return; // Never allocate an output window or consume a pattern.
+    }
     // Retargeting cannot release an existing black output implicitly.
     if (output_ && (monitor_ != destination.handle || !equal(output_bounds_, destination.info.rcMonitor) ||
         output_device_ != destination.info.szDevice || !output_intact())) {
@@ -601,7 +678,9 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
             if (window != self->panel_ || self->closing_ || self->confirming_) return 0;
             if ((LOWORD(wparam) == kSource || LOWORD(wparam) == kMonitor) && HIWORD(wparam) == CBN_SELCHANGE) {
                 ++self->selection_epoch_;
-                self->stop(L"선택을 변경했습니다. 새 시험 패턴으로 수신 대상을 다시 확인하세요."); return 0;
+                self->stop(L"선택을 변경했습니다. 새 시험 패턴으로 수신 대상을 다시 확인하세요.");
+                if (LOWORD(wparam) == kMonitor) self->show_monitor_hint();
+                return 0;
             }
             switch (LOWORD(wparam)) {
             case kRefresh: self->refresh(); return 0;

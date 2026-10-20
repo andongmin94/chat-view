@@ -14,6 +14,23 @@ constexpr bool video_size(int width, int height) noexcept
 {
     return width > 0 && height > 0 && width <= kVideoMaxDimension && height <= kVideoMaxDimension;
 }
+
+/* Selection-list guidance only. Actual pattern/capture always rechecks live
+   display paths, source/HUD geometry and protected HWNDs before starting. */
+enum class VideoOutputCandidate { Ready, Primary, Duplicate, AdvancedColor, Oversized, Unknown };
+constexpr VideoOutputCandidate video_output_candidate(bool primary, int width, int height,
+                                                       bool inspected, unsigned active_paths,
+                                                       bool advanced_color) noexcept
+{
+    if (width <= 0 || height <= 0) return VideoOutputCandidate::Unknown;
+    if (!video_size(width, height)) return VideoOutputCandidate::Oversized;
+    if (!inspected || !active_paths) return VideoOutputCandidate::Unknown;
+    if (active_paths != 1) return VideoOutputCandidate::Duplicate;
+    if (advanced_color) return VideoOutputCandidate::AdvancedColor;
+    if (primary) return VideoOutputCandidate::Primary;
+    return VideoOutputCandidate::Ready;
+}
+
 // The pool retains its per-axis high-water capacity until capture stops. Shrink
 // and a return to an already seen size must not discard queued frames through
 // Recreate. A late smaller surface is still never safe to draw.

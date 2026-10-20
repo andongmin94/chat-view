@@ -2,6 +2,7 @@
 #pragma once
 #include "hud/window-capture.hpp"
 #include "hud/video-output-check.hpp"
+#include "hud/video-layout.hpp"
 #include <string>
 #include <vector>
 
@@ -20,7 +21,7 @@ public:
 private:
     friend struct VideoOutputPanelTestAccess;
     struct Source { HWND window; DWORD process; DWORD thread; std::wstring title; };
-    struct Monitor { HMONITOR handle; MONITORINFOEXW info; };
+    struct Monitor { HMONITOR handle; MONITORINFOEXW info; VideoOutputCandidate candidate = VideoOutputCandidate::Unknown; };
     static LRESULT CALLBACK procedure(HWND, UINT, WPARAM, LPARAM);
     void open() noexcept;
     void refresh();
@@ -43,6 +44,7 @@ private:
     void notice(const wchar_t *message) noexcept;
     void show_step() noexcept;
     void show_chat_status() noexcept;
+    void show_monitor_hint() noexcept;
     HudWindow &hud_;
     UINT open_message_ = 0U, chat_query_message_ = 0U;
     const wchar_t *shown_chat_status_ = nullptr; // Static local-status label only.

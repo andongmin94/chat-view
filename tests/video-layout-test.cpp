@@ -33,6 +33,24 @@ int main()
         expect(!separate_video_output(output, game, {1700, 10, 2100, 400}, true, false));
         expect(!separate_video_output({0,0,0,0}, game, hud, true, false));
         expect(separate_video_output({-1920,0,0,1080}, game, hud, true, false));
+
+        // Selection hints never confer receiver/HUD-exclusion support. They
+        // refuse primary, clone, HDR, over-cap and uninspectable paths before
+        // a real pattern consent, including a clone/HDR on the primary source.
+        using Candidate = VideoOutputCandidate;
+        expect(video_output_candidate(false, 1920, 1080, true, 1, false) == Candidate::Ready);
+        expect(video_output_candidate(true, 1920, 1080, true, 1, false) == Candidate::Primary);
+        expect(video_output_candidate(false, 1920, 1080, true, 2, false) == Candidate::Duplicate);
+        expect(video_output_candidate(true, 1920, 1080, true, 2, false) == Candidate::Duplicate);
+        expect(video_output_candidate(false, 1920, 1080, true, 1, true) == Candidate::AdvancedColor);
+        expect(video_output_candidate(true, 1920, 1080, true, 1, true) == Candidate::AdvancedColor);
+        expect(video_output_candidate(false, 4097, 1080, true, 1, false) == Candidate::Oversized);
+        expect(video_output_candidate(false, 1920, 4097, true, 1, false) == Candidate::Oversized);
+        expect(video_output_candidate(false, 1920, 1080, false, 1, false) == Candidate::Unknown);
+        expect(video_output_candidate(false, 1920, 1080, true, 0, false) == Candidate::Unknown);
+        expect(video_output_candidate(false, 0, 1080, true, 1, false) == Candidate::Unknown);
+        expect(video_output_candidate(false, 1920, 1080, true, 1, true) != Candidate::Ready);
+
         using Action = VideoFrameAction;
         expect(video_frame_action(400, 300, 400, 300, 400, 300) == Action::Present);
         expect(video_frame_action(600, 300, 400, 300, 400, 300) == Action::ResizeOnly);

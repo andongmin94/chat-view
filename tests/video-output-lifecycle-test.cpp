@@ -31,6 +31,19 @@ struct VideoOutputPanelTestAccess {
     static bool emergency_registered(VideoOutputPanel &p) { return p.hotkey_black_; }
     static bool releasing(VideoOutputPanel &p) { return p.releasing_; }
     static bool choices_empty(VideoOutputPanel &p) { return p.sources_.empty() && p.monitors_.empty(); }
+    static int source_index(VideoOutputPanel &p, HWND source) {
+        for (size_t i = 0; i < p.sources_.size(); ++i)
+            if (p.sources_[i].window == source) return static_cast<int>(i);
+        return -1;
+    }
+    static int primary_index(VideoOutputPanel &p) {
+        for (size_t i = 0; i < p.monitors_.size(); ++i)
+            if (p.monitors_[i].info.dwFlags & MONITORINFOF_PRIMARY) return static_cast<int>(i);
+        return -1;
+    }
+    static VideoOutputCandidate candidate(VideoOutputPanel &p, int index) {
+        return p.monitors_.at(static_cast<size_t>(index)).candidate;
+    }
     static auto &capture(VideoOutputPanel &p) { return p.capture_; }
     static void apply_snapshot(VideoOutputPanel &p, const WindowCaptureSnapshot &value) { p.update_capture(value); }
     static void place(VideoOutputPanel &p, HWND source) {
@@ -537,6 +550,34 @@ void exercise(const wchar_t *source_executable)
     expect(!panel.dispatch(other_key), "unrelated keyboard shortcuts remain unhandled");
     SetWindowPos(controls, nullptr, 20, 350, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     expect(!IsWindowEnabled(GetDlgItem(controls, 204)), "game conversion is disabled before a pattern is painted");
+    const int primary = Access::primary_index(panel);
+    const int game_choice = Access::source_index(panel, game);
+    expect(primary >= 0 && game_choice >= 0 &&
+        SendDlgItemMessageW(controls, 202, CB_GETCOUNT, 0, 0) > primary,
+        "selection lists actual primary screen as explicitly unsupported and the real synthetic game source");
+    expect(Access::candidate(panel, primary) != chatview::VideoOutputCandidate::Ready,
+        "a primary GDI screen never becomes a usable SDR output candidate");
+    wchar_t output_label[512]{};
+    expect(SendDlgItemMessageW(controls, 202, CB_GETLBTEXT,
+        static_cast<WPARAM>(primary), reinterpret_cast<LPARAM>(output_label)) != CB_ERR &&
+        std::wstring_view(output_label).find(L"사용 불가") != std::wstring_view::npos,
+        "the unsupported screen has a human-readable reason in the actual combobox");
+    expect(SendDlgItemMessageW(controls, 201, CB_SETCURSEL,
+        static_cast<WPARAM>(game_choice), 0) != CB_ERR &&
+        SendDlgItemMessageW(controls, 202, CB_SETCURSEL,
+            static_cast<WPARAM>(primary), 0) != CB_ERR, "select actual source and denied output");
+    SendMessageW(controls, WM_COMMAND, MAKEWPARAM(202, CBN_SELCHANGE), 0);
+    wchar_t output_hint[512]{};
+    expect(GetDlgItem(controls, 213) &&
+        GetDlgItemTextW(controls, 213, output_hint, 512) > 0,
+        "native panel explains the selected screen before any pattern");
+    SendMessageW(controls, WM_COMMAND, 208, 0);
+    wchar_t blocked_notice[512]{};
+    GetDlgItemTextW(controls, 207, blocked_notice, 512);
+    expect(std::wstring_view(blocked_notice).find(L"허용되지 않습니다") != std::wstring_view::npos &&
+        !Access::output(panel) && !Access::requested(panel) &&
+        !Access::check(panel).active() && !Access::capture(panel).running(),
+        "denied primary/clone/HDR output cannot create a window, pattern or game capture");
     expect(stage(controls).find(L"1/5") != std::wstring::npos,
         "initial progress requires game source and separate SDR output selection");
     const HWND step = GetDlgItem(controls, 210);

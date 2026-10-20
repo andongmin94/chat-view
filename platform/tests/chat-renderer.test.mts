@@ -15,6 +15,16 @@ class Element {
   added = 0;
   removed = 0;
   hidden = true;
+  disabled = false;
+  readonly style = { fontSize: '' };
+  private readonly classes = new Set<string>();
+  readonly classList = {
+    toggle: (name: string, enabled: boolean) => enabled ? this.classes.add(name) : this.classes.delete(name),
+    contains: (name: string) => this.classes.has(name),
+  };
+  private readonly attributes = new Map<string, string>();
+  setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+  getAttribute(name: string) { return this.attributes.get(name) ?? null; }
   private readonly listeners = new Map<string, () => void>();
   constructor(tag: string) { this.tag = tag; }
   addEventListener(name: string, listener: () => void) { this.listeners.set(name, listener); }
@@ -30,12 +40,21 @@ class Element {
   }
   replaceChildren(...children: Element[]) { this.replaced++; this.children = children; }
 }
-function fixture() {
+function fixture(prefs = new Map<string, string>()) {
   const list = new Element('ol'), status = new Element('p'), jump = new Element('button');
-  const document = { getElementById: (id: string) =>
-    id === 'status' ? status : id === 'messages' ? list : id === 'jump-latest' ? jump : null,
-    createElement: (tag: string) => new Element(tag) };
-  return { list, status, jump, document };
+  const smaller = new Element('button'), larger = new Element('button'), contrast = new Element('button');
+  const controls = { 'chat-font-smaller': smaller, 'chat-font-larger': larger, 'chat-contrast': contrast };
+  const document = {
+    getElementById: (id: string) =>
+      id === 'status' ? status : id === 'messages' ? list : id === 'jump-latest' ? jump :
+      controls[id as keyof typeof controls] ?? null,
+    createElement: (tag: string) => new Element(tag),
+    defaultView: { localStorage: {
+      getItem: (name: string) => prefs.get(name) ?? null,
+      setItem: (name: string, value: string) => { prefs.set(name, value); },
+    } },
+  };
+  return { list, status, jump, smaller, larger, contrast, prefs, document };
 }
 const message = (n: number) => ({
   nickname: 'viewer <script>', content: `채팅 ${n} 😀 <img onerror=evil()>`, messageTime: 1700000000000 + n,
@@ -163,4 +182,49 @@ test('a large unread burst is bounded, and stale session counters reset the hint
   renderChat(document, frame(1, [message(1)]));
   assert.equal(jump.hidden, true, 'a new provider sequence must not inherit the old unread count');
   assert.equal(list.children.length, 1);
+});
+
+test('streamer can increase font, toggle contrast and retain only bounded local display preferences', () => {
+  const prefs = new Map<string, string>();
+  const { list, smaller, larger, contrast, document } = fixture(prefs);
+  renderChat(document, frame(1, [message(1)]));
+  const existing = list.children[0];
+  assert.equal(list.style.fontSize, '16px');
+  assert.equal(contrast.getAttribute('aria-pressed'), 'false');
+  larger.fire('click');
+  assert.equal(list.style.fontSize, '18px');
+  contrast.fire('click');
+  assert.equal(list.classList.contains('chat-high-contrast'), true);
+  assert.equal(contrast.getAttribute('aria-pressed'), 'true');
+  assert.equal(contrast.textContent, '기본 대비');
+  assert.equal(list.children[0], existing, 'reading preferences must not recreate the chat text');
+  for (let i = 0; i < 10; i++) larger.fire('click');
+  assert.equal(list.style.fontSize, '24px');
+  assert.equal(larger.disabled, true, 'large text is explicitly bounded');
+  smaller.fire('click');
+  assert.equal(list.style.fontSize, '22px');
+  assert.deepEqual([...prefs.entries()].sort(), [
+    ['chatview.font-size', '22'], ['chatview.high-contrast', '1'],
+  ]);
+  const second = fixture(prefs);
+  renderChat(second.document, frame(1, [message(1)]));
+  assert.equal(second.list.style.fontSize, '22px', 'bounded preference survives a new owned document');
+  assert.equal(second.list.classList.contains('chat-high-contrast'), true);
+  second.contrast.fire('click');
+  assert.equal(second.list.classList.contains('chat-high-contrast'), false);
+});
+
+test('invalid stored styling and blocked storage cannot inject CSS or affect chat delivery', () => {
+  const { list, smaller, document } = fixture(new Map([
+    ['chatview.font-size', '9999px!important'], ['chatview.high-contrast', '<script>'],
+  ]));
+  renderChat(document, frame(1, [message(1)]));
+  assert.equal(list.style.fontSize, '16px');
+  assert.equal(list.classList.contains('chat-high-contrast'), false);
+  document.defaultView = { get localStorage(): never { throw new Error('storage forbidden'); } } as any;
+  smaller.fire('click');
+  assert.equal(list.style.fontSize, '14px', 'bounded preference still works when persistence is blocked');
+  assert.equal(smaller.disabled, true);
+  renderChat(document, frame(0, [], 'revoked'));
+  assert.equal(list.children.length, 0);
 });

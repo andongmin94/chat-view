@@ -12,11 +12,56 @@ function updateJump(view) {
   if (view.unread) view.jump.textContent =
     `새 채팅 ${view.unread > 99 ? '99+' : view.unread}개 · 최신으로`;
 }
+function attachReadability(document, list) {
+  const smaller = document.getElementById('chat-font-smaller');
+  const larger = document.getElementById('chat-font-larger');
+  const contrast = document.getElementById('chat-contrast');
+  if (!smaller || !larger || !contrast) return;
+
+  // Only these bounded presentation preferences persist on this device.
+  // No chat, connection, campaign or account data is written to storage.
+  const sizes = [14, 16, 18, 20, 22, 24];
+  let fontSize = 16, highContrast = false;
+  try {
+    const storage = document.defaultView?.localStorage;
+    const saved = storage?.getItem('chatview.font-size');
+    if (saved && sizes.includes(Number(saved))) fontSize = Number(saved);
+    highContrast = storage?.getItem('chatview.high-contrast') === '1';
+  } catch { /* Storage may be disabled for a private WebView2 document. */ }
+  const apply = () => {
+    list.style.fontSize = `${fontSize}px`;
+    list.classList.toggle('chat-high-contrast', highContrast);
+    smaller.disabled = fontSize === sizes[0];
+    larger.disabled = fontSize === sizes.at(-1);
+    contrast.setAttribute('aria-pressed', String(highContrast));
+    contrast.textContent = highContrast ? '기본 대비' : '강한 대비';
+  };
+  const save = () => {
+    try {
+      const storage = document.defaultView?.localStorage;
+      storage?.setItem('chatview.font-size', String(fontSize));
+      storage?.setItem('chatview.high-contrast', highContrast ? '1' : '0');
+    } catch { /* Keep current on-screen adjustment when storage is unavailable. */ }
+  };
+  smaller.addEventListener('click', () => {
+    fontSize = sizes[Math.max(0, sizes.indexOf(fontSize) - 1)];
+    apply(); save();
+  });
+  larger.addEventListener('click', () => {
+    fontSize = sizes[Math.min(sizes.length - 1, sizes.indexOf(fontSize) + 1)];
+    apply(); save();
+  });
+  contrast.addEventListener('click', () => {
+    highContrast = !highContrast; apply(); save();
+  });
+  apply();
+}
 function viewFor(document, list) {
   let view = lastRendered.get(list);
   if (view) return view;
   view = { snapshot: null, unread: 0, jump: document.getElementById('jump-latest') };
   lastRendered.set(list, view);
+  attachReadability(document, list);
   if (view.jump) {
     view.jump.addEventListener('click', () => {
       list.scrollTop = list.scrollHeight;

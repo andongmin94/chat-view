@@ -11,6 +11,11 @@
   <header><strong>ChatView</strong><span>치지직 · 읽기 전용</span><a href="/">연결 관리</a></header>
   <p class="notice">개발자용 채팅 미리보기 · 송출 제외와 광고 실적을 검증하는 화면이 아닙니다.</p>
   <p id="status" role="status">연결 상태 확인 중</p>
+  <div class="chat-readability" role="group" aria-label="채팅 글자 크기와 대비">
+    <span>읽기 설정</span><button id="chat-font-smaller" type="button" aria-label="글자 작게">A−</button>
+    <button id="chat-font-larger" type="button" aria-label="글자 크게">A+</button>
+    <button id="chat-contrast" type="button" aria-pressed="false">강한 대비</button>
+  </div>
   <ol id="messages" aria-label="실시간 채팅"></ol>
   <button id="jump-latest" type="button" hidden>최신 채팅</button>
 </body>

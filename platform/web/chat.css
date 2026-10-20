@@ -17,3 +17,15 @@ b { margin-left: 12px; unicode-bidi: isolate; } time { color: #aab2be; font-size
 #jump-latest:hover { background: #306d5c; }
 #jump-latest:focus-visible { outline: 2px solid #a6f5d8; outline-offset: 3px; }
 #jump-latest[hidden] { display: none; }
+
+.chat-readability { display: flex; align-items: center; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+.chat-readability span { font-size: 12px; color: #bbc1cb; }
+.chat-readability button { border: 1px solid #465667; border-radius: 6px; color: #f2f4f6;
+  background: #283340; padding: 5px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+.chat-readability button:hover:not(:disabled) { background: #365169; }
+.chat-readability button:disabled { opacity: .5; cursor: not-allowed; }
+.chat-readability button:focus-visible { outline: 2px solid #a6f5d8; outline-offset: 2px; }
+.chat-readability button[aria-pressed="true"] { border-color: #a6f5d8; }
+#messages.chat-high-contrast li { background: #000; border: 1px solid #fff; color: #fff;
+  padding: 10px; border-radius: 4px; }
+#messages.chat-high-contrast time { color: #f0f0f0; }

@@ -339,6 +339,24 @@ int main()
             document.querySelector('#messages li') === globalThis.unchangedFirstRow &&
             document.querySelectorAll('#messages li')[1].querySelector('.content').textContent === '두 번째 메시지'
         )JS") == L"true", "the old visible chat row survives append without HTML injection");
+        // Real owned WebView2: streamer-only reading controls must change
+        // visual text/contrast, not replace chat nodes, authorize a stream or
+        // interfere with exact native frame acknowledgements.
+        expect(evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            const previous = list.querySelector('li');
+            const larger = document.getElementById('chat-font-larger');
+            const contrast = document.getElementById('chat-contrast');
+            if (!larger || !contrast) return false;
+            larger.click();
+            contrast.click();
+            return list.style.fontSize === '18px' &&
+                list.classList.contains('chat-high-contrast') &&
+                contrast.getAttribute('aria-pressed') === 'true' &&
+                list.querySelector('li') === previous &&
+                list.querySelectorAll('li').length === 2;
+        })())JS") == L"true",
+            "native readability controls adjust only local text and contrast, preserving private rows");
         // Streamer UX: when reading older text, new provider messages should
         // add a bounded unread hint without stealing the scroll position.
         // This is the real immutable WebView2 renderer, not a browser mock.

@@ -21,6 +21,7 @@
 namespace chatview {
 struct VideoOutputPanelTestAccess {
     static HWND open(VideoOutputPanel &p) { p.open(); return p.panel_; }
+    static HWND controls(VideoOutputPanel &p) { return p.panel_; }
     static HWND output(VideoOutputPanel &p) { return p.output_; }
     static HWND cover(VideoOutputPanel &p) { return p.cover_; }
     static HWND source(VideoOutputPanel &p) { return p.source_; }
@@ -80,11 +81,13 @@ using Access = chatview::VideoOutputPanelTestAccess;
 void expect(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
 bool emergency_black(chatview::VideoOutputPanel &panel)
 {
-    MSG event{};
-    event.message = WM_HOTKEY; // Thread-scoped, as in the actual companion owner loop.
-    event.wParam = 0x4342; // kEmergencyBlackHotkey, Ctrl+Alt+Shift+B.
-    event.lParam = MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'B');
-    return panel.dispatch(event);
+    // The real OS now delivers this key to the existing panel HWND, including
+    // when its settings are hidden or a native modal dialog owns the pump.
+    const HWND owner = Access::controls(panel);
+    if (!owner || !Access::emergency_registered(panel)) return false;
+    SendMessageW(owner, WM_HOTKEY, 0x4342,
+        MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'B'));
+    return true;
 }
 std::wstring stage(HWND controls)
 {
@@ -175,7 +178,8 @@ void stopped(chatview::VideoOutputPanel &panel, HWND hud)
     panel.tick();
     expect(IsWindowVisible(hud), "video interruption does not hide local HUD");
 }
-void release_answer(chatview::VideoOutputPanel &panel, int answer, bool change_during_consent = false)
+void release_answer(chatview::VideoOutputPanel &panel, int answer,
+                    bool change_during_consent = false, bool black_during_consent = false)
 {
     const HWND owner = Access::open(panel);
     std::exception_ptr failure;
@@ -192,6 +196,14 @@ void release_answer(chatview::VideoOutputPanel &panel, int answer, bool change_d
             if (change_during_consent) {
                 SendMessageW(owner, WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK, 0);
                 SendMessageW(owner, WM_WTSSESSION_CHANGE, WTS_SESSION_UNLOCK, 0);
+            }
+            if (black_during_consent) {
+                // Queue the HWND-bound key BEFORE modal Yes. This exercises
+                // the real MessageBox nested pump, not a direct main-loop
+                // dispatch or cross-thread SendMessage shortcut.
+                expect(PostMessageW(owner, WM_HOTKEY, 0x4342,
+                    MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'B')) != FALSE,
+                    "post emergency key while output-release dialog is open");
             }
         } catch (...) { failure = std::current_exception(); }
         if (dialog) PostMessageW(dialog, WM_COMMAND, static_cast<WPARAM>(failure ? IDNO : answer), 0);
@@ -663,6 +675,12 @@ void exercise(const wchar_t *source_executable)
     release_answer(panel, IDNO);
     stopped(panel, hud_window);
     expect(IsWindow(output) && !Access::releasing(panel), "declined release retains black output");
+    release_answer(panel, IDYES, false, true);
+    stopped(panel, hud_window);
+    expect(IsWindow(output) && Access::output(panel) == output &&
+        !Access::releasing(panel) && IsWindowVisible(cover) && black() &&
+        !Access::check(panel).active() && !Access::requested(panel),
+        "emergency key delivered within modal Yes cancels output release and retains black HWND");
     release_answer(panel, IDYES, true);
     panel.tick();
     expect(IsWindow(output) && !Access::releasing(panel) && black(), "lock/unlock during consent invalidates release");

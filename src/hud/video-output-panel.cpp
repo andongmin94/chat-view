@@ -58,10 +58,10 @@ VideoOutputPanel::VideoOutputPanel(HudWindow &hud, bool companion) noexcept : hu
         open_message_ = RegisterWindowMessageW(kOpenCompanionVideoMessageName);
         chat_query_message_ = RegisterWindowMessageW(kQueryNativeChatMessageName);
         hotkey_ = RegisterHotKey(nullptr, kVideoHotkey, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'V') != FALSE;
-        hotkey_black_ = RegisterHotKey(nullptr, kEmergencyBlackHotkey,
-            MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'B') != FALSE;
-        if (!hotkey_black_)
-            OutputDebugStringW(L"[ChatView] Companion emergency blackout hotkey unavailable; use Stop button\n");
+        // The emergency key is registered against the owner panel HWND once
+        // created, not this thread's main message pump. MessageBox has its own
+        // modal pump; a thread-scoped WM_HOTKEY could be swallowed there.
+        // No separate output can exist before the panel has been created.
     }
 }
 VideoOutputPanel::~VideoOutputPanel() { close(); }
@@ -101,16 +101,10 @@ bool VideoOutputPanel::dispatch(MSG &message) noexcept
         if (message.message == WM_HOTKEY && message.wParam == kVideoHotkey) {
             open(); return true;
         }
-        if (message.message == WM_HOTKEY && message.wParam == kEmergencyBlackHotkey && !closing_) {
-            // Works without opening/focusing the settings panel. Retire the
-            // receiver pattern and any pending output-window release first,
-            // raise the independent black cover synchronously, then cancel WGC.
-            // Never stop the creator's separate private chat connection.
-            stop(L"긴급 검정 전환 · 게임 영상 중지 / 검정 덮개 유지.\n"
-                 L"재개하려면 새 시험 패턴과 수신 PC 확인이 필요합니다.");
-            return true;
-        }
     }
+    // An HWND-bound emergency key must reach the panel WndProc. Do not let
+    // dialog keyboard translation consume it in the ordinary main pump.
+    if (panel_ && message.hwnd == panel_ && message.message == WM_HOTKEY) return false;
     return panel_ && IsWindowVisible(panel_) && IsDialogMessageW(panel_, &message);
 }
 void VideoOutputPanel::notice(const wchar_t *message) noexcept
@@ -200,6 +194,10 @@ void VideoOutputPanel::open() noexcept
         }
         notifications_ = WTSRegisterSessionNotification(panel_, NOTIFY_FOR_THIS_SESSION) != FALSE;
         if (!notifications_) { DestroyWindow(panel_); panel_ = nullptr; return; }
+        hotkey_black_ = RegisterHotKey(panel_, kEmergencyBlackHotkey,
+            MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'B') != FALSE;
+        if (!hotkey_black_)
+            OutputDebugStringW(L"[ChatView] Companion emergency blackout hotkey unavailable; use Stop button\n");
         const auto dpi = GetDpiForWindow(panel_);
         const auto scale = [dpi](int v) { return MulDiv(v, static_cast<int>(dpi), 96); };
         SetWindowPos(panel_, nullptr, 0, 0, scale(660), scale(668), SWP_NOMOVE | SWP_NOZORDER);
@@ -560,6 +558,15 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
     }
     if (!self) return DefWindowProcW(window, message, wparam, lparam);
     try {
+        if (message == WM_HOTKEY && window == self->panel_ &&
+            wparam == kEmergencyBlackHotkey && self->hotkey_black_ && !self->closing_) {
+            // Also dispatched by nested native confirmation dialogs while the
+            // panel itself is disabled or hidden. A blackout retires any
+            // in-flight consent/release before a later modal Yes can act.
+            self->stop(L"긴급 검정 전환 · 게임 영상 중지 / 검정 덮개 유지.\n"
+                       L"재개하려면 새 시험 패턴과 수신 PC 확인이 필요합니다.");
+            return 0;
+        }
         if (message == WM_PAINT && window == self->cover_) { self->paint_cover(window); return 0; }
         if (message == WM_TIMER && window == self->cover_ && wparam == kPatternTimer) {
             // KillTimer does not remove already queued timer messages. Never
@@ -639,7 +646,11 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
         }
         if (message == WM_NCDESTROY) {
             SetWindowLongPtrW(window, GWLP_USERDATA, 0);
-            if (self->panel_ == window) self->panel_ = nullptr;
+            if (self->panel_ == window) {
+                if (self->hotkey_black_) UnregisterHotKey(window, kEmergencyBlackHotkey);
+                self->hotkey_black_ = false;
+                self->panel_ = nullptr;
+            }
             if (self->cover_ == window) self->cover_ = nullptr;
             if (self->output_ == window) { self->output_ = nullptr; self->cover_ = nullptr; }
         }
@@ -655,10 +666,11 @@ void VideoOutputPanel::close() noexcept
     capture_.close();
     if (output_) DestroyWindow(output_);
     output_ = nullptr; cover_ = nullptr;
+    if (hotkey_black_ && panel_) UnregisterHotKey(panel_, kEmergencyBlackHotkey);
+    hotkey_black_ = false;
     if (panel_) DestroyWindow(panel_);
     panel_ = nullptr;
     if (hotkey_) UnregisterHotKey(nullptr, kVideoHotkey);
-    if (hotkey_black_) UnregisterHotKey(nullptr, kEmergencyBlackHotkey);
-    hotkey_ = false; hotkey_black_ = false;
+    hotkey_ = false;
 }
 }

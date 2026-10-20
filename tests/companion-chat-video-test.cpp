@@ -808,13 +808,15 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
     pause_return("capture", L"capture-return");
     expect(!IsWindowVisible(cover) && pixels(RGB(20,100,180)), "chat stop/return leaves selected video playing");
     expect(Video::emergency_registered(video), "OBS-free companion registers emergency video blackout shortcut");
-    MSG urgent{};
-    urgent.message = WM_HOTKEY; urgent.wParam = 0x4342; // Ctrl+Alt+Shift+B.
-    urgent.lParam = MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'B');
+    // Game has focus and the companion video panel is hidden. Its HWND-bound
+    // WM_HOTKEY still reaches the panel procedure, not a thread-only pump.
+    ShowWindow(controls, SW_HIDE);
     const auto emergency_at = GetTickCount64();
-    expect(video.dispatch(urgent) && GetTickCount64() - emergency_at < 200U &&
+    SendMessageW(controls, WM_HOTKEY, 0x4342, MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'B'));
+    expect(GetTickCount64() - emergency_at < 200U && !IsWindowVisible(controls) &&
            !Video::requested(video) && IsWindowVisible(cover),
-        "in-game emergency shortcut synchronously masks video without focusing the panel");
+        "hidden-panel emergency shortcut synchronously masks video without taking focus");
+    ShowWindow(controls, SW_SHOWNOACTIVATE);
     flow.wait([&] { return !Video::capture(video).running() && IsWindowVisible(cover) && pixels(RGB(0,0,0)); },
         "emergency shortcut retains nine black output pixels", 2000);
     expect(!Video::check(video).active() && !Video::accept(video),

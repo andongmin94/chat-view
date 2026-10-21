@@ -371,16 +371,16 @@ int main()
         // Streamer UX: when reading older text, new provider messages should
         // add a bounded unread hint without stealing the scroll position.
         // This is the real immutable WebView2 renderer, not a browser mock.
-        const auto history = [](int count) {
+        const auto history = [](int count, int first = 1) {
             std::wstring json = LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"subscribed","received":)JSON";
-            json += std::to_wstring(count);
+            json += std::to_wstring(first + count - 1);
             json += LR"JSON(,"messages":[)JSON";
             for (int i = 0; i < count; ++i) {
                 if (i) json += L",";
                 json += LR"JSON({"nickname":"검증 사용자","content":"채팅 )JSON";
-                json += std::to_wstring(i + 1);
+                json += std::to_wstring(first + i);
                 json += LR"JSON(","messageTime":)JSON";
-                json += std::to_wstring(1700000000000LL + i);
+                json += std::to_wstring(1700000000000LL + first + i - 1);
                 json += L"}";
             }
             json += L"]}}";
@@ -437,9 +437,40 @@ int main()
             latest.click();
             return latest.hidden && list.scrollHeight - list.scrollTop - list.clientHeight < 80;
         })())JS") == L"true", "explicit latest action returns to the newest native chat row");
-        expect(surface.publish(LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"revoked","received":9,"messages":[]}})JSON"),
-               "revoke clears the unread UI and private text");
+        // Exercise the 100-row rollover on the real WebView2 scroll container.
+        // The user must keep reading the same surviving row whether the
+        // browser applies scroll anchoring itself or not.
+        expect(surface.publish(history(100)), "fill bounded native chat history");
         await([&] { return surface.rendered_frames() == 6U &&
+                            surface.rendered_messages() == 100U; }, "100 native messages rendered");
+        expect(evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            const rows = list.children;
+            list.scrollTop = rows[12].offsetTop - rows[0].offsetTop + 5;
+            const anchor = [...rows].find(row =>
+                row.getBoundingClientRect().bottom > list.getBoundingClientRect().top);
+            if (!anchor || anchor === rows[0]) return false;
+            globalThis.rolloverAnchor = anchor;
+            globalThis.rolloverTop = anchor.getBoundingClientRect().top;
+            return list.scrollHeight - list.scrollTop - list.clientHeight > 80;
+        })())JS") == L"true", "reader scrolled inside 100-message native window");
+        expect(surface.publish(history(100, 2)), "evict oldest native row while reading history");
+        await([&] { return surface.rendered_frames() == 7U &&
+                            surface.rendered_messages() == 100U; }, "rolling native message acknowledged");
+        expect(evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            const anchor = globalThis.rolloverAnchor;
+            const hint = document.getElementById('jump-latest');
+            return list.children.length === 100 &&
+                list.contains(anchor) && !hint.hidden &&
+                hint.textContent.includes('새 채팅 1개') &&
+                list.firstElementChild.querySelector('.content').textContent === '채팅 2' &&
+                list.lastElementChild.querySelector('.content').textContent === '채팅 101' &&
+                Math.abs(anchor.getBoundingClientRect().top - globalThis.rolloverTop) <= 2;
+        })())JS") == L"true", "real WebView2 rolling chat retains the same visible row and unread hint");
+        expect(surface.publish(LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"revoked","received":101,"messages":[]}})JSON"),
+               "revoke clears the unread UI and private text");
+        await([&] { return surface.rendered_frames() == 8U &&
                             surface.rendered_messages() == 0U; }, "revoked native HUD clears private text");
         expect(evaluate(core.Get(), LR"JS(
             document.getElementById('jump-latest').hidden &&

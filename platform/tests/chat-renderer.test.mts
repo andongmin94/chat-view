@@ -15,6 +15,7 @@ class Element {
   replaced = 0;
   added = 0;
   removed = 0;
+  browserScrollAnchoring = false;
   hidden = true;
   disabled = false;
   readonly style = { fontSize: '' };
@@ -51,7 +52,11 @@ class Element {
   appendChild(child: Element) { this.added++; child.parent = this; this.children.push(child); }
   removeChild(child: Element) {
     assert.equal(this.firstChild, child);
-    this.removed++; this.children.shift(); child.parent = null;
+    this.removed++;
+    // Model Chromium's automatic scroll anchoring for rows above the viewport.
+    if (this.browserScrollAnchoring && this.tag === 'ol' && this.scrollTop >= this.rowHeight)
+      this.scrollTop -= this.rowHeight;
+    this.children.shift(); child.parent = null;
   }
   replaceChildren(...children: Element[]) {
     this.replaced++;
@@ -114,6 +119,23 @@ test('new chat appends only missing rows, preserving existing 100-row history an
   assert.equal(list.added, 1);
   assert.equal(list.scrollTop, 370, 'evicting one old row preserves the surviving row at the same visual offset');
   assert.equal(list.children.at(-1)?.children[2]?.textContent, message(101).content);
+});
+
+test('rolling history does not double-adjust when Chromium already anchors the visible chat', () => {
+  const { list, jump, document } = fixture();
+  list.clientHeight = 100;
+  list.browserScrollAnchoring = true;
+  renderChat(document, frame(100, Array.from({ length: 100 }, (_, i) => message(i + 1))));
+  const surviving = list.children[13]!;
+  list.scrollTop = 405;
+  const top = surviving.getBoundingClientRect().top;
+  renderChat(document, frame(101, Array.from({ length: 100 }, (_, i) => message(i + 2))));
+  assert.equal(list.children[12], surviving, 'reuse the actual old message row');
+  assert.equal(surviving.getBoundingClientRect().top, top,
+    'a browser-adjusted scroll must not be shifted by the removed row again');
+  assert.equal(list.scrollTop, 375);
+  assert.equal(jump.textContent, '새 채팅 1개 · 최신으로');
+  assert.equal(list.replaced, 1, 'rolling history keeps existing DOM nodes');
 });
 
 test('batched deliveries append without rebuilding; missing 100+ messages safely reset bounded history', () => {

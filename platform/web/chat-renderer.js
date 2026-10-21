@@ -176,13 +176,20 @@ export function renderChat(document, snapshot) {
     }
   }
   if (kept) {
-    const oldHeight = list.scrollHeight;
-    for (let i = 0; i < previous.messages.length - kept; i++) list.removeChild(list.firstChild);
-    // When the 100-message window moves forward, keep a scrolled-up reader
-    // anchored to the same surviving text rather than jumping by one row.
-    if (!wasNearBottom) list.scrollTop =
-      Math.max(0, list.scrollTop - (oldHeight - list.scrollHeight));
+    const removing = previous.messages.length - kept;
+    // Chromium/WebView2 may already anchor the scroll when old rows disappear.
+    // Compare a surviving row's actual screen position after all DOM changes
+    // instead of subtracting removed heights a second time.
+    let anchor = null;
+    if (!wasNearBottom) {
+      const listTop = list.getBoundingClientRect().top;
+      anchor = [...list.children].slice(removing).find(row =>
+        row.getBoundingClientRect().bottom > listTop) ?? list.children[removing];
+    }
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    for (let i = 0; i < removing; i++) list.removeChild(list.firstChild);
     for (const message of messages.slice(kept)) list.appendChild(rowFor(document, message));
+    if (anchor) list.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
   } else {
     list.replaceChildren(...messages.map(message => rowFor(document, message)));
   }

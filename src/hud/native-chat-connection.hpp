@@ -89,11 +89,13 @@ private:
     std::wstring after_clear_;
     bool displayed_subscribed_ = false;
     bool first_text_rendered_ = false; // First text row acknowledged by this owned DOM only.
-    bool first_document_recovery_attempted_ = false; // At most one bounded local retry per approved display start.
+    bool first_document_recovery_attempted_ = false; // One recovery total, either no handshake or missing first render ACK.
+    bool replaying_first_render_ = false;
     unsigned long long awaiting_frame_ = 0U;
     ULONGLONG render_deadline_ = 0;
     ULONGLONG loading_deadline_ = 0;
     std::wstring pending_;
+    std::wstring in_flight_; // Verified first subscribed frame retained only until its render ACK.
     std::wstring login_url_; // Current request only; no verifier or approval token.
     std::wstring previous_login_code_; // Only six public code characters while old cancellation is unconfirmed.
     std::wstring service_origin_; // Validated current service only; not an auth capability.

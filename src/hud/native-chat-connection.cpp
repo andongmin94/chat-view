@@ -337,6 +337,7 @@ bool NativeChatConnection::open_surface() noexcept
     if (!surface_.open(hud_.webview_)) return false;
     first_text_rendered_ = false;
     ready_ = false; displayed_subscribed_ = false; awaiting_frame_ = 0; pending_.clear();
+    in_flight_.clear(); replaying_first_render_ = false;
     clearing_interrupted_chat_ = false; in_flight_interruption_ = false;
     after_clear_.clear(); after_clear_subscribed_ = false;
     first_document_recovery_attempted_ = false;
@@ -553,8 +554,8 @@ void NativeChatConnection::forget() noexcept
 }
 void NativeChatConnection::clear_display(bool preserve_host) noexcept
 {
-    login_url_.clear(); pending_.clear(); after_clear_.clear();
-    clearing_interrupted_chat_ = false; in_flight_interruption_ = false; after_clear_subscribed_ = false;
+    login_url_.clear(); pending_.clear(); in_flight_.clear(); after_clear_.clear();
+    replaying_first_render_ = false; clearing_interrupted_chat_ = false; in_flight_interruption_ = false; after_clear_subscribed_ = false;
     connection_state_.reset(); first_text_rendered_ = false;
     if (active_) {
         active_ = false; awaiting_login_ = false; ready_ = false; displayed_subscribed_ = false; awaiting_frame_ = 0U; surface_.close();
@@ -684,6 +685,9 @@ void NativeChatConnection::tick() noexcept
                     first_text_rendered_ = false;
                     displayed_subscribed_ = false;
                     in_flight_subscribed_ = false;
+                    // The old subscription must not leave replayable private
+                    // text in memory across an interruption or revocation.
+                    in_flight_.clear(); replaying_first_render_ = false;
                     displayed_status_.reset();
                 }
                 show_display_status();
@@ -774,7 +778,8 @@ void NativeChatConnection::tick() noexcept
         if (surface_.ready()) ready_ = true;
         hud_.cancel_navigation_retry(); hud_.page_connection_recovery_.reset(); hud_.page_health_watchdog_.disarm();
         if (awaiting_frame_ && surface_.rendered_frames() >= awaiting_frame_) {
-            awaiting_frame_ = 0U; displayed_subscribed_ = in_flight_subscribed_;
+            awaiting_frame_ = 0U; in_flight_.clear();
+            displayed_subscribed_ = in_flight_subscribed_;
             if (displayed_subscribed_ && !first_text_rendered_ && surface_.rendered_messages() > 0U) {
                 first_text_rendered_ = true;
                 displayed_status_.reset(); show_display_status();
@@ -789,11 +794,46 @@ void NativeChatConnection::tick() noexcept
                 after_clear_.clear(); after_clear_subscribed_ = false;
             }
         }
+        // A document can be ready and have accepted a verified first frame,
+        // yet lose its frame-specific rendered ACK. One locally recreated
+        // nonce-bound document may render the retained latest subscribed text
+        // before the SAME original 15-second render deadline. This is not a
+        // new server subscription, credential, or extra 15-second retry.
+        if (awaiting_frame_ && !first_document_recovery_attempted_ &&
+            !first_text_rendered_ && in_flight_subscribed_ && !in_flight_.empty() &&
+            !clearing_interrupted_chat_ && (pending_.empty() || pending_subscribed_) &&
+            !awaiting_login_ && !login_cancel_waiting_ && !reconnecting_ &&
+            connection_state_.has_value() && client_.running() &&
+            hud_.webview_ready_ && surface_.ready() &&
+            !hud_.webview_.external_page_selected() &&
+            !hud_.capture_risk_ && hud_.capture_exclusion_intact() &&
+            now < render_deadline_ &&
+            render_deadline_ - now <= kFirstDocumentRecoveryLeadMs) {
+            first_document_recovery_attempted_ = true;
+            if (pending_.empty()) pending_ = std::move(in_flight_);
+            in_flight_.clear();
+            pending_subscribed_ = true;
+            awaiting_frame_ = 0U; ready_ = false; displayed_subscribed_ = false;
+            in_flight_subscribed_ = false; in_flight_interruption_ = false;
+            replaying_first_render_ = true;
+            loading_deadline_ = render_deadline_;
+            if (!surface_.open(hud_.webview_)) {
+                end(L"첫 채팅 화면을 다시 준비하지 못했습니다. 기존 승인으로 명시적으로 복귀할 수 있습니다.");
+                return;
+            }
+            notice(L"현재 승인과 첫 채팅을 유지하고, 응답 없는 표시 문서만 한 번 다시 준비합니다.");
+        }
         if (awaiting_frame_ && GetTickCount64() >= render_deadline_) {
             end(L"채팅 화면 응답이 중단됐습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");
             return;
         }
         if (ready_ && !awaiting_frame_ && !pending_.empty()) {
+            // Capture the exact verified first subscribed envelope before
+            // publishing it. An absent ACK must not require a new provider
+            // login or lose the first actual chat text.
+            if (!first_text_rendered_ && pending_subscribed_ &&
+                !first_document_recovery_attempted_) in_flight_ = pending_;
+            else in_flight_.clear();
             if (!surface_.publish(pending_)) {
                 end(L"채팅 화면에 메시지를 전달하지 못했습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");
                 return;
@@ -801,7 +841,10 @@ void NativeChatConnection::tick() noexcept
             awaiting_frame_ = surface_.rendered_frames() + 1U;
             in_flight_subscribed_ = pending_subscribed_;
             in_flight_interruption_ = clearing_interrupted_chat_;
-            render_deadline_ = GetTickCount64() + 15000U; pending_.clear();
+            // Replaying a missing first ACK never extends its original budget.
+            if (!replaying_first_render_) render_deadline_ = GetTickCount64() + 15000U;
+            replaying_first_render_ = false;
+            pending_.clear();
         }
         hud_.set_page_health(ready_ && displayed_subscribed_ ? HudPageState::Ready : HudPageState::Loading, HudProvider::Chzzk);
     } catch (...) {

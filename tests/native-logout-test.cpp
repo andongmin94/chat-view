@@ -23,6 +23,9 @@ struct NativeChatConnectionTestAccess {
     static bool has_metadata(NativeChatConnection &c) { return c.connection_state_.has_value(); }
     static bool login_pending(NativeChatConnection &c) { return c.client_.login_pending(); }
     static bool has_queued_frame(NativeChatConnection &c) { return !c.pending_.empty(); }
+    static bool awaiting_renderer(NativeChatConnection &c) { return c.awaiting_frame_ != 0U; }
+    static ULONGLONG render_deadline(NativeChatConnection &c) { return c.render_deadline_; }
+    static bool first_text_rendered(NativeChatConnection &c) { return c.first_text_rendered_; }
     static bool local_document_retried(NativeChatConnection &c) { return c.first_document_recovery_attempted_; }
     static ULONGLONG display_deadline(NativeChatConnection &c) { return c.loading_deadline_; }
     static void disable_auto_connect(NativeChatConnection &c) { c.auto_connect_pending_ = false; }
@@ -38,6 +41,12 @@ struct NativeChatConnectionTestAccess {
 };
 struct NativeChatSurfaceTestAccess {
     static ICoreWebView2 *core(NativeChatSurface &s) { return s.webview_.Get(); }
+    static bool suppress_ack_for_current_document(NativeChatSurface &s) {
+        if (!s.ready() || !s.message_token_.value ||
+            FAILED(s.webview_->remove_WebMessageReceived(s.message_token_))) return false;
+        s.message_token_ = {};
+        return true;
+    }
 };
 }
 namespace {
@@ -126,6 +135,42 @@ void run(const std::wstring &origin, const std::wstring &auxiliary, const std::s
         SendDlgItemMessageW(dialog, 107, BM_SETCHECK, remembered ? BST_CHECKED : BST_UNCHECKED, 0);
         click(dialog, 104);
         await([&] { return browser_opened; }, "browser login request", connection);
+        if (mode == "render-ack-lost") {
+            // Approval and the real owned nonce handshake complete before
+            // native tick publishes its first verified chat frame. Remove only
+            // this document's production ACK listener: the DOM can render,
+            // but the native host cannot acknowledge that rendered frame.
+            await([&] {
+                return !chatview::NativeChatConnectionTestAccess::login_pending(connection) &&
+                    chatview::NativeChatConnectionTestAccess::surface(connection).ready();
+            }, "approved provider and prewarmed document before first ACK loss",
+                connection, 15000U, false);
+            auto &surface = chatview::NativeChatConnectionTestAccess::surface(connection);
+            expect(chatview::NativeChatSurfaceTestAccess::suppress_ack_for_current_document(surface),
+                "simulate missing first frame ACK on actual ready WebView2 document");
+            await([&] {
+                return chatview::NativeChatConnectionTestAccess::awaiting_renderer(connection);
+            }, "verified first subscribed frame reaches a document whose ACK is lost", connection);
+            const auto original_render_deadline =
+                chatview::NativeChatConnectionTestAccess::render_deadline(connection);
+            expect(!chatview::NativeChatConnectionTestAccess::first_text_rendered(connection) &&
+                surface.rendered_frames() == 0U &&
+                chatview::NativeChatConnectionTestAccess::has_metadata(connection),
+                "without an ACK the old DOM cannot claim a first text or lose its approval");
+            core = chatview::NativeChatSurfaceTestAccess::core(surface);
+            expect(!empty_dom(core.Get(), connection),
+                "a missing native ACK may occur after the original private DOM has displayed text");
+            await([&] {
+                return chatview::NativeChatConnectionTestAccess::local_document_retried(connection);
+            }, "one local first-render ACK recovery before the original deadline", connection);
+            expect(chatview::NativeChatConnectionTestAccess::render_deadline(connection) ==
+                    original_render_deadline &&
+                chatview::NativeChatConnectionTestAccess::display_deadline(connection) ==
+                    original_render_deadline &&
+                !chatview::NativeChatConnectionTestAccess::login_pending(connection) &&
+                chatview::NativeChatConnectionTestAccess::has_metadata(connection),
+                "missing-ACK recovery preserves original render time and exact server approval");
+        }
         if (mode == "retry") {
             // The synthetic creator approves asynchronously; do not tick the
             // native UI before the worker has collected that approval. Retire
@@ -160,6 +205,11 @@ void run(const std::wstring &origin, const std::wstring &auxiliary, const std::s
                 throw; // Keep the original first-render condition and 15-second deadline.
             }
             core = chatview::NativeChatSurfaceTestAccess::core(surface);
+            if (mode == "render-ack-lost") {
+                await([&] {
+                    return chatview::NativeChatConnectionTestAccess::first_text_rendered(connection);
+                }, "fresh nonce-bound first text ACK after local recovery", connection);
+            }
             expect(chatview::NativeChatConnectionTestAccess::has_metadata(connection), "connection metadata before logout");
             auto saved = chatview::load_connection();
             expect(saved.has_value() == remembered, "remember affects persistence only");

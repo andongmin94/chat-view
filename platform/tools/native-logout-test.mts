@@ -9,7 +9,7 @@ import { DisplayGateway } from '../server/chat/display-gateway.mts';
 import { fixture } from '../tests/fixtures/service.mts';
 
 const executable = process.argv[2]; assert(executable, 'native logout executable required');
-for (const mode of ['memory', 'remembered', 'stopped', 'retry', 'unrelated', 'pending', 'storage-failure', 'stored-only', 'cancel']) {
+for (const mode of ['memory', 'remembered', 'stopped', 'retry', 'render-ack-lost', 'unrelated', 'pending', 'storage-failure', 'stored-only', 'cancel']) {
   const f = await fixture({ createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot) });
   let child: ReturnType<typeof spawn> | undefined;
   let held: ServerResponse | undefined;

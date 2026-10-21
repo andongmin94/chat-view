@@ -4,13 +4,23 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 이전 WebView2 탐색 결과가 새 자체 채팅의 복구를 방해하지 않도록 차단
+## 현재 흐름: 첫 WebView2 렌더 ACK 유실 시 승인과 채팅을 보존한 표시 재시도
+
+시작 원격 `OBS` HEAD `ef7f4340213f99b9bff7b54eacbb57b3876c6539`. 첫 치지직 채팅 스냅샷이 승인된 자체 WebView2 문서로 전달됐지만 개별 `chat-rendered:nonce:frameId` ACK가 도착하지 않는 D1 경계에서, 지금까지는 렌더 15초 마감 후 서버 연결을 중지하고 수동 재연결만 남았다.
+
+- **사용자 동작:** 첫 승인된 구독 스냅샷의 렌더 ACK가 끊겨도 **원래 승인/역할/서버 구독을 그대로 유지하면서** 소유한 개인 채팅 WebView2 문서만 단 한 번 새 URL·nonce로 다시 열고, 최신 검증된 채팅 스냅샷을 재표시한다. 서버·로그인·브라우저 승인·WinHTTP 소켓과 공개 영상·광고는 재시작하지 않는다. 새 문서의 **실제 nonce/frameId ACK만** 첫 텍스트 수신 성공으로 간주한다. 문서가 처음부터 미준비였을 때의 기존 1회 복구와 횟수를 공유하며, 사용자가 Stop/로그아웃·승인 거부·외부 페이지·보호 상실·구독 중단 중에는 자동 재시도하지 않는다.
+- **예산/구현:** `NativeChatConnection`이 첫 subscribed 프레임을 ACK 전까지만 `in_flight_`로 보관한다(검증된 원래 크기 상한). 15초 렌더 제한의 절반이 지났지만 실제 ACK가 없고 현재 보호/승인이 유효한 경우 한 번만 소유 문서를 재생성한다. 늦게 도착한 새 subscribed 스냅샷이 있으면 그것을, 없으면 보관한 첫 스냅샷을 재게시한다. **원래 `render_deadline_`을 유지**하며 재게시할 때 15초를 새로 부여하지 않는다. 렌더 성공·중지·재승인 경계에서 보관본을 폐기한다. 서버 자격정보와 채팅 내용을 로그·디스크에 추가하지 않는다.
+- **회귀:** 기존 `native-logout`의 실제 합성 승인→WinHTTP→WebView2 통합 시험에 `render-ack-lost`를 추가한다. 최초 자신의 문서가 nonce-ready인 뒤 **그 문서의 생산용 WebMessageReceived ACK handler만 제거**하므로 실제 첫 DOM 메시지는 보이지만 네이티브 렌더 ACK는 0이다. 이후 제한시간 절반에서 소유 문서 복구 1회, 원래 렌더 기한 불변, 새 nonce 문서의 실제 텍스트·ACK 성공, 로그인 1회/같은 서버 역할·정상 로그아웃/타 사용자·다른 PC 영향 없음까지 확인한다. 기존 D1 문서 준비 실패 `retry`, 첫 텍스트·서버 로그아웃·보호 회귀도 완화하지 않는다.
+- **한계 및 다음 목표:** 실제 실계정 치지직·실게임/물리 HDMI·캡처카드, 5회 반복·자원·설치·패키징 qualification이 없는 합성 Windows CTest 결과는 D1/D2/D4/D6/D7 해결 완료를 뜻하지 않는다. 다음은 이 복구 뒤의 네이티브 첫 표시/실제 계정 수신 반복과 클릭 통과·포커스 사용성을 검증하고 재현되는 결함만 고친다. 체크리스트 **10/21(47.6%)** 유지.
+
+## 직전 완료 흐름: 이전 WebView2 탐색 결과가 새 자체 채팅의 복구를 방해하지 않도록 차단
 
 시작 `OBS` HEAD `55b574dd36069ee93d32988706fbba276cd95b4f`. 정상 첫 자체 채팅이나 기존 승인으로 복귀한 새 문서를 열 때, **이전 설정/개인 문서의 탐색 완료 알림이 뒤늦게 도착해 현재 HUD를 재탐색/로딩 상태로 바꿀 수 있는 경합**을 고친다.
 
 - **사용자 동작:** OBS 기반 송출 PC와 OBS 없는 게임 PC 컴패니언의 같은 소유 WebView2 HUD에서 설정 페이지 → 승인된 첫 채팅 → 명시적 복귀 또는 새 개인 문서로 전환하는 동안 오래된 성공/실패 탐색 이벤트는 현재 메시지 표시를 끊거나 불필요한 `CHAT RETRYING` 복구를 시작하지 않는다. 현재 실제 문서의 정상 NavigationCompleted 실패, 화면 손실/권한 철회, 개별 프레임 nonce·frameId 검증, 15초 첫 표시/재시도 예산, 캡처 제외 및 기존 OBS/투컴 경계는 유지한다.
 - **구현:** 기존 `WebViewHost`의 WebView2 `NavigationStarting`에서 **허용된 현재 URL의 NavigationId**를 소유하고, 새 설정/외부/개인 문서를 선택·이전 탐색을 중지하는 순간 오래된 ID를 먼저 무효화한다. `NavigationCompleted`는 일치하는 ID만 새 문서 준비 또는 탐색 실패 메시지로 보내며, Win32 메시지 큐가 지연된 경우까지 `HudWindow`가 처리 직전에 같은 ID를 재검증한다. 취소된/비허용 URL의 이전 이벤트는 연결 재시도 권한이나 채팅 렌더 ACK로 간주하지 않는다.
 - **검사:** `native-chat-surface-test.cpp`에서 실제 WebView2 소유 URL과 ID가 새 개인 문서·중단된 설정 탐색을 거칠 때 갱신되고 이전 ID가 즉시 무효가 되는지 검증한다. `native-display-client-test.cpp`의 실제 승인·렌더된 HUD에 오래된 navigation success/failure Win32 신호를 주입해 현재 건강/첫 채팅이 `Loading/Retrying`으로 역행하지 않는지 확인한다. 변경한 C++는 Windows native routine 51개에서 검증한다. 실계정 치지직/물리 게임 PC·HDR·HDMI·캡처카드 및 D1 반복/자원/설치/패키징 qualification은 별도 미완료로 유지한다.
+- **검증된 기능 `ef7f4340213f99b9bff7b54eacbb57b3876c6539`:** [Windows development #468/run `39559609595`](https://github.com/andongmin94/chat-view/actions/runs/39559609595) **completed/success**, native change scope 및 Windows x64 **CTest 51/51·실패0·총231.38초**. 실제 `native-chat-surface` **3.23초**에서 WebView2 소유 NavigationId 갱신/이전 ID 폐기, `native-display-client` **51.65초**에서 보호된 현재 HUD에 늦은 성공/실패 Win32 탐색 메시지를 주입해 현 채팅·건강 상태가 유지되는지 검증했고 `native-logout` **30.20초**, `native-chat-switch` **20.41초**, `companion-chat-early-first` **4.03초** 등도 통과했다. 첫 채팅/권한 보호를 실계정에서 5회 이상 반복한 결과는 아니고 **D1 간헐 초기 표시, D2/D4/D6/D7 및 배포 qualification**은 아직 미완료다. 관리·광고/CHZZK 서버 소스가 바뀌지 않아 관련 비네이티브 검사는 새로 실행하지 않았다.
 - **다음 목표:** 지속적으로 재현 가능한 첫 실제 채팅 누락과 초기 WebView2 탐색의 남은 D1 조건을 정리하되, 진단만 늘리기보다 현재 승인으로 복귀하는 완성된 사용자 경로를 개선한다. G1~G5 목표와 체크리스트 **10/21(47.6%)**는 변경하지 않는다.
 
 ## 직전 완료 흐름: 빠른 치지직 구독 중단·복구에서 이전 채팅을 먼저 비우기

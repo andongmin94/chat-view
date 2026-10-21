@@ -337,6 +337,42 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
     expect(open() == 1 && dialog == chatview::NativeChatConnectionTestAccess::dialog(connection) &&
         chatview::NativeChatConnectionTestAccess::connection(connection)->membership == approved_membership,
         "opening an approved connection does not replace its membership");
+    if (mode == "gateway-provider-burst") {
+        // Delay only the UI's consumption, not the WinHTTP receiver: both
+        // authenticated frames must reach the worker before the owner polls.
+        // A transient disconnect may not be overwritten by the new chat.
+        const auto before = surface.rendered_frames();
+        expect(evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            globalThis.providerBurstCleared = false;
+            new MutationObserver(() => {
+                if (list.querySelectorAll('li').length === 0)
+                    globalThis.providerBurstCleared = true;
+            }).observe(list, {childList: true});
+            return list.querySelectorAll('li').length === 1;
+        })())JS", connection) == L"true", "observe the owned chat DOM before fast provider recovery");
+        std::cout << "provider-burst\n" << std::flush;
+        const ULONGLONG delayed_until = GetTickCount64() + 350U;
+        while (GetTickCount64() < delayed_until) {
+            pump(nullptr);
+            MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+        await([&] {
+            return surface.rendered_frames() >= before + 2U && surface.rendered_messages() == 1U;
+        }, "fast provider loss and recovery render two distinct native frames", &connection);
+        expect(evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            return globalThis.providerBurstCleared === true &&
+                list.querySelectorAll('li').length === 1 &&
+                list.querySelector('li b').textContent === '복구 사용자' &&
+                list.querySelector('li .content').textContent === '새 구독의 첫 채팅 😀';
+        })())JS", connection) == L"true",
+            "actual WebView2 first clears stale chat, then displays the new subscription");
+        expect(query() == chatview::NativeChatStatus::Receiving &&
+            !IsWindowEnabled(GetDlgItem(dialog, 112)) &&
+            chatview::NativeChatConnectionTestAccess::connection(connection)->membership == approved_membership,
+            "rapid recovery preserves the original approval and exact fresh first-text acknowledgement");
+    }
     if (mode.starts_with("gateway-provider-loss")) {
         expect(!IsWindowEnabled(GetDlgItem(dialog, 112)),
                "a live first-text ACK does not offer redundant manual reconnect");

@@ -81,6 +81,12 @@ private:
     bool approval_denied_ = false; // Last server denial, not authority or a transport-error guess.
     bool pending_subscribed_ = false;
     bool in_flight_subscribed_ = false;
+    // A provider interruption must reach and be acknowledged by the same
+    // owned DOM before a rapid new subscription can replace its clear frame.
+    bool clearing_interrupted_chat_ = false;
+    bool in_flight_interruption_ = false;
+    bool after_clear_subscribed_ = false;
+    std::wstring after_clear_;
     bool displayed_subscribed_ = false;
     bool first_text_rendered_ = false; // First text row acknowledged by this owned DOM only.
     bool first_document_recovery_attempted_ = false; // At most one bounded local retry per approved display start.

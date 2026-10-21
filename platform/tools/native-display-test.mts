@@ -15,9 +15,10 @@ assert(executable, 'native test executable required');
 const snapshot = { state: 'subscribed', received: 1, messages: [
   { nickname: '검증 사용자', content: '안녕 😀 <img onerror=evil()>', messageTime: 1700000000000 },
 ] };
-for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gateway-provider-loss-gaming', 'login-cancel', 'login-cancel-unconfirmed', 'login-expiry', 'login-denied', 'cancel', 'local-expiry', 'redirect', 'wrong-scope', 'wrong-role',
+for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gateway-provider-loss-gaming', 'gateway-provider-burst', 'login-cancel', 'login-cancel-unconfirmed', 'login-expiry', 'login-denied', 'cancel', 'local-expiry', 'redirect', 'wrong-scope', 'wrong-role',
   'wrong-session', 'bad-count', 'claimed-capture', 'missing-connection', 'invalid-json', 'binary', 'oversize', 'idle']) {
-  const ui = mode === 'gateway' || mode === 'gateway-gaming' || mode.startsWith('gateway-provider-loss') || mode.startsWith('login-');
+  const ui = mode === 'gateway' || mode === 'gateway-gaming' ||
+    mode.startsWith('gateway-provider-loss') || mode === 'gateway-provider-burst' || mode.startsWith('login-');
   const role = mode === 'gateway-gaming' || mode === 'gateway-provider-loss-gaming' ? 'gaming' : 'streaming';
   let origin = '';
   const access = new DisplayAccess(() => ({ id: 'synthetic-owner', expiresAt: performance.now() + 60000 }));
@@ -53,7 +54,7 @@ for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gatew
   const peers = new WebSocketServer({ noServer: true, perMessageDeflate: false });
   const timers: ReturnType<typeof setInterval>[] = [];
   let requests = 0, upgrades = 0, redirected = 0, rendered = false;
-  let providerLost = false, providerReturned = false;
+  let providerLost = false, providerReturned = false, providerBurst = false;
   let child: ReturnType<typeof spawn> | undefined;
   const server = createServer((request, response) => {
     if (ui) {
@@ -153,6 +154,21 @@ for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gatew
         ] };
         gateway.changed();
       }
+      if (/(^|\n)provider-burst\r?\n/u.test(output) && !providerBurst) {
+        assert.equal(mode, 'gateway-provider-burst');
+        providerBurst = true;
+        void (async () => {
+          currentSnapshot = { state: 'disconnected', received: 0, messages: [] };
+          gateway.changed();
+          // The gateway batches within 50ms. Send both *separate* server
+          // frames while the native HUD owner deliberately does not poll.
+          await new Promise<void>(resolve => setTimeout(resolve, 90));
+          currentSnapshot = { state: 'subscribed', received: 1, messages: [
+            { nickname: '복구 사용자', content: '새 구독의 첫 채팅 😀', messageTime: 1700000001000 },
+          ] };
+          gateway.changed();
+        })().catch(() => child?.kill());
+      }
       if (/(^|\n)rendered\r?\n/u.test(output) && !rendered) {
         rendered = true; assert(grantId); access.revokeSessions(); gateway.changed();
       }
@@ -183,6 +199,8 @@ for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gatew
     if (ui) assert(rendered, 'native DOM acknowledgement before revocation');
     if (mode.startsWith('gateway-provider-loss')) assert(providerLost && providerReturned,
       'the native HUD reported both the upstream interruption and its fresh first chat');
+    if (mode === 'gateway-provider-burst')
+      assert(providerBurst, 'two ordered provider frames arrived before the HUD owner resumed polling');
     if (['wrong-scope', 'wrong-role', 'redirect', 'cancel'].includes(mode)) assert.equal(upgrades, 0);
     console.log(`${mode}: passed`);
   } finally {

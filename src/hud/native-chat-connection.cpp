@@ -337,6 +337,8 @@ bool NativeChatConnection::open_surface() noexcept
     if (!surface_.open(hud_.webview_)) return false;
     first_text_rendered_ = false;
     ready_ = false; displayed_subscribed_ = false; awaiting_frame_ = 0; pending_.clear();
+    clearing_interrupted_chat_ = false; in_flight_interruption_ = false;
+    after_clear_.clear(); after_clear_subscribed_ = false;
     first_document_recovery_attempted_ = false;
     loading_deadline_ = GetTickCount64() + 15000U;
     return true;
@@ -551,7 +553,9 @@ void NativeChatConnection::forget() noexcept
 }
 void NativeChatConnection::clear_display(bool preserve_host) noexcept
 {
-    login_url_.clear(); pending_.clear(); connection_state_.reset(); first_text_rendered_ = false;
+    login_url_.clear(); pending_.clear(); after_clear_.clear();
+    clearing_interrupted_chat_ = false; in_flight_interruption_ = false; after_clear_subscribed_ = false;
+    connection_state_.reset(); first_text_rendered_ = false;
     if (active_) {
         active_ = false; awaiting_login_ = false; ready_ = false; displayed_subscribed_ = false; awaiting_frame_ = 0U; surface_.close();
         if (!preserve_host) {
@@ -699,7 +703,24 @@ void NativeChatConnection::tick() noexcept
                     }
                     if (dialog_ && IsWindowVisible(dialog_)) SetForegroundWindow(dialog_);
                 }
-                reconnecting_ = false; pending_ = std::move(update.envelope); pending_subscribed_ = update.subscribed;
+                reconnecting_ = false;
+                if (update.chat_interrupted) {
+                    // Preserve the first empty interruption frame until WebView2
+                    // acknowledges it. A rapid new subscription must not
+                    // overwrite it while another render is still in flight.
+                    if (!clearing_interrupted_chat_) {
+                        clearing_interrupted_chat_ = true;
+                        pending_ = std::move(update.envelope);
+                        pending_subscribed_ = false;
+                    }
+                    after_clear_.clear(); after_clear_subscribed_ = false;
+                } else if (clearing_interrupted_chat_) {
+                    after_clear_ = std::move(update.envelope);
+                    after_clear_subscribed_ = update.subscribed;
+                } else {
+                    pending_ = std::move(update.envelope);
+                    pending_subscribed_ = update.subscribed;
+                }
                 notice(update.subscribed
                     ? (remembered_ ? L"채팅 연결을 유지하고 있습니다. 읽기 권한은 자동 갱신됩니다."
                         : L"현재 실행 중 읽기 권한을 자동 갱신합니다. 다음 실행에는 다시 로그인합니다.")
@@ -758,6 +779,15 @@ void NativeChatConnection::tick() noexcept
                 first_text_rendered_ = true;
                 displayed_status_.reset(); show_display_status();
             }
+            if (in_flight_interruption_) {
+                in_flight_interruption_ = false;
+                clearing_interrupted_chat_ = false;
+                if (!after_clear_.empty()) {
+                    pending_ = std::move(after_clear_);
+                    pending_subscribed_ = after_clear_subscribed_;
+                }
+                after_clear_.clear(); after_clear_subscribed_ = false;
+            }
         }
         if (awaiting_frame_ && GetTickCount64() >= render_deadline_) {
             end(L"채팅 화면 응답이 중단됐습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");
@@ -769,7 +799,9 @@ void NativeChatConnection::tick() noexcept
                 return;
             }
             awaiting_frame_ = surface_.rendered_frames() + 1U;
-            in_flight_subscribed_ = pending_subscribed_; render_deadline_ = GetTickCount64() + 15000U; pending_.clear();
+            in_flight_subscribed_ = pending_subscribed_;
+            in_flight_interruption_ = clearing_interrupted_chat_;
+            render_deadline_ = GetTickCount64() + 15000U; pending_.clear();
         }
         hud_.set_page_health(ready_ && displayed_subscribed_ ? HudPageState::Ready : HudPageState::Loading, HudProvider::Chzzk);
     } catch (...) {

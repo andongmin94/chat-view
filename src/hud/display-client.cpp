@@ -277,6 +277,9 @@ struct DisplayClient::State {
     std::atomic<bool> finished{false};
     std::mutex mutex;
     DisplayUpdate latest{DisplayStatus::Connecting, {}, false};
+    // Preserve one subscription-loss frame when a fresh chat arrives before
+    // the HUD owner has consumed the loss. Other heartbeats still coalesce.
+    std::optional<DisplayUpdate> after_interruption;
     std::wstring login_url;
     ULONGLONG login_expires = 0U; // Original request deadline, including HTTP latency.
     bool browser_login = false;
@@ -315,7 +318,8 @@ struct DisplayClient::State {
     void finish(DisplayStatus status) noexcept
     {
         std::lock_guard lock(mutex);
-        latest = {status, {}, false}; login_url.clear(); login_expires = 0U; pending = true; expires = 0; last_frame = 0;
+        after_interruption.reset(); latest = {status, {}, false};
+        login_url.clear(); login_expires = 0U; pending = true; expires = 0; last_frame = 0;
         erase(output_token); output_expires = 0U;
     }
 };
@@ -398,6 +402,7 @@ bool DisplayClient::resume_current() noexcept
             credential = state->renewal;
             require(ResetEvent(state->cancel.get()) && ResetEvent(state->logout_cancel.get()) &&
                 ResetEvent(state->output_cancel.get()) && ResetEvent(state->output_changed.get()));
+            state->after_interruption.reset();
             state->latest = {DisplayStatus::Connecting, {}, false};
             state->login_url.clear(); state->login_expires = 0U; state->pending = true;
             state->expires = 0; state->last_frame = 0;
@@ -429,6 +434,7 @@ bool DisplayClient::sign_out() noexcept
                 if (!state_->logout_requested) ResetEvent(state_->logout_cancel.get());
                 state_->logout_requested = true;
                 SetEvent(state_->cancel.get()); SetEvent(state_->output_cancel.get());
+                state_->after_interruption.reset();
                 state_->latest = {DisplayStatus::Ended, {}, false}; state_->login_url.clear(); state_->login_expires = 0U;
                 state_->pending = true; state_->expires = 0; state_->last_frame = 0;
                 return true;
@@ -479,12 +485,21 @@ bool DisplayClient::take(DisplayUpdate &update) noexcept
     if (state_->latest.status == DisplayStatus::Receiving &&
         ((state_->expires && now >= state_->expires) || (state_->last_frame && now - state_->last_frame >= kOperationMs))) {
         if (!state_->reusable) SetEvent(state_->cancel.get());
+        state_->after_interruption.reset();
         state_->latest = {state_->reusable ? DisplayStatus::Reconnecting : DisplayStatus::Ended, {}, false};
         state_->pending = true; state_->expires = 0; state_->last_frame = 0;
     }
     if (!state_->pending) return false;
     update = std::move(state_->latest);
-    state_->latest.status = update.status; state_->latest.subscribed = update.subscribed; state_->pending = false;
+    if (state_->after_interruption) {
+        state_->latest = std::move(*state_->after_interruption);
+        state_->after_interruption.reset();
+        state_->pending = true;
+    } else {
+        state_->latest.status = update.status;
+        state_->latest.subscribed = update.subscribed;
+        state_->pending = false;
+    }
     return true;
 }
 void DisplayClient::run_signout(const std::shared_ptr<State> &state) noexcept
@@ -732,9 +747,19 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                     {
                         std::lock_guard lock(state->mutex);
                         network(WaitForSingleObject(state->cancel.get(), 0) == WAIT_TIMEOUT && GetTickCount64() < expires);
-                        state->latest = {DisplayStatus::Receiving, std::move(envelope), subscribed,
-                                         std::move(connection_state), chat_interrupted};
-                        state->last_frame = GetTickCount64(); state->pending = true;
+                        DisplayUpdate incoming{DisplayStatus::Receiving, std::move(envelope), subscribed,
+                                               std::move(connection_state), chat_interrupted};
+                        if (state->pending && state->latest.status == DisplayStatus::Receiving &&
+                            state->latest.chat_interrupted && !chat_interrupted) {
+                            // An interruption must reach the owned renderer before
+                            // a new subscription replaces its previous text.
+                            state->after_interruption = std::move(incoming);
+                        } else {
+                            state->after_interruption.reset();
+                            state->latest = std::move(incoming);
+                            state->pending = true;
+                        }
+                        state->last_frame = GetTickCount64();
                         if (!output_ready && !output_token.empty()) {
                             erase(state->output_token); state->output_token = output_token;
                             state->output_expires = expires; output_ready = true;

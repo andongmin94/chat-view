@@ -144,7 +144,8 @@ test('existing account chooses a test campaign; separate public page renders onl
     assert.equal(await outputState(alice.b), 'streaming-recording');
     now += 500; await report(f, alice.lease.outputToken!, 5, false, false);
     assert.equal(await outputState(alice.b), 'stopped', 'explicit inactive OBS report is not missing data');
-    assert.equal(await outputState(bob.b), 'stopped', 'Alice report changes cannot touch Bob\'s status');
+    assert.equal(await outputState(bob.b), 'unknown',
+      'Bob\'s independently expired 15-second report becomes unknown, never a persistent stopped observation');
     const closed = once(alicePeer, 'close'); alicePeer.close(); await closed;
     // Retiring the remote socket is observed on the server by the next event turn.
     await new Promise<void>(resolve => setImmediate(resolve));

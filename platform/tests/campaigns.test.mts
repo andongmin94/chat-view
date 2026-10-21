@@ -10,6 +10,11 @@ import type { OutputView } from '../server/chat/broadcast-output.mts';
 
 const denied = (status: number) => (e: unknown) => e instanceof CampaignError && e.status === status;
 const reported = (): OutputView => ({ state: 'reported', streaming: false, recording: false, expiresInMs: 15000 });
+const chosen = (ads: Campaigns, sourceId: string) => {
+  const frame = ads.snapshot(sourceId);
+  if (frame.state !== 'visible') throw new Error('Expected this fixed public test creative to be visible');
+  return frame.campaign;
+};
 
 test('only a registered test campaign and an approved streaming connection can be selected', () => {
   const sessions = new SessionStore(), ads = new Campaigns({ sessions, output: reported });
@@ -63,14 +68,14 @@ test('two operator-approved nonpayable creatives switch on the same public sourc
     const aliceSource = ads.status('alice').sourceId!, bobSource = ads.status('bob').sourceId!;
     assert.notEqual(aliceSource, bobSource);
     assert.equal(ads.status('alice').campaignId, TEST_CAMPAIGN.id);
-    assert.deepEqual(ads.snapshot(aliceSource).campaign, TEST_CAMPAIGN);
+    assert.deepEqual(chosen(ads, aliceSource), TEST_CAMPAIGN);
 
     ads.select('alice', TEST_CAMPAIGN_ALT.id);
     assert.deepEqual(ads.status('alice'), { sourceId: aliceSource, selected: true, campaignId: TEST_CAMPAIGN_ALT.id },
       'same creator keeps one OBS source and one selected campaign');
-    assert.deepEqual(ads.snapshot(aliceSource).campaign, TEST_CAMPAIGN_ALT,
+    assert.deepEqual(chosen(ads, aliceSource), TEST_CAMPAIGN_ALT,
       'read-only public response serves only the newly selected fixed artwork');
-    assert.deepEqual(ads.snapshot(bobSource).campaign, TEST_CAMPAIGN, 'another creator retains their own selection');
+    assert.deepEqual(chosen(ads, bobSource), TEST_CAMPAIGN, 'another creator retains their own selection');
     assert.equal(sessions.database.prepare('SELECT COUNT(*) AS count FROM ad_selections WHERE source_id = ?')
       .get(aliceSource)?.count, 1, 'switch replaces the same row, never a duplicate campaign/source');
     assert.throws(() => ads.select('alice', 'chatview-test-script'), denied(404));
@@ -81,7 +86,7 @@ test('two operator-approved nonpayable creatives switch on the same public sourc
     assert.deepEqual(ads.status('alice'), { sourceId: aliceSource, selected: false });
     ads.select('alice', TEST_CAMPAIGN.id);
     assert.equal(ads.status('alice').sourceId, aliceSource);
-    assert.deepEqual(ads.snapshot(aliceSource).campaign, TEST_CAMPAIGN);
+    assert.deepEqual(chosen(ads, aliceSource), TEST_CAMPAIGN);
   } finally { sessions.close(); }
 });
 

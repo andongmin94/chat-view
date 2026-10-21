@@ -144,7 +144,7 @@ try {
   }
   await call('SetCurrentProgramScene', { sceneName: main });
   const alice = await f.connect('obs-ad-fixture', 'streaming');
-  const select = async (campaignId = TEST_CAMPAIGN.id) => {
+  const select = async (campaignId: string = TEST_CAMPAIGN.id) => {
     // Real creator workflow: confirm current same-owner sender and campaign
     // page before every manual select, never replaying a stale form.
     await f.page('/campaigns', alice.b);

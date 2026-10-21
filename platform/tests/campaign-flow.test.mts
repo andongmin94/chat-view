@@ -30,10 +30,11 @@ async function open(origin: string, token: string) {
   });
   peer.on('error', () => {}); await once(peer, 'open'); return peer;
 }
-async function report(f: Fixture, token: string, sequence = 1) {
+async function report(f: Fixture, token: string, sequence = 1,
+  streaming = false, recording = false) {
   const response = await f.request('/broadcast/output', { method: 'POST', headers: {
     Authorization: `ChatView-Output ${token}`, 'Content-Type': 'application/json',
-  }, body: JSON.stringify({ sequence, streaming: false, recording: false, sampleAgeMs: 0 }) });
+  }, body: JSON.stringify({ sequence, streaming, recording, sampleAgeMs: 0 }) });
   assert.equal(response.status, 200);
 }
 const snapshot = async (f: Fixture, id: string) => {
@@ -73,6 +74,10 @@ test('existing account chooses a test campaign; separate public page renders onl
       'copy helper is not enabled on any other management page');
     const bannerState = async (browser: Browser) =>
       /data-public-banner-state="([^"]+)"/u.exec(await f.page('/campaigns', browser))?.[1];
+    const outputState = async (browser: Browser) =>
+      /data-output-report-state="([^"]+)"/u.exec(await f.page('/campaigns', browser))?.[1];
+    assert.equal(await outputState(alice.b), 'unknown');
+    assert.equal(await outputState(bob.b), 'unknown');
     assert.equal(await bannerState(alice.b), 'waiting-report', 'selection alone does not imply a displayed banner');
     assert.equal(await bannerState(bob.b), 'waiting-report', 'another creator starts without report');
     const gameRequest = await f.start('gaming');
@@ -85,8 +90,11 @@ test('existing account chooses a test campaign; separate public page renders onl
     assert.deepEqual(await snapshot(f, aliceId), HIDDEN_AD, 'another creator report does not enable this banner');
     assert.equal(await bannerState(alice.b), 'waiting-report', 'other owner cannot advance my preview');
     assert.equal(await bannerState(bob.b), 'report-ready', 'owner sees only own recent report');
+    assert.equal(await outputState(bob.b), 'stopped', 'recording and streaming were both false in Bob\'s accepted report');
+    assert.equal(await outputState(alice.b), 'unknown', 'another creator cannot change Alice\'s observed output state');
     await report(f, alice.lease.outputToken!);
     assert.equal(await bannerState(alice.b), 'report-ready', 'owner dashboard derives the public state');
+    assert.equal(await outputState(alice.b), 'stopped', 'a reported inactive OBS still allows an owner-only preview');
     const visible = await snapshot(f, aliceId);
     assert.equal(visible.state, 'visible'); assert.equal(visible.mode, 'test');
     assert.deepEqual(visible.campaign, TEST_CAMPAIGN);
@@ -124,13 +132,25 @@ test('existing account chooses a test campaign; separate public page renders onl
     now += 15000;
     assert.deepEqual(await snapshot(f, aliceId), HIDDEN_AD, 'report expiry blanks the public output');
     assert.equal(await bannerState(alice.b), 'waiting-report', 'expired report is not a visible or zero-viewer claim');
-    now += 500; await report(f, alice.lease.outputToken!, 2);
+    now += 500; await report(f, alice.lease.outputToken!, 2, true, false);
     assert.equal((await snapshot(f, aliceId)).state, 'visible');
     assert.equal(await bannerState(alice.b), 'report-ready', 'fresh report restores test-only readiness');
+    assert.equal(await outputState(alice.b), 'streaming', 'actual accepted streaming flag is shown to this owner');
+    now += 500; await report(f, alice.lease.outputToken!, 3, false, true);
+    assert.equal(await outputState(alice.b), 'recording', 'recording-only is not called a broadcast');
+    assert.equal(await bannerState(alice.b), 'report-ready',
+      'test public preview readiness remains independent of recording-only output state');
+    now += 500; await report(f, alice.lease.outputToken!, 4, true, true);
+    assert.equal(await outputState(alice.b), 'streaming-recording');
+    now += 500; await report(f, alice.lease.outputToken!, 5, false, false);
+    assert.equal(await outputState(alice.b), 'stopped', 'explicit inactive OBS report is not missing data');
+    assert.equal(await outputState(bob.b), 'stopped', 'Alice report changes cannot touch Bob\'s status');
     const closed = once(alicePeer, 'close'); alicePeer.close(); await closed;
     // Retiring the remote socket is observed on the server by the next event turn.
     await new Promise<void>(resolve => setImmediate(resolve));
     assert.deepEqual(await snapshot(f, aliceId), HIDDEN_AD);
+    assert.equal(await outputState(alice.b), 'unknown',
+      'closed streaming socket invalidates the formerly accepted sender flags');
     bobPeer.terminate();
   } finally { await f.close(); }
 });

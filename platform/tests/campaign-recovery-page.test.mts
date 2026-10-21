@@ -21,7 +21,8 @@ for (const [selectionState, selected, streamingConnected, previewReady, expected
   test(`recovery ${selectionState}/${selected}/${streamingConnected}/${previewReady} -> ${expected}`, () => {
     const url = `https://service.invalid/public/ads/${'1'.repeat(32)}`;
     const html = campaignsPage({ selected, sourceId: '1'.repeat(32) }, 'a'.repeat(64),
-      'https://service.invalid', { selectionState, streamingConnected, previewReady, viewToken: 'b'.repeat(64) });
+      'https://service.invalid', { selectionState, streamingConnected, previewReady,
+        output: { state: 'unknown' }, viewToken: 'b'.repeat(64) });
     const recovery = /<div data-banner-recovery-state="([^"]+)">([\s\S]*?)<\/div>/u.exec(html);
     assert(recovery);
     assert.equal(recovery[1], expected);
@@ -43,3 +44,34 @@ for (const [selectionState, selected, streamingConnected, previewReady, expected
       'report expiry is no longer confused with revoked selection');
   });
 }
+
+test('creator sees real output-report distinctions separately from public test-banner readiness', () => {
+  const states = [
+    { output: { state: 'unknown' } as const, expected: 'unknown', pattern: /미확인/u },
+    { output: { state: 'reported', streaming: false, recording: false, expiresInMs: 8000 } as const,
+      expected: 'stopped', pattern: /스트리밍·녹화 모두 비활성/u },
+    { output: { state: 'reported', streaming: true, recording: false, expiresInMs: 8000 } as const,
+      expected: 'streaming', pattern: /스트리밍 활성·녹화 비활성/u },
+    { output: { state: 'reported', streaming: false, recording: true, expiresInMs: 8000 } as const,
+      expected: 'recording', pattern: /스트리밍 비활성·녹화 활성/u },
+    { output: { state: 'reported', streaming: true, recording: true, expiresInMs: 8000 } as const,
+      expected: 'streaming-recording', pattern: /스트리밍·녹화 모두 활성/u },
+  ];
+  for (const { output, expected, pattern } of states) {
+    const ready = output.state === 'reported';
+    const html = campaignsPage({ selected: true, sourceId: '1'.repeat(32) }, 'a'.repeat(64),
+      'https://service.invalid', { selectionState: 'ready', streamingConnected: true, previewReady: ready,
+        output, viewToken: 'b'.repeat(64) });
+    const paragraph = /<p data-output-report-state="([^"]+)">([^<]+)<\/p>/u.exec(html);
+    assert(paragraph);
+    assert.equal(paragraph[1], expected);
+    assert.match(paragraph[2]!, pattern);
+    assert.equal((html.match(/data-output-report-state=/gu) ?? []).length, 1);
+    assert.equal(html.includes('data-public-banner-state="report-ready"'), ready,
+      'stopped and recording-only flags can permit preview but never imply a live broadcast');
+    assert.match(html, /최대 15초 유효/u);
+    assert.match(html, /자동 갱신되지 않습니다/u);
+    assert.match(html, /광고.*시청자 광고 노출/u);
+    assert.doesNotMatch(paragraph[2]!, /확정 수익|실측 광고 시청|HP 감소/u);
+  }
+});

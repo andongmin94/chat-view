@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { TEST_CAMPAIGN } from './campaigns.mts';
 import type { Campaigns, CampaignStatus } from './campaigns.mts';
+import type { OutputView } from '../chat/broadcast-output.mts';
 
 const escape = (value: string) => value.replace(/[&<>"']/gu,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -63,8 +64,9 @@ export function servePublicAd(request: IncomingMessage, response: ServerResponse
 export type CampaignSelectionState = 'provider-required' | 'streaming-required' | 'ready';
 
 export function campaignsPage(status: CampaignStatus, csrf: string, origin: string,
-  { selectionState, streamingConnected, previewReady, viewToken }: {
-    selectionState: CampaignSelectionState; streamingConnected: boolean; previewReady: boolean; viewToken: string;
+  { selectionState, streamingConnected, previewReady, output, viewToken }: {
+    selectionState: CampaignSelectionState; streamingConnected: boolean; previewReady: boolean;
+    output: OutputView; viewToken: string;
   }): string {
   const form = (path: string, label: string) => `<form method="post" action="${path}"><input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="view" value="${viewToken}"><button>${label}</button></form>`;
   const source = status.sourceId ? `${origin}/public/ads/${status.sourceId}` : undefined;
@@ -76,6 +78,22 @@ export function campaignsPage(status: CampaignStatus, csrf: string, origin: stri
   const preview = !status.selected ? { state: 'not-selected', text: '캠페인이 선택되지 않아 공개 소스는 투명하게 대기합니다.' }
     : selectionState === 'ready' && streamingConnected && previewReady ? { state: 'report-ready', text: '캠페인 선택과 최근 송출 PC 출력 보고가 확인됐습니다. 공개 시험 배너를 표시할 조건은 충족됐지만 OBS나 시청자 화면에서 보였다는 뜻은 아닙니다.' }
     : { state: 'waiting-report', text: '캠페인은 선택됐지만 최근 송출 PC 출력 보고가 없어 공개 소스는 투명하게 대기합니다.' };
+  // The latest accepted OBS streaming/recording flags are not the banner
+  // renderer's visibility, a recording artifact or a viewer's exposure.
+  // A valid stopped report can still permit a selected test banner preview.
+  const outputState = output.state === 'unknown' ? 'unknown'
+    : output.streaming && output.recording ? 'streaming-recording'
+    : output.streaming ? 'streaming'
+    : output.recording ? 'recording' : 'stopped';
+  const outputText = outputState === 'unknown'
+    ? '유효한 최근 송출 PC 출력 보고가 없습니다. 현재 송출·녹화 여부는 미확인입니다.'
+    : outputState === 'streaming-recording'
+      ? '최근 송출 PC 보고: 스트리밍·녹화 모두 활성. OBS 화면 및 실제 시청자 노출은 별도 확인해야 합니다.'
+      : outputState === 'streaming'
+        ? '최근 송출 PC 보고: 스트리밍 활성·녹화 비활성. 실제 영상·광고 노출을 증명하지 않습니다.'
+        : outputState === 'recording'
+          ? '최근 송출 PC 보고: 스트리밍 비활성·녹화 활성. 녹화 보고를 방송 또는 시청자 노출로 계산하지 않습니다.'
+          : '최근 송출 PC 보고: 스트리밍·녹화 모두 비활성. 배너 준비가 완료돼도 이는 미리보기 조건일 뿐입니다.';
   // Explain the next action using this owner's existing approval/presence and
   // the public snapshot predicate. No management read reconnects or reselects.
   const recovery = selectionState === 'provider-required' ? {
@@ -122,6 +140,14 @@ ${selectionState === 'ready' ? form(`/campaigns/${TEST_CAMPAIGN.id}/select`, sta
 <p><strong>${recovery.title}</strong></p>${recovery.help}
 </div>
 <p><a href="/account#two-pc-status">송출 승인·현재 연결 확인</a></p>
+<section id="sender-output-status" aria-labelledby="sender-output-status-title">
+<h4 id="sender-output-status-title">송출 PC의 최근 출력 상태 보고</h4>
+<p data-output-report-state="${outputState}">${outputText}</p>
+<p>송출 역할로 승인된 연결의 최근 유효 보고를 이 관리 화면을 연 시점에만 읽습니다.
+광고 배너의 서버 표시 준비, OBS의 실제 화면, 녹화 영상, 시청자 광고 노출·주목은 각각 별개입니다.
+출력 보고는 최대 15초 유효하며 이 페이지는 자동 갱신되지 않습니다.
+<a href="/campaigns">최근 출력 상태 다시 확인</a></p>
+</section>
 <p>최근 출력 보고에는 녹화·미리보기 상태도 포함될 수 있습니다. 열린 연결은 서버의 채팅 WebSocket이며 PC 실행·채팅 글자 표시의 증거가 아닙니다. 이 상태는 실제 OBS 브라우저 화면, 방송 송출 또는 시청자 광고 노출을 측정하지 않습니다.
 <a href="/campaigns">현재 상태 새로고침</a></p>
 </section>

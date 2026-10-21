@@ -175,6 +175,8 @@ def run() -> None:
                             assert public_url.startswith(f.origin + "/public/ads/")
                             assert len(public_url.rsplit("/", 1)[-1]) == 32
                             expect(flow.page.locator('[data-public-banner-state="waiting-report"]')).to_have_count(1)
+                            expect(flow.page.locator('[data-output-report-state="unknown"]')).to_have_count(1)
+                            expect(flow.page.locator("#sender-output-status")).to_contain_text("현재 송출·녹화 여부는 미확인")
                             flow.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=f.origin)
                             copy = flow.page.get_by_role("button", name="공개 주소 복사")
                             copy.click()
@@ -419,6 +421,11 @@ def run() -> None:
 
                     old = f.command("game-role-start")
                     assert f.command("sender-report")["ok"]
+                    setup.reload()
+                    expect(setup.locator('[data-output-report-state="stopped"]')).to_have_count(1)
+                    expect(setup.locator("#sender-output-status")).to_contain_text(
+                        "배너 준비가 완료돼도 이는 미리보기 조건")
+                    expect(setup.locator('[data-public-banner-state="report-ready"]')).to_have_count(1)
                     expect(banner).to_be_visible()
                     flow.page.reload()
                     expect(gamer.locator('[data-approved-count]')).to_have_attribute("data-approved-count", "1")

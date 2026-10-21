@@ -6,11 +6,14 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocket } from 'ws';
+import { DisplayGateway } from '../server/chat/display-gateway.mts';
 import { fixture } from './fixtures/service.mts';
 import { TEST_CAMPAIGN, TEST_CAMPAIGN_ALT, HIDDEN_AD } from '../server/ads/campaigns.mts';
 
 test('creator chooses a second approved nonpayable banner while OBS source URL and owner boundaries stay intact', async () => {
-  const f = await fixture();
+  const f = await fixture({
+    createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot),
+  });
   const readers: WebSocket[] = [];
   try {
     const alice = await f.connect('alice', 'streaming');

@@ -10,7 +10,8 @@ const flush = () => new Promise<void>(resolve => setImmediate(resolve));
 let moduleNumber = 0;
 async function fixture(path = `/public/ads/${'a'.repeat(32)}`) {
   const events = new EventTarget();
-  const elements = new Map(['banner', 'brand', 'title', 'description'].map(id => [id, { hidden: true, textContent: '' }]));
+  const elements = new Map(['banner', 'brand', 'title', 'description'].map(id => [id,
+    { hidden: true, textContent: '', dataset: { campaign: '' } }]));
   let timerId = 0, calls = 0, now = 0;
   const tasks = new Map<number, { fn: () => void; at: number; interval: number }>();
   const timer = (fn: () => void, delay: number, interval: number) => {

@@ -120,7 +120,7 @@ export async function fixture(options: Options = {}) {
   const post = (path: string, b = browser) => request(path, { method: 'POST',
     headers: { Cookie: b.cookie, Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ csrf: b.csrf,
-      ...(/^\/campaigns\/(?:stop|[a-z0-9-]{1,64}\/select)$/u.test(path) && b.view ? { view: b.view } : {}) }),
+      ...(/^\/campaigns\/(?:stop|[a-z0-9-]{1,64}\/(?:select|confirm))$/u.test(path) && b.view ? { view: b.view } : {}) }),
   });
   async function start(role: ConnectionRole = 'gaming') {
     const verifier = nonce(), response = await native('/display/login', 'ChatView-Challenge', hashSecret(verifier), role);

@@ -11,6 +11,9 @@
 #include <string>
 
 namespace chatview {
+struct WebViewHostTestAccess {
+    static UINT64 navigation(const WebViewHost &host) { return host.current_navigation_id_; }
+};
 struct NativeChatSurfaceTestAccess {
     static ICoreWebView2 *core(NativeChatSurface &surface) { return surface.webview_.Get(); }
     static bool omit_completed_for_current_document(NativeChatSurface &surface) {
@@ -132,6 +135,9 @@ int main()
         expect(chatview::NativeChatSurfaceTestAccess::omit_completed_for_current_document(surface),
             "omit first native NavigationCompleted notification");
         await([&] { return surface.ready(); }, "owned document nonce handshake without load events");
+        const UINT64 first_navigation = chatview::WebViewHostTestAccess::navigation(host);
+        expect(host.is_current_navigation(first_navigation),
+            "owned first document is bound to a nonzero WebView2 navigation ID");
         ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(surface);
         const std::wstring first_url = source(core.Get());
         expect(first_url.starts_with(L"https://chatview.invalid/"), "host-owned memory document");
@@ -214,6 +220,8 @@ int main()
                     return S_OK;
                 }).Get(), &setup_navigation_token)), "observe setup navigation churn");
         for (unsigned int request = 0U; request < 12U; ++request) host.show_setup_page();
+        expect(!host.is_current_navigation(first_navigation),
+            "superseding own chat immediately fences its prior navigation completion");
         expect(!surface.ready() && !surface.publish(kMessage), "setup immediately invalidates private delivery");
         await([&] { return evaluate(core.Get(), L"document.querySelector('h1')?.textContent === 'ChatView needs a chat URL'") == L"true"; }, "setup page actually loads");
         const std::wstring setup_url = source(core.Get());
@@ -238,6 +246,10 @@ int main()
         surface.close(); surface.close();
         expect(surface.open(host), "new own document after close");
         await([&] { return surface.ready(); }, "fresh document handshake");
+        const UINT64 fresh_navigation = chatview::WebViewHostTestAccess::navigation(host);
+        expect(host.is_current_navigation(fresh_navigation) &&
+            !host.is_current_navigation(first_navigation) && fresh_navigation != first_navigation,
+            "fresh owned document replaces the old navigation ID as well as its nonce");
         expect(source(core.Get()) != first_url, "reopen gets distinct document identity");
         const std::wstring fresh_nonce_json = evaluate(core.Get(),
             L"document.querySelector('script[type=module]')?.nonce");
@@ -319,10 +331,16 @@ int main()
         // between requests. No retry-on-failure or relaxed DOM/time bounds.
         for (unsigned transition = 0; transition < 4; ++transition) {
             const std::wstring previous_owned_url = source(core.Get());
+            const UINT64 previous_navigation = chatview::WebViewHostTestAccess::navigation(host);
             host.show_setup_page();
+            expect(!host.is_current_navigation(previous_navigation),
+                "queued old success/failure cannot become current after setup selection");
             expect(host.reload(), "queue prior setup replacement");
             expect(surface.open(host), "private chat supersedes pending setup");
             await([&] { return surface.ready(); }, "new owned document after cancelled setup");
+            expect(host.is_current_navigation(chatview::WebViewHostTestAccess::navigation(host)) &&
+                !host.is_current_navigation(previous_navigation),
+                "host acknowledges only the latest owned navigation after superseded setup");
             expect(source(core.Get()) != previous_owned_url,
                 "the pending old navigation cannot authorize or replace the new owned URL");
             expect(surface.publish(kMessage), "first message after superseded setup");

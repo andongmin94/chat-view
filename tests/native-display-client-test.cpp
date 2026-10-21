@@ -4,6 +4,7 @@
 #include "hud/hud-window.hpp"
 #include "hud/native-chat-connection.hpp"
 #include "common/win32-handle.hpp"
+#include "common/window-messages.hpp"
 #include <Windows.h>
 #include <wrl/event.h>
 #include <algorithm>
@@ -334,6 +335,18 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
         control_text(dialog, 119).empty(),
         "only the fresh confirmed approval retires the saved-account fence and transient old-code warning");
     const auto approved_membership = state->membership;
+    // A completed older WebView2 navigation can remain queued after the
+    // private receiver is already displaying the new subscription. The HUD
+    // must ignore both stale failure/retry and stale success/loading messages.
+    const UINT health_query = RegisterWindowMessageW(chatview::kQueryHudHealthMessageName);
+    expect(health_query != 0U, "registered existing read-only HUD health query");
+    const LRESULT health_before = SendMessageW(host, health_query, 0U, 0L);
+    SendMessageW(host, chatview::kWebViewNavigationFailedMessage,
+        COREWEBVIEW2_WEB_ERROR_STATUS_UNEXPECTED_ERROR, 0L);
+    SendMessageW(host, chatview::kWebViewDocumentReadyMessage, 0U, 0L);
+    expect(SendMessageW(host, health_query, 0U, 0L) == health_before &&
+        surface.ready() && surface.rendered_messages() == 1U,
+        "stale host navigation signals cannot turn live private chat into retry/loading");
     expect(open() == 1 && dialog == chatview::NativeChatConnectionTestAccess::dialog(connection) &&
         chatview::NativeChatConnectionTestAccess::connection(connection)->membership == approved_membership,
         "opening an approved connection does not replace its membership");

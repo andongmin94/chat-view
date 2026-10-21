@@ -33,6 +33,12 @@ public:
     void close() noexcept;
 
     [[nodiscard]] bool ready() const noexcept;
+    // Only events/messages for the current host-selected navigation may
+    // change HUD readiness or request recovery. Never an auth capability.
+    [[nodiscard]] bool is_current_navigation(UINT64 id) const noexcept
+    {
+        return id != 0U && id == current_navigation_id_;
+    }
     // Selection, not successful loading or server authentication. Exposes no URL.
     [[nodiscard]] bool external_page_selected() const noexcept { return ready_ && !current_url_.empty(); }
     void resize() noexcept;
@@ -50,6 +56,7 @@ public:
 
 private:
     friend class NativeChatSurface;
+    friend struct WebViewHostTestAccess;
     struct CallbackState {
         WebViewHost *owner = nullptr;
     };
@@ -70,7 +77,7 @@ private:
     void post_process_failure(
         COREWEBVIEW2_PROCESS_FAILED_KIND kind) const noexcept;
     void post_navigation_failure(
-        COREWEBVIEW2_WEB_ERROR_STATUS status) const noexcept;
+        COREWEBVIEW2_WEB_ERROR_STATUS status, UINT64 navigation_id) const noexcept;
     void apply_host_state() noexcept;
     // Only host-authored content; never exposed to URL settings or web pages.
     [[nodiscard]] bool navigate_local_document(
@@ -81,6 +88,7 @@ private:
     HWND window_ = nullptr;
     bool ready_ = false;
     bool editing_ = false;
+    UINT64 current_navigation_id_ = 0U;
     std::wstring current_url_;
     std::wstring local_document_url_;
     std::wstring setup_document_url_;

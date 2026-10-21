@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 빠른 치지직 구독 중단·복구에서 이전 채팅을 먼저 비우기
+## 현재 흐름: 이전 WebView2 탐색 결과가 새 자체 채팅의 복구를 방해하지 않도록 차단
+
+시작 `OBS` HEAD `55b574dd36069ee93d32988706fbba276cd95b4f`. 정상 첫 자체 채팅이나 기존 승인으로 복귀한 새 문서를 열 때, **이전 설정/개인 문서의 탐색 완료 알림이 뒤늦게 도착해 현재 HUD를 재탐색/로딩 상태로 바꿀 수 있는 경합**을 고친다.
+
+- **사용자 동작:** OBS 기반 송출 PC와 OBS 없는 게임 PC 컴패니언의 같은 소유 WebView2 HUD에서 설정 페이지 → 승인된 첫 채팅 → 명시적 복귀 또는 새 개인 문서로 전환하는 동안 오래된 성공/실패 탐색 이벤트는 현재 메시지 표시를 끊거나 불필요한 `CHAT RETRYING` 복구를 시작하지 않는다. 현재 실제 문서의 정상 NavigationCompleted 실패, 화면 손실/권한 철회, 개별 프레임 nonce·frameId 검증, 15초 첫 표시/재시도 예산, 캡처 제외 및 기존 OBS/투컴 경계는 유지한다.
+- **구현:** 기존 `WebViewHost`의 WebView2 `NavigationStarting`에서 **허용된 현재 URL의 NavigationId**를 소유하고, 새 설정/외부/개인 문서를 선택·이전 탐색을 중지하는 순간 오래된 ID를 먼저 무효화한다. `NavigationCompleted`는 일치하는 ID만 새 문서 준비 또는 탐색 실패 메시지로 보내며, Win32 메시지 큐가 지연된 경우까지 `HudWindow`가 처리 직전에 같은 ID를 재검증한다. 취소된/비허용 URL의 이전 이벤트는 연결 재시도 권한이나 채팅 렌더 ACK로 간주하지 않는다.
+- **검사:** `native-chat-surface-test.cpp`에서 실제 WebView2 소유 URL과 ID가 새 개인 문서·중단된 설정 탐색을 거칠 때 갱신되고 이전 ID가 즉시 무효가 되는지 검증한다. `native-display-client-test.cpp`의 실제 승인·렌더된 HUD에 오래된 navigation success/failure Win32 신호를 주입해 현재 건강/첫 채팅이 `Loading/Retrying`으로 역행하지 않는지 확인한다. 변경한 C++는 Windows native routine 51개에서 검증한다. 실계정 치지직/물리 게임 PC·HDR·HDMI·캡처카드 및 D1 반복/자원/설치/패키징 qualification은 별도 미완료로 유지한다.
+- **다음 목표:** 지속적으로 재현 가능한 첫 실제 채팅 누락과 초기 WebView2 탐색의 남은 D1 조건을 정리하되, 진단만 늘리기보다 현재 승인으로 복귀하는 완성된 사용자 경로를 개선한다. G1~G5 목표와 체크리스트 **10/21(47.6%)**는 변경하지 않는다.
+
+## 직전 완료 흐름: 빠른 치지직 구독 중단·복구에서 이전 채팅을 먼저 비우기
 
 시작 원격 `OBS` HEAD `2b903483504977b44e160d08688367bcb376c0d3` 확인. G1/G4의 **같은 승인/같은 표시 소켓**에서 구독이 잠깐 끊긴 직후 새 구독의 첫 채팅이 빠르게 도착하는 경계를 수정한다.
 
@@ -12,6 +21,7 @@
 - **구현:** `DisplayClient`의 마지막 프레임 메일박스에서 **미소비된 구독 중단** 1건은 뒤따르는 정상 구독 스냅샷보다 먼저 UI에 전달하고, 그 동안의 정상 스냅샷은 최신 1건만 보관한다. `NativeChatConnection`은 이미 다른 WebView2 렌더 ACK가 대기 중이어도 중단·빈 텍스트 프레임을 새 구독으로 덮어쓰지 않고, **해당 프레임의 실제 nonce/frameId ACK 후** 최신 구독 스냅샷을 보낸다. 둘 다 유한한 2단계 보관으로 기존 동기 UI·WinHTTP/OBS 안전 및 서버 권한 검사를 유지한다.
 - **회귀:** 새 `gateway-provider-burst` 모드는 실제 합성 서버 → WebSocket → WinHTTP worker → 네이티브 보호 WebView2를 사용한다. 첫 실제 채팅이 보인 다음 서버가 중단과 새 구독을 각각 전송하되 HUD 소유 UI의 상태 수집을 350ms 지연시켜 둘 다 worker에 먼저 쌓고, **연속 두 DOM 프레임/ACK와 실제 0행 전환(MutationObserver) 뒤 새 첫 텍스트** 및 같은 역할/세션, 중복 로그인 없음, 마지막 권한 철회 비움을 검사한다. 기존 느린 중단/복구, 첫 문자/재열기/로그아웃, 브라우저 미리보기·권한·광고 경계도 해당 변경 SHA에서 검사한다.
 - **초기 Windows CI 실패(기능 SHA `a7ba8aae570ecb2db666437c7b88be0fd828247e`):** [Windows development #466/run `39552720765`](https://github.com/andongmin94/chat-view/actions/runs/39552720765) **completed/failure**, Windows x64 **CTest 50/51 통과·실패1**. 기존 `native-chat-surface`, `native-chat-switch`, `native-logout` 등은 통과했으나 `native-display-client`의 새 `gateway-provider-burst`에서 합성 Node fixture가 해당 모드를 **브라우저 승인 기반 경로**로 취급한 반면 C++ child의 시나리오 디스패처에 새 모드를 넣지 않아, child가 기존 **직접 ticket 교환** 경로로 실행되고 fixture의 `native login must not submit a manual display ticket` 어설션으로 중단됐다. 새 기능의 실제 빠른 중단/복구 DOM·ACK 동작까지 도달한 결과가 아니다. 디스패처에 해당 시나리오를 정확히 추가하며 비밀값/권한·수명 한도·검사 조건은 완화하지 않는다. [CHZZK contract #136/run `39552720709`](https://github.com/andongmin94/chat-view/actions/runs/39552720709)은 별도로 **completed/success, 5/5 작업**(Ubuntu/Windows Node22/24 각384/384, Chromium29/29, strict TypeScript 및 audit 취약점0)이다.
+- **검증된 수정 `55b574dd36069ee93d32988706fbba276cd95b4f`:** [Windows development #467/run `39555055113`](https://github.com/andongmin94/chat-view/actions/runs/39555055113) **completed/success**, native scope·Windows x64 **CTest 51/51·실패0·총245.09초**. `native-display-client` **54.26초 통과**: `gateway-provider-burst`에서 실제 합성 HTTP/WinHTTP/소유 WebView2가 연속 중단→구독 복귀 두 프레임을 각각 수신하고 빈 DOM→새 첫 텍스트·같은 승인/역할·철회를 검증했다. 기능 SHA `a7ba8aa`의 초기 #466 실패는 C++ 테스트 디스패처에 브라우저 로그인 모드가 누락된 오류였으며, `55b574d`가 해당 시나리오만 올바르게 연결한 뒤 통과했다. [CHZZK contract #136/run `39552720709`](https://github.com/andongmin94/chat-view/actions/runs/39552720709) **completed/success, 5/5**: Ubuntu/Windows × Node22/24 각 384/384, strict TypeScript·의존성 감사 취약점0, 합성 제공자 Chromium29/29. #467은 C++ 테스트/문서만 수정해 CHZZK와 공식 OBS CEF 광고 픽셀 검사는 다시 실행하지 않았다. 단일 합성 개발 CI이며 실계정·초기 WebView2 첫 프레임 간헐 D1·물리 방송·5회 반복/자원·설치/패키지 qualification은 여전히 미완료다.
 - **검증 범위:** 기능 커밋과 새 CHZZK/Windows routine 결과로만 판정하며 실제 치지직 등록 앱·실계정, 두 PC 물리 HDMI·캡처카드 및 배포 반복·자원 qualification은 미검증이다. **D1/D2/D4/D6/D7**은 이 좁은 경합 수정을 이유로 종결하지 않고 G1-03/G3-04/G4-06도 체크하지 않는다. 다음에는 단순 합성 경합과 별개로 D1 초기 WebView2 첫 프레임 실패의 재현 원인 및 안전한 복귀를 개선한다.
 
 ## 직전 완료 흐름: 100개 채팅 교체 중 읽던 메시지 위치 보존

@@ -355,6 +355,7 @@ void WebViewHost::close() noexcept
     }
 
     ready_ = false;
+    current_navigation_id_ = 0U;
     setup_document_url_.clear();
     current_url_.clear();
     local_document_url_.clear();
@@ -456,6 +457,8 @@ bool WebViewHost::navigate(const std::wstring &url) noexcept
         return false;
     }
 
+    // Retire queued completions from earlier pages before selecting a new one.
+    current_navigation_id_ = 0U;
     // Invalidate private-document ownership before queuing external navigation.
     local_document_url_.clear();
     local_document_utf8_.clear();
@@ -471,6 +474,7 @@ bool WebViewHost::reload() noexcept
     if (current_url_.empty()) {
         return navigate_local_document(kSetupPage, setup_document_url_);
     }
+    current_navigation_id_ = 0U;
     return SUCCEEDED(webview_->Navigate(current_url_.c_str()));
 }
 
@@ -515,11 +519,15 @@ bool WebViewHost::navigate_local_document(
         url.append(guid.data() + 1, 36U);
         url += L"/index.html";
         document_url = url; // Bind the caller before Navigate can raise events.
-        if (FAILED(webview_->Stop())) return false;
+        // Stop may synchronously deliver events for the old URL. Replace its
+        // ownership and navigation ID before cancelling the old request so
+        // none of those callbacks can authorize or retire this new document.
+        current_navigation_id_ = 0U;
         current_url_.clear();
         local_document_url_ = std::move(url);
         local_document_utf8_ = std::move(bytes);
-        if (SUCCEEDED(webview_->Navigate(local_document_url_.c_str()))) return true;
+        if (SUCCEEDED(webview_->Stop()) &&
+            SUCCEEDED(webview_->Navigate(local_document_url_.c_str()))) return true;
     } catch (...) {
         // Allocation/conversion failures must not cross a Win32 callback.
     }
@@ -841,6 +849,14 @@ HRESULT WebViewHost::on_controller_created(
                 const bool allowed =
                     state->owner->is_navigation_allowed(uri);
                 CoTaskMemFree(uri);
+                if (allowed) {
+                    UINT64 id = 0U;
+                    if (FAILED(args->get_NavigationId(&id)) || id == 0U) {
+                        state->owner->post_failure(E_FAIL);
+                        return args->put_Cancel(TRUE);
+                    }
+                    state->owner->current_navigation_id_ = id;
+                }
                 return args->put_Cancel(allowed ? FALSE : TRUE);
             })
             .Get(),
@@ -860,9 +876,19 @@ HRESULT WebViewHost::on_controller_created(
                     return S_OK;
                 }
 
+                // WebView2 can complete a cancelled setup/old private page
+                // after a newer page was selected. A stale completion must
+                // neither reset current HUD health nor schedule a reload.
+                UINT64 navigation_id = 0U;
+                HRESULT callback_result = args->get_NavigationId(&navigation_id);
+                if (FAILED(callback_result)) {
+                    state->owner->post_failure(callback_result);
+                    return S_OK;
+                }
+                if (!state->owner->is_current_navigation(navigation_id))
+                    return S_OK;
                 BOOL succeeded = FALSE;
-                HRESULT callback_result =
-                    args->get_IsSuccess(&succeeded);
+                callback_result = args->get_IsSuccess(&succeeded);
                 if (FAILED(callback_result)) {
                     state->owner->post_failure(callback_result);
                     return S_OK;
@@ -872,7 +898,7 @@ HRESULT WebViewHost::on_controller_created(
                     PostMessageW(
                         state->owner->window_,
                         kWebViewDocumentReadyMessage,
-                        0U,
+                        static_cast<WPARAM>(navigation_id),
                         0L);
                     return S_OK;
                 }
@@ -883,7 +909,7 @@ HRESULT WebViewHost::on_controller_created(
                 if (FAILED(callback_result)) {
                     state->owner->post_failure(callback_result);
                 } else {
-                    state->owner->post_navigation_failure(status);
+                    state->owner->post_navigation_failure(status, navigation_id);
                 }
                 return S_OK;
             })
@@ -1134,14 +1160,14 @@ void WebViewHost::post_process_failure(
 }
 
 void WebViewHost::post_navigation_failure(
-    COREWEBVIEW2_WEB_ERROR_STATUS status) const noexcept
+    COREWEBVIEW2_WEB_ERROR_STATUS status, UINT64 navigation_id) const noexcept
 {
     if (window_ != nullptr) {
         PostMessageW(
             window_,
             kWebViewNavigationFailedMessage,
             static_cast<WPARAM>(status),
-            0L);
+            static_cast<LPARAM>(navigation_id));
     }
 }
 

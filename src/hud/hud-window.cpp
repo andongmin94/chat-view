@@ -371,7 +371,8 @@ LRESULT HudWindow::handle_message(
         }
         return 0L;
     case kWebViewDocumentReadyMessage:
-        if (system_suppressed()) {
+        if (!webview_.is_current_navigation(static_cast<UINT64>(wparam)) ||
+            system_suppressed()) {
             return 0L;
         }
         cancel_navigation_retry();
@@ -418,6 +419,7 @@ LRESULT HudWindow::handle_message(
             static_cast<COREWEBVIEW2_PROCESS_FAILED_KIND>(wparam));
         return 0L;
     case kWebViewNavigationFailedMessage:
+        if (!webview_.is_current_navigation(static_cast<UINT64>(lparam))) return 0L;
         schedule_navigation_retry(
             static_cast<COREWEBVIEW2_WEB_ERROR_STATUS>(wparam));
         return 0L;

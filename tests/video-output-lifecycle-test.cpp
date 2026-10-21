@@ -590,6 +590,19 @@ void exercise(const wchar_t *source_executable)
     expect(primary >= 0 && game_choice >= 0 &&
         SendDlgItemMessageW(controls, 202, CB_GETCOUNT, 0, 0) > primary,
         "selection lists actual primary screen as explicitly unsupported and the real synthetic game source");
+    // This is the real production EnumWindows/Win32 process-name enumeration.
+    // The process basename is local owner UI, not written onto the receiver.
+    const auto length = SendDlgItemMessageW(controls, 201, CB_GETLBTEXTLEN,
+        static_cast<WPARAM>(game_choice), 0);
+    expect(length > 0 && length < 1024, "source identity label is bounded in the real combo");
+    std::wstring source_label(static_cast<size_t>(length) + 1, L'\0');
+    expect(SendDlgItemMessageW(controls, 201, CB_GETLBTEXT,
+        static_cast<WPARAM>(game_choice), reinterpret_cast<LPARAM>(source_label.data())) != CB_ERR &&
+        source_label.find(L"PID " + std::to_wstring(source.pid)) != std::wstring::npos &&
+        source_label.find(L"window-capture-test") != std::wstring::npos &&
+        source_label.find(L"Synthetic game") != std::wstring::npos &&
+        source_label.find(source_executable) == std::wstring::npos,
+        "same-titled windows show actual executable, process identity and caption before consent");
     expect(Access::candidate(panel, primary) != chatview::VideoOutputCandidate::Ready,
         "a primary GDI screen never becomes a usable SDR output candidate");
     wchar_t output_label[512]{};
@@ -601,6 +614,17 @@ void exercise(const wchar_t *source_executable)
         static_cast<WPARAM>(game_choice), 0) != CB_ERR &&
         SendDlgItemMessageW(controls, 202, CB_SETCURSEL,
             static_cast<WPARAM>(primary), 0) != CB_ERR, "select actual source and denied output");
+    SendMessageW(controls, WM_COMMAND, MAKEWPARAM(201, CBN_SELCHANGE), 0);
+    wchar_t chosen_source[1024]{};
+    expect(GetDlgItem(controls, 214) &&
+        GetDlgItemTextW(controls, 214, chosen_source, 1024) > 0 &&
+        std::wstring_view(chosen_source).find(L"PID " + std::to_wstring(source.pid)) !=
+            std::wstring_view::npos &&
+        std::wstring_view(chosen_source).find(L"window-capture-test") !=
+            std::wstring_view::npos &&
+        std::wstring_view(chosen_source).find(L"Synthetic game") !=
+            std::wstring_view::npos,
+        "source identity remains readable in the protected owner panel after explicit selection");
     SendMessageW(controls, WM_COMMAND, MAKEWPARAM(202, CBN_SELCHANGE), 0);
     wchar_t output_hint[512]{};
     expect(GetDlgItem(controls, 213) &&
@@ -659,6 +683,9 @@ void exercise(const wchar_t *source_executable)
     wchar_t notice[512]{}; GetDlgItemTextW(controls, 207, notice, 512);
     expect(std::wstring_view(notice).find(label.data()) != std::wstring_view::npos,
         "same read-only visual identifier appears in the panel");
+    expect(std::wstring_view(notice).find(L"PID ") == std::wstring_view::npos &&
+        std::wstring_view(notice).find(L"Synthetic game") == std::wstring_view::npos,
+        "receiver-check notice never contains private process or source-window identity");
     expect(IsWindowEnabled(GetDlgItem(controls, 204)), "conversion enabled only after local painting");
     const HWND initial_output = Access::output(panel), initial_cover = Access::cover(panel);
     expect(emergency_black(panel), "emergency blackout can retire a pattern before any game capture begins");

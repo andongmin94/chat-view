@@ -5,11 +5,13 @@
 #include "hud/video-output-pattern.hpp"
 #include "hud/video-frame-time.hpp"
 #include "common/native-chat-control.hpp"
+#include "common/win32-handle.hpp"
 #include <dwmapi.h>
 #include <wtsapi32.h>
 #include <dbt.h>
 #include <bcrypt.h>
 #include <algorithm>
+#include <array>
 #include <cwchar>
 #include <stdexcept>
 
@@ -17,12 +19,38 @@ namespace chatview {
 namespace {
 constexpr int kVideoHotkey = 0x4356;
 constexpr int kEmergencyBlackHotkey = 0x4342;
-constexpr int kSource = 201, kMonitor = 202, kRefresh = 203, kStart = 204, kStop = 205, kRelease = 206, kNotice = 207, kIdentify = 208, kChat = 209, kStep = 210, kChatHint = 211, kChatStatus = 212, kMonitorHint = 213;
+constexpr int kSource = 201, kMonitor = 202, kRefresh = 203, kStart = 204, kStop = 205, kRelease = 206, kNotice = 207, kIdentify = 208, kChat = 209, kStep = 210, kChatHint = 211, kChatStatus = 212, kMonitorHint = 213, kSourceHint = 214;
 constexpr UINT_PTR kPatternTimer = 0x435650;
 constexpr wchar_t kPanelClass[] = L"ChatView.VideoSelection";
 constexpr wchar_t kOutputClass[] = L"ChatView.WindowVideoOutput";
 VideoRect rectangle(RECT r) noexcept { return {r.left, r.top, r.right, r.bottom}; }
 bool equal(RECT a, RECT b) noexcept { return EqualRect(&a, &b) != FALSE; }
+// Window captions are not unique: two unrelated processes can both say
+// "Game", or a game can open several equal-titled windows. Identify the exact
+// native selection locally without persisting process paths or publishing a
+// title/PID to the receiver, provider or server.
+std::wstring source_label(DWORD pid, const wchar_t *caption)
+{
+    std::wstring executable = L"실행 파일명 확인 불가";
+    const UniqueHandle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
+    if (process) {
+        std::array<wchar_t, 1024> image{};
+        DWORD length = static_cast<DWORD>(image.size());
+        if (QueryFullProcessImageNameW(process.get(), 0, image.data(), &length) && length) {
+            const std::wstring path(image.data(), length);
+            const auto separator = path.find_last_of(L"\\/");
+            executable = path.substr(separator == std::wstring::npos ? 0 : separator + 1);
+        }
+    }
+    std::wstring label = L"PID " + std::to_wstring(pid) + L" · " + executable + L" · " + caption;
+    // Captions and filenames can be untrusted text. A one-line control or
+    // MessageBox must not be spoofed with line breaks or bidi overrides.
+    for (auto &ch : label)
+        if (ch < L' ' || ch == 0x7f ||
+            (ch >= 0x202a && ch <= 0x202e) ||
+            (ch >= 0x2066 && ch <= 0x2069)) ch = L' ';
+    return label;
+}
 // Read the same active GDI/SDR paths for both user-facing selection guidance
 // and the final protected-start check. A failed or incomplete Windows query
 // stays Unknown; it must never become a supposedly suitable output.
@@ -183,6 +211,17 @@ void VideoOutputPanel::show_chat_status() noexcept
             ? L"채팅 표시 확인 · 연결창 열기"
             : L"자체 채팅 연결창 열기");
 }
+void VideoOutputPanel::show_source_hint() noexcept
+{
+    if (!panel_) return;
+    const auto selected = SendDlgItemMessageW(panel_, kSource, CB_GETCURSEL, 0, 0);
+    // Only this HWND has verified capture exclusion. Never put a source title,
+    // path or PID into the separate Windows MessageBox or receiver pattern.
+    if (selected >= 0 && static_cast<size_t>(selected) < sources_.size())
+        SetDlgItemTextW(panel_, kSourceHint, sources_[static_cast<size_t>(selected)].title.c_str());
+    else SetDlgItemTextW(panel_, kSourceHint,
+        L"동일 제목의 창이 여럿이면 PID와 프로그램명을 확인하세요. 자동 선택 없음.");
+}
 void VideoOutputPanel::show_monitor_hint() noexcept
 {
     if (!panel_) return;
@@ -272,6 +311,7 @@ void VideoOutputPanel::open() noexcept
         };
         add(L"STATIC", L"게임 창만 선택합니다. 화면 전체·챗뷰 자체 창은 캡처하지 않습니다.", 0, 0, 20, 18, 610, 24);
         add(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, kSource, 20, 48, 610, 180);
+        add(L"STATIC", L"창을 직접 선택하세요. PID·프로그램명·창 제목을 확인합니다.", 0, kSourceHint, 20, 76, 610, 18);
         add(L"STATIC", L"별도 확장 출력 (캡처카드 입력) · 복제/주 화면/HDR는 허용하지 않습니다.", 0, 0, 20, 94, 610, 24);
         add(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, kMonitor, 20, 124, 610, 150);
         add(L"STATIC", L"출력 화면의 SDR/복제/HDR 상태를 확인 중입니다.", 0, kMonitorHint, 20, 153, 610, 21);
@@ -316,7 +356,7 @@ void VideoOutputPanel::refresh()
                 GetAncestor(window, GA_ROOT) != window || window == GetDesktopWindow() || window == GetShellWindow() ||
                 FAILED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) || cloaked) return TRUE;
             wchar_t title[257]{}; if (!GetWindowTextW(window, title, 257)) return TRUE;
-            c.self->sources_.push_back({window, pid, thread, title}); return TRUE;
+            c.self->sources_.push_back({window, pid, thread, source_label(pid, title)}); return TRUE;
         } catch (...) { *c.failed = true; return FALSE; }
     }, reinterpret_cast<LPARAM>(&context));
     EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR monitor, HDC, LPRECT, LPARAM parameter) -> BOOL {
@@ -353,6 +393,7 @@ void VideoOutputPanel::refresh()
         SendDlgItemMessageW(panel_, kMonitor, CB_RESETCONTENT, 0, 0);
         throw;
     }
+    show_source_hint();
     show_monitor_hint();
     const bool candidate = std::any_of(monitors_.begin(), monitors_.end(),
         [](const Monitor &monitor) { return monitor.candidate == VideoOutputCandidate::Ready; });
@@ -404,10 +445,16 @@ void VideoOutputPanel::identify()
     monitor_ = destination.handle; output_bounds_ = destination.info.rcMonitor; output_device_ = destination.info.szDevice;
     if (!topology(true)) { notice(L"분리된 SDR 확장 출력을 확인하지 못했습니다. 게임 창/HUD/설정창은 출력 화면에 둘 수 없습니다."); return; }
     const auto epoch = selection_epoch_;
+    // MessageBox is a different top-level HWND and does not inherit the
+    // protected settings window's affinity. Keep all process/window identity
+    // in the panel's capture-excluded source selection only.
+    show_source_hint();
     confirming_ = true;
     const int answer = MessageBoxW(panel_,
-        L"선택한 확장 화면에 식별용 시험 패턴을 표시합니다. 아직 게임 창은 캡처하지 않습니다.\n\n"
-        L"수신 PC의 시험/미리보기 장면에서 표시 번호, 전체 테두리와 움직임을 확인하세요.\n"
+        L"게임 PC의 보호된 영상 설정창에서 선택한 PID·프로그램명·창 제목을 확인하세요.\n"
+        L"원하지 않는 창이라면 '아니요'를 누르세요.\n\n"
+        L"확장 화면에 식별용 시험 패턴을 표시합니다. 아직 게임 창은 캡처하지 않습니다.\n"
+        L"수신 PC의 시험/미리보기에서 번호·전체 테두리·움직임을 확인하세요.\n"
         L"패턴도 방송에 보일 수 있으므로 실제 송출 중에는 사용하지 마세요.\n\n시험 패턴을 표시할까요?",
         L"ChatView · 시험 패턴 표시 확인", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
     confirming_ = false;
@@ -468,12 +515,20 @@ void VideoOutputPanel::start()
     if (!check_.ready(GetTickCount64(), selection_epoch_) || !output_intact() || !IsWindowVisible(cover_) || !topology(true)) {
         stop(L"유효한 시험 패턴부터 표시하고 수신 화면에서 직접 확인하세요."); return;
     }
+    const auto selected = SendDlgItemMessageW(panel_, kSource, CB_GETCURSEL, 0, 0);
+    if (selected < 0 || static_cast<size_t>(selected) >= sources_.size() ||
+        sources_[static_cast<size_t>(selected)].window != source_) {
+        stop(L"선택한 게임 창을 다시 확인하고 새 시험 패턴부터 진행하세요.");
+        return;
+    }
+    show_source_hint(); // Exact source identity stays on the protected panel.
     const auto epoch = selection_epoch_;
     const auto label = video_check_label(check_.identifier());
-    const std::wstring prompt = std::wstring(L"수신 화면에서 시험 패턴 ") + label.data() +
+    const std::wstring prompt = std::wstring(L"게임 PC의 보호된 영상 설정창에서 PID·프로그램명·창 제목을 다시 확인하세요.\n"
+        L"다른 창이 선택돼 있다면 '아니요'를 누르세요.\n\n수신 화면에서 시험 패턴 ") + label.data() +
         L"의 전체 테두리와 움직이는 표시를 확인했습니까?\n\n"
-        L"'예'를 누르면 선택한 게임 창 캡처를 시작합니다. 로컬 HUD는 유지합니다.\n"
-        L"이 확인은 배선·HUD 제외·실제 수신 영상의 자동 검증이 아닙니다.\n\n선택한 게임 영상으로 전환할까요?";
+        L"'예'를 누르면 선택된 창의 영상만 출력합니다. 로컬 HUD는 유지합니다.\n"
+        L"이 확인은 배선·HUD 제외·실제 수신 영상의 자동 검증이 아닙니다.\n\n게임 영상으로 전환할까요?";
     confirming_ = true;
     show_step();
     const int answer = MessageBoxW(panel_, prompt.c_str(), L"ChatView · 수신 화면 직접 확인", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
@@ -713,6 +768,7 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
                 ++self->selection_epoch_;
                 self->stop(L"선택을 변경했습니다. 새 시험 패턴으로 수신 대상을 다시 확인하세요.");
                 if (LOWORD(wparam) == kMonitor) self->show_monitor_hint();
+                else self->show_source_hint();
                 return 0;
             }
             switch (LOWORD(wparam)) {

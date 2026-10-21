@@ -40,6 +40,7 @@ struct NativeChatSurfaceTestAccess {
 };
 struct VideoOutputPanelTestAccess {
     static HWND open(VideoOutputPanel &p) { p.open(); return p.panel_; }
+    static void refresh(VideoOutputPanel &p) { p.refresh(); }
     static HWND output(VideoOutputPanel &p) { return p.output_; }
     static HWND cover(VideoOutputPanel &p) { return p.cover_; }
     static auto &capture(VideoOutputPanel &p) { return p.capture_; }
@@ -303,6 +304,34 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
     SetWindowPos(hud_window, nullptr, 40, 40, 300, 220, SWP_NOZORDER | SWP_NOACTIVATE);
     expect(chat.open_dialog(), "gaming connection panel"); const HWND dialog = Chat::dialog(chat);
     const HWND controls = Video::open(video); expect(controls != nullptr, "video settings");
+    // Both synthetic game windows have the SAME caption and executable.
+    // The native picker must still distinguish their owner processes before
+    // a streamer could explicitly permit video from the wrong window.
+    flow.wait([&] { return source_window(first.pid) && source_window(second.pid); },
+        "both equal-titled source windows ready for native selection");
+    Video::refresh(video);
+    const auto count = SendDlgItemMessageW(controls, 201, CB_GETCOUNT, 0, 0);
+    expect(count >= 2 && count <= 256, "both real process windows are in the bounded selector");
+    std::wstring first_label, second_label;
+    for (LRESULT index = 0; index < count; ++index) {
+        const auto length = SendDlgItemMessageW(controls, 201, CB_GETLBTEXTLEN,
+            static_cast<WPARAM>(index), 0);
+        expect(length >= 0 && length < 1024, "native source identity label stays bounded");
+        std::wstring label(static_cast<size_t>(length) + 1, L'\0');
+        expect(SendDlgItemMessageW(controls, 201, CB_GETLBTEXT,
+            static_cast<WPARAM>(index), reinterpret_cast<LPARAM>(label.data())) != CB_ERR,
+            "read the actual native source selection label");
+        if (label.find(L"PID " + std::to_wstring(first.pid) + L" ·") != std::wstring::npos)
+            first_label = label;
+        if (label.find(L"PID " + std::to_wstring(second.pid) + L" ·") != std::wstring::npos)
+            second_label = label;
+    }
+    expect(!first_label.empty() && !second_label.empty() && first_label != second_label &&
+        first_label.find(L"window-capture-test") != std::wstring::npos &&
+        second_label.find(L"window-capture-test") != std::wstring::npos &&
+        first_label.find(L"Synthetic game") != std::wstring::npos &&
+        second_label.find(L"Synthetic game") != std::wstring::npos,
+        "identical window captions resolve to distinct process-labelled choices without a second capture");
     SetWindowPos(dialog, nullptr, 20, 350, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     SetWindowPos(controls, nullptr, 20, 350, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     expect(video.wait_timeout() == 100, "visible unselected panel refreshes chat even without capture");

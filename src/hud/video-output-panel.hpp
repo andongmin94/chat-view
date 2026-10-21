@@ -48,6 +48,7 @@ private:
     void show_step() noexcept;
     void show_chat_status() noexcept;
     void show_monitor_hint() noexcept;
+    void show_source_hint() noexcept;
     HudWindow &hud_;
     UINT open_message_ = 0U, chat_query_message_ = 0U;
     const wchar_t *shown_chat_status_ = nullptr; // Static local-status label only.

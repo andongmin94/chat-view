@@ -474,7 +474,8 @@ int main(int argc, char **argv)
         validate_inputs(origin, ticket);
         const std::string mode = argv[1];
         if (mode == "gateway" || mode == "gateway-gaming" ||
-            mode.starts_with("gateway-provider-loss") || mode.starts_with("login-")) {
+            mode.starts_with("gateway-provider-loss") || mode == "gateway-provider-burst" ||
+            mode.starts_with("login-")) {
             expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM startup");
             try { gateway_ui(origin, mode); } catch (...) { CoUninitialize(); throw; }
             CoUninitialize();

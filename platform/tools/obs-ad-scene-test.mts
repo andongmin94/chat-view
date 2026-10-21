@@ -122,13 +122,29 @@ const pixelScript = fileURLToPath(new URL('../../tests/check-ad-pixels.ps1', imp
 const main = 'ChatView Ad Fixture', away = 'ChatView Empty Fixture', input = 'ChatView Public Test Ad';
 try {
   control = await connectControl(); const call = control.call;
-  // Identification may complete before OBS finishes loading its scene collection.
-  // Probe with a read only; do not replay any scene mutation or other failure.
+  // WebSocket authentication and GetVersion can succeed before the OBS
+  // frontend has finished loading its scene collection. The earlier fixture
+  // treated a version reply as readiness and intermittently timed out on its
+  // FIRST CreateScene. Require an existing named program scene in the actual
+  // collection using ONLY read-only RPCs before issuing any mutations. Never
+  // replay CreateScene or enlarge its existing 8-second request budget.
   let version;
   for (;;) {
-    try { version = await call('GetVersion'); break; }
-    catch (error) {
-      if (!(error instanceof ObsRequestFailure) || error.code !== 207 || performance.now() >= startupDeadline) throw error;
+    try {
+      version = await call('GetVersion');
+      const collection = await call('GetSceneList');
+      assert(Array.isArray(collection.scenes), 'GetSceneList must return actual frontend scenes');
+      const initialized = typeof collection.currentProgramSceneName === 'string' &&
+        collection.currentProgramSceneName.length > 0 &&
+        collection.scenes.some((entry: { sceneName?: string }) =>
+          entry.sceneName === collection.currentProgramSceneName);
+      if (initialized) break;
+      if (performance.now() >= startupDeadline)
+        throw new Error('OBS scene collection did not initialize before the existing startup deadline');
+      await delay(250);
+    } catch (error) {
+      if (!(error instanceof ObsRequestFailure) || error.code !== 207 ||
+          performance.now() >= startupDeadline) throw error;
       await delay(250);
     }
   }

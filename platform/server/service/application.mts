@@ -12,7 +12,7 @@ import type { Channel } from '../chzzk/api.mts';
 import { readOutputReport } from '../chat/broadcast-output.mts';
 import { Campaigns, CampaignError, testCampaign } from '../ads/campaigns.mts';
 import { activityCsv, activityPage, needsActivityReview } from '../ads/activity-page.mts';
-import { campaignSetupScriptHash, campaignsPage, servePublicAd } from '../ads/pages.mts';
+import { campaignSetupScriptHash, campaignsPage, servePublicAd, testCreativePreview } from '../ads/pages.mts';
 
 const nonce = () => randomBytes(32).toString('hex');
 const escape = (value: string) => value.replace(/[&<>"']/gu,
@@ -655,8 +655,11 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
           const previous = testCampaign(current.campaignId);
           this.#page(response, '시험 배너 교체 확인', this.#accountNotice(b) + `
 <section data-campaign-switch="confirm">
-<p><strong>현재 소재:</strong> ${escape(previous?.title ?? '알 수 없음')}</p>
-<p><strong>교체할 소재:</strong> ${escape(target.title)}</p>
+<h2>현재 소재</h2>
+${previous ? testCreativePreview(previous) : '<p>현재 소재를 표시할 수 없습니다.</p>'}
+<h2>교체할 소재</h2>
+${testCreativePreview(target)}
+<p>두 이미지는 실제 OBS 장면이나 방송 화면이 아닌 고정 시험 소재 샘플입니다.</p>
 <p>같은 OBS 브라우저 소스 URL에서 배너의 문구와 색상이 바뀝니다.
 실제 송출 여부는 서버의 최신 활동 보고만으로 확인할 수 없습니다.
 OBS 화면이나 녹화 중에도 소재가 즉시 교체될 수 있으므로

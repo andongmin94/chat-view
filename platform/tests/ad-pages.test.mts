@@ -67,6 +67,16 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     assert.match(management, /960 × 180/u);
     assert.match(management, /data-public-banner-state="report-ready"/u);
     assert.match(management, /data-selected-test-campaign="chatview-test"/u);
+    assert.equal((management.match(/data-test-creative-preview=/gu) ?? []).length, 2);
+    assert.match(management, /data-test-creative-preview="chatview-test"/u);
+    assert.match(management, /data-test-creative-preview="chatview-test-chat"/u);
+    assert.match(management, /background:#141e32/u);
+    assert.match(management, /background:#103b40/u);
+    assert.match(management, /border:2px solid #6377a2/u);
+    assert.match(management, /border:2px solid #2bb5a1/u);
+    assert.match(management, /고정 시험 소재 미리보기 · OBS 화면·송출·실제 시청자 노출 아님/u);
+    assert.doesNotMatch(management, /<iframe|<img|<video|url\(https?:|data:.*base64/iu,
+      'static owner-preview needs no embeddable public browser source, image fetch or tracking media');
     assert.match(management, /별도의 교체 확인 화면/u);
     assert.match(management, /확인 전에 취소하면 기존 배너와 비지급 구간을 그대로 유지/u);
     assert.match(management, /data-test-campaign="chatview-test-chat" data-campaign-selected="false"/u);
@@ -102,6 +112,10 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     const noSource = campaignsPage({ selected: false }, 'a'.repeat(64), origin, { selectionState: 'ready', streamingConnected: true, previewReady: false, output: { state: 'unknown' }, viewToken: 'b'.repeat(64) });
     assert.doesNotMatch(noSource, /id="copy-public-source"|<script|id="source-url"/u,
       'before the first selection there is no copy control or active management script');
+    assert.equal((noSource.match(/data-test-creative-preview=/gu) ?? []).length, 2,
+      'first-time owner sees fixed artwork before creating any public OBS URL');
+    assert.doesNotMatch(noSource, /<iframe|<img|<video/u,
+      'the choice preview never starts a public OBS source or privileged renderer');
     sessions.remove(stream.token);
     assert.deepEqual(await (await get(`/public/ads/${id}/state`)).json(), HIDDEN_AD);
   } finally {
@@ -123,6 +137,8 @@ for (const selection of ['provider-required', 'streaming-required', 'ready'] as 
       assert.match(html, /href="\/campaigns">선택 준비 상태 다시 확인/u);
       assert.match(html, /href="\/account">이 계정의 PC 역할 확인/u);
       assert.match(html, /시험 광고 · 지급 없음/u);
+      assert.equal((html.match(/data-test-creative-preview=/gu) ?? []).length, 2,
+        'unapproved creators can compare the two inert, nonpayable fixed previews');
       assert.match(html, /data-test-campaign="chatview-test-chat"/u,
         'second campaign is only a fixed catalog entry, not an implicit selection');
       assert.equal(html.includes('action="/campaigns/chatview-test-chat/select"'), selection === 'ready',

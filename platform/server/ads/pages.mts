@@ -60,6 +60,31 @@ export function servePublicAd(request: IncomingMessage, response: ServerResponse
   response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(document);
 }
 
+// Fixed-catalog artwork preview for the authenticated management UI only.
+// Reuses the public banner's text and two fixed palette choices without an
+// iframe, browser source, public endpoint, tracking, credentials or scripts.
+// This is a SAMPLE, never a claim that OBS has composed or streamed pixels.
+export function testCreativePreview(campaign: (typeof TEST_CAMPAIGNS)[number]): string {
+  const alternate = campaign.id === 'chatview-test-chat';
+  const background = alternate ? '#103b40' : '#141e32';
+  const border = alternate ? '#2bb5a1' : '#6377a2';
+  const badge = alternate ? '#a8f4dd' : '#fbd38d';
+  return `<figure data-test-creative-preview="${campaign.id}" style="margin:12px 0 18px;max-width:640px">
+<div role="img" aria-label="${escape(campaign.brand)} 시험 배너 샘플: ${escape(campaign.title)}. ${escape(campaign.description)}"
+style="display:flex;align-items:center;gap:3%;box-sizing:border-box;width:100%;aspect-ratio:16/3;min-height:144px;padding:14px 3%;border:2px solid ${border};border-radius:16px;background:${background};color:#f6f8fc;font-family:'Segoe UI','Malgun Gothic',sans-serif">
+<div style="flex:0 0 22%;min-width:0">
+<strong style="display:block;font-size:clamp(16px,3.4vw,28px);overflow-wrap:anywhere">${escape(campaign.brand)}</strong>
+<span style="display:block;margin-top:8px;color:${badge};font-size:clamp(10px,1.4vw,13px)">시험 광고 · 지급 없음</span>
+</div>
+<div style="flex:1;min-width:0">
+<strong style="display:block;font-size:clamp(16px,3vw,25px);line-height:1.2;overflow-wrap:anywhere">${escape(campaign.title)}</strong>
+<span style="display:block;margin-top:7px;color:#d2daea;font-size:clamp(11px,1.8vw,15px);line-height:1.3;overflow-wrap:anywhere">${escape(campaign.description)}</span>
+</div>
+</div>
+<figcaption style="margin-top:5px;color:#555;font-size:13px">고정 시험 소재 미리보기 · OBS 화면·송출·실제 시청자 노출 아님</figcaption>
+</figure>`;
+}
+
 // Read-only selection guidance, not a capability or an OBS/output assertion.
 export type CampaignSelectionState = 'provider-required' | 'streaming-required' | 'ready';
 
@@ -134,7 +159,8 @@ ${source && !status.selected ? `<p data-banner-manual-reselect="${selectionState
 서로 다른 배너 문구를 시험할 수 있지만 광고 시청시간·HP·보상은 기록하지 않습니다.</p>
 ${TEST_CAMPAIGNS.map((campaign, index) => `<section data-test-campaign="${campaign.id}" data-campaign-selected="${selectedCampaign?.id === campaign.id}">
 <h2>${escape(campaign.brand)} · ${escape(campaign.title)}</h2>
-<p>${escape(campaign.description)}</p><p>권장 브라우저 소스 크기: <strong>960 × 180</strong></p>
+${testCreativePreview(campaign)}
+<p>권장 OBS 브라우저 소스 크기: <strong>960 × 180</strong></p>
 ${selectionState === 'ready' ? form(`/campaigns/${campaign.id}/select`,
   selectedCampaign?.id === campaign.id ? '이 시험 캠페인 다시 선택'
     : index === 0 && !status.selected ? '이 시험 캠페인 선택'

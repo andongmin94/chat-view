@@ -33,6 +33,14 @@ test('creator chooses a second approved nonpayable banner while OBS source URL a
       } else assert.equal(response.status, 303);
       return await f.page('/campaigns', b);
     };
+    const choicePreview = await f.page('/campaigns', alice.b);
+    assert.equal((choicePreview.match(/data-test-creative-preview=/gu) ?? []).length, 2,
+      'creator sees both fixed artwork samples before the first selection');
+    assert.doesNotMatch(choicePreview, /id="source-url"|<iframe|<img|<video/iu,
+      'preview does not create a public source or embed a live advertisement');
+    assert.equal(f.store.database.prepare('SELECT COUNT(*) AS n FROM ad_sources WHERE owner = ?')
+      .get('alice')?.n, 0, 'reading static previews cannot allocate a public source ID');
+
     const first = await select(alice.b, TEST_CAMPAIGN.id);
     const bobPage = await select(bob.b, TEST_CAMPAIGN.id);
     const source = /\/public\/ads\/([a-f0-9]{32})/u.exec(first)?.[1];
@@ -42,6 +50,10 @@ test('creator chooses a second approved nonpayable banner while OBS source URL a
     assert.match(first, /data-test-campaign="chatview-test-chat" data-campaign-selected="false"/u);
     assert.match(first, /action="\/campaigns\/chatview-test-chat\/select"/u);
     assert.match(first, /시험 광고 · 지급 없음/u);
+    for (const preview of [TEST_CAMPAIGN.id, TEST_CAMPAIGN_ALT.id])
+      assert(first.includes(`data-test-creative-preview="${preview}"`));
+    assert.match(first, /고정 시험 소재 미리보기 · OBS 화면·송출·실제 시청자 노출 아님/u);
+    assert.doesNotMatch(first, /<iframe|<img|<video/iu, 'inert previews never load public artwork');
 
     for (const token of [alice.lease.token, bob.lease.token]) {
       const peer = new WebSocket(f.origin.replace('http:', 'ws:') + '/display/events', {
@@ -85,6 +97,14 @@ test('creator chooses a second approved nonpayable banner while OBS source URL a
     assert.match(pendingHtml, /data-campaign-switch="confirm"/u);
     assert.match(pendingHtml, /방송과 함께하는 챗뷰/u);
     assert.match(pendingHtml, /채팅은 내 화면에, 영상은 방송에/u);
+    assert.equal((pendingHtml.match(/data-test-creative-preview=/gu) ?? []).length, 2,
+      'confirmation displays both current and proposed artwork without applying either');
+    assert.match(pendingHtml, /data-test-creative-preview="chatview-test"/u);
+    assert.match(pendingHtml, /data-test-creative-preview="chatview-test-chat"/u);
+    assert.match(pendingHtml, /background:#141e32/u);
+    assert.match(pendingHtml, /background:#103b40/u);
+    assert.doesNotMatch(pendingHtml, /<iframe|<img|<video|public\/ads\//iu,
+      'confirmation neither embeds a live OBS source nor requests public ad artwork');
     const pendingView = /name="view" value="([a-f0-9]{64})"/u.exec(pendingHtml)?.[1];
     assert(pendingView && pendingView !== alice.b.view);
     assert.deepEqual((await snapshot(source)).campaign, TEST_CAMPAIGN);

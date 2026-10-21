@@ -206,10 +206,22 @@ def run() -> None:
                             # Real Chromium forms switch between fixed nonpayable creatives.
                             # The same registered public OBS URL must survive both choices.
                             expect(flow.page.locator('[data-selected-test-campaign="chatview-test"]')).to_have_count(1)
+                            primary_preview = flow.page.locator('[data-test-creative-preview="chatview-test"] [role="img"]')
+                            alternate_preview = flow.page.locator('[data-test-creative-preview="chatview-test-chat"] [role="img"]')
+                            expect(primary_preview).to_have_count(1)
+                            expect(alternate_preview).to_have_count(1)
+                            assert primary_preview.evaluate("(el) => getComputedStyle(el).backgroundColor") == "rgb(20, 30, 50)"
+                            assert alternate_preview.evaluate("(el) => getComputedStyle(el).backgroundColor") == "rgb(16, 59, 64)"
+                            assert flow.page.evaluate("document.querySelectorAll('[data-test-creative-preview] iframe, [data-test-creative-preview] img, [data-test-creative-preview] video').length") == 0
+                            assert flow.page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                            flow.image("campaign-preview-mobile")
                             flow.page.locator('form[action="/campaigns/chatview-test-chat/select"] button').click()
                             expect(flow.page.locator('[data-campaign-switch="confirm"]')).to_have_count(1)
                             expect(flow.page.locator('[data-campaign-switch="confirm"]')).to_contain_text(
                                 "같은 OBS 브라우저 소스 URL")
+                            expect(flow.page.locator('[data-campaign-switch="confirm"] [data-test-creative-preview]')).to_have_count(2)
+                            assert flow.page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                            flow.image("campaign-switch-preview-mobile")
                             flow.page.get_by_role("link", name="취소하고 기존 소재 유지").click()
                             expect(flow.page.locator('[data-selected-test-campaign="chatview-test"]')).to_have_count(1)
                             assert flow.page.locator("#source-url").input_value() == public_url

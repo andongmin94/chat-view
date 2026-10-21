@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { randomBytes, randomUUID } from 'node:crypto';
+import type { Duplex } from 'node:stream';
 import { WebSocketServer } from 'ws';
 import { DisplayAccess } from '../server/chat/display-access.mts';
 import { DisplayGateway, displayFrame } from '../server/chat/display-gateway.mts';
@@ -15,11 +16,12 @@ assert(executable, 'native test executable required');
 const snapshot = { state: 'subscribed', received: 1, messages: [
   { nickname: '검증 사용자', content: '안녕 😀 <img onerror=evil()>', messageTime: 1700000000000 },
 ] };
-for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gateway-provider-loss-gaming', 'gateway-provider-burst', 'login-cancel', 'login-cancel-unconfirmed', 'login-expiry', 'login-denied', 'cancel', 'local-expiry', 'redirect', 'wrong-scope', 'wrong-role',
+for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gateway-provider-loss-gaming', 'gateway-provider-burst', 'gateway-transport-burst', 'gateway-transport-burst-gaming', 'login-cancel', 'login-cancel-unconfirmed', 'login-expiry', 'login-denied', 'cancel', 'local-expiry', 'redirect', 'wrong-scope', 'wrong-role',
   'wrong-session', 'bad-count', 'claimed-capture', 'missing-connection', 'invalid-json', 'binary', 'oversize', 'idle']) {
   const ui = mode === 'gateway' || mode === 'gateway-gaming' ||
-    mode.startsWith('gateway-provider-loss') || mode === 'gateway-provider-burst' || mode.startsWith('login-');
-  const role = mode === 'gateway-gaming' || mode === 'gateway-provider-loss-gaming' ? 'gaming' : 'streaming';
+    mode.startsWith('gateway-provider-loss') || mode === 'gateway-provider-burst' ||
+    mode.startsWith('gateway-transport-burst') || mode.startsWith('login-');
+  const role = mode.endsWith('-gaming') || mode === 'gateway-gaming' ? 'gaming' : 'streaming';
   let origin = '';
   const access = new DisplayAccess(() => ({ id: 'synthetic-owner', expiresAt: performance.now() + 60000 }));
   const issued = access.issue();
@@ -55,6 +57,7 @@ for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gatew
   const timers: ReturnType<typeof setInterval>[] = [];
   let requests = 0, upgrades = 0, redirected = 0, rendered = false;
   let providerLost = false, providerReturned = false, providerBurst = false;
+  let transportBurst = false, transportRenewals = 0, firstDisplaySocket: Duplex | undefined;
   let child: ReturnType<typeof spawn> | undefined;
   const server = createServer((request, response) => {
     if (ui) {
@@ -71,7 +74,10 @@ for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gatew
           sessionGateway.login.cancel(loginId, request.headers.authorization!.slice('ChatView-Login '.length));
           response.destroy(); return;
         }
-      } else if (request.url === '/display/refresh') assert.equal(request.headers['x-chatview-role'], role);
+      } else if (request.url === '/display/refresh') {
+        assert.equal(request.headers['x-chatview-role'], role);
+        if (mode.startsWith('gateway-transport-burst')) transportRenewals++;
+      }
       else assert.fail('native login must not submit a manual display ticket');
       assert(sessionGateway.handle(request, response)); return;
     }
@@ -91,7 +97,19 @@ for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gatew
   });
   server.on('upgrade', (request, socket, head) => {
     upgrades++;
-    if (ui) { gateway.upgrade(request, socket, head); return; }
+    if (ui) {
+      if (mode.startsWith('gateway-transport-burst')) {
+        if (upgrades === 1) firstDisplaySocket = socket;
+        if (upgrades === 2) {
+          assert(transportBurst && transportRenewals === 1,
+            'second display WebSocket requires the original grant to be renewed once');
+          // The worker receives the new snapshot while the native owner
+          // deliberately does not consume its Reconnecting mailbox.
+          setTimeout(() => child?.stdin?.write('transport-resumed\n'), 250);
+        }
+      }
+      gateway.upgrade(request, socket, head); return;
+    }
     assert.equal(request.url, '/display/events');
     assert.equal(request.headers.authorization, `Bearer ${token}`);
     assert.equal(request.headers.cookie, undefined);
@@ -121,7 +139,7 @@ for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gatew
     child = spawn(executable, [mode], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: false });
     const exited = once(child, 'exit');
     child.stdin!.write(`${origin}\n${issued.ticket}\n`);
-    if (mode !== 'cancel') child.stdin!.end();
+    if (mode !== 'cancel' && !mode.startsWith('gateway-transport-burst')) child.stdin!.end();
     let output = '';
     child.stdout!.setEncoding('utf8');
     child.stdout!.on('data', (chunk: string) => {
@@ -169,6 +187,15 @@ for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gatew
           gateway.changed();
         })().catch(() => child?.kill());
       }
+      if (/(^|\n)transport-burst\r?\n/u.test(output) && !transportBurst) {
+        assert(mode.startsWith('gateway-transport-burst') && firstDisplaySocket);
+        transportBurst = true;
+        currentSnapshot = { state: 'subscribed', received: 1, messages: [
+          { nickname: '복구 사용자', content: '새 소켓의 첫 채팅 😀', messageTime: 1700000002000 },
+        ] };
+        // Cut only the transport, not the current approval or provider grant.
+        firstDisplaySocket.destroy();
+      }
       if (/(^|\n)rendered\r?\n/u.test(output) && !rendered) {
         rendered = true; assert(grantId); access.revokeSessions(); gateway.changed();
       }
@@ -201,6 +228,9 @@ for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gatew
       'the native HUD reported both the upstream interruption and its fresh first chat');
     if (mode === 'gateway-provider-burst')
       assert(providerBurst, 'two ordered provider frames arrived before the HUD owner resumed polling');
+    if (mode.startsWith('gateway-transport-burst'))
+      assert(transportBurst && transportRenewals === 1 && upgrades === 2,
+        'transport recovered by renewing the original approval, never starting a second login');
     if (['wrong-scope', 'wrong-role', 'redirect', 'cancel'].includes(mode)) assert.equal(upgrades, 0);
     console.log(`${mode}: passed`);
   } finally {

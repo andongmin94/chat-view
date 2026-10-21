@@ -88,6 +88,14 @@ void await(const std::function<bool()> &predicate, const char *label,
         MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
     }
 }
+std::wstring source_url(ICoreWebView2 *core)
+{
+    LPWSTR value = nullptr;
+    expect(SUCCEEDED(core->get_Source(&value)) && value, "read current owned WebView2 source");
+    std::wstring result(value);
+    CoTaskMemFree(value);
+    return result;
+}
 std::wstring evaluate(ICoreWebView2 *core, const wchar_t *script, chatview::NativeChatConnection &connection)
 {
     struct Result { bool done = false; HRESULT code = E_FAIL; std::wstring value; };
@@ -132,7 +140,8 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
     chatview::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     chatview::HudWindow hud;
     expect(hud.create(GetModuleHandleW(nullptr), ready.get()), "create production HUD");
-    const bool gaming = mode == "gateway-gaming" || mode == "gateway-provider-loss-gaming";
+    const bool gaming = mode == "gateway-gaming" || mode == "gateway-provider-loss-gaming" ||
+        mode == "gateway-transport-burst-gaming";
     const auto role = gaming ? chatview::DisplayRole::Gaming : chatview::DisplayRole::Streaming;
     browser_probe.origin = origin;
     chatview::NativeChatConnection connection(hud, role, [](HWND window, const wchar_t *url) {
@@ -350,6 +359,47 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
     expect(open() == 1 && dialog == chatview::NativeChatConnectionTestAccess::dialog(connection) &&
         chatview::NativeChatConnectionTestAccess::connection(connection)->membership == approved_membership,
         "opening an approved connection does not replace its membership");
+    if (mode.starts_with("gateway-transport-burst")) {
+        const std::wstring previous_document = source_url(core.Get());
+        const auto previous_frames = surface.rendered_frames();
+        expect(previous_frames != 0U && surface.rendered_messages() == 1U,
+            "original approved document displays its first subscribed chat before transport loss");
+        // The worker owns socket I/O. Intentionally DO NOT tick the native
+        // owner while the server closes that socket and validates a renewal.
+        // If Reconnecting is overwritten by Receiving, the old private DOM
+        // will incorrectly survive instead of being replaced.
+        std::cout << "transport-burst\n" << std::flush;
+        const HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+        const ULONGLONG due = GetTickCount64() + 6000U;
+        for (;;) {
+            DWORD available = 0U;
+            expect(PeekNamedPipe(input, nullptr, 0U, nullptr, &available, nullptr) != FALSE,
+                "native test reply pipe remains valid");
+            if (available) {
+                std::string reply;
+                std::getline(std::cin, reply);
+                expect(reply == "transport-resumed", "fixture renewed the same approved transport");
+                break;
+            }
+            expect(GetTickCount64() < due, "bounded transport renewal without native UI polling");
+            Sleep(10);
+        }
+        await([&] {
+            return source_url(core.Get()) != previous_document &&
+                surface.ready() && surface.rendered_messages() == 1U &&
+                query() == chatview::NativeChatStatus::Receiving;
+        }, "reconnected transport has a newly owned document and fresh render ACK", &connection);
+        expect(evaluate(core.Get(), LR"JS(
+            document.querySelectorAll('#messages li').length === 1 &&
+            document.querySelector('#messages li b').textContent === '복구 사용자' &&
+            document.querySelector('#messages li .content').textContent === '새 소켓의 첫 채팅 😀' &&
+            !document.getElementById('messages').textContent.includes('안녕 😀')
+        )JS", connection) == L"true",
+            "old private chat is gone and only the new subscribed session text remains");
+        expect(chatview::NativeChatConnectionTestAccess::connection(connection)->membership == approved_membership &&
+            !IsWindowEnabled(GetDlgItem(dialog, 112)),
+            "quick transport recovery preserves membership and needs no manual reapproval");
+    }
     if (mode == "gateway-provider-burst") {
         // Delay only the UI's consumption, not the WinHTTP receiver: both
         // authenticated frames must reach the worker before the owner polls.
@@ -488,7 +538,7 @@ int main(int argc, char **argv)
         const std::string mode = argv[1];
         if (mode == "gateway" || mode == "gateway-gaming" ||
             mode.starts_with("gateway-provider-loss") || mode == "gateway-provider-burst" ||
-            mode.starts_with("login-")) {
+            mode.starts_with("gateway-transport-burst") || mode.starts_with("login-")) {
             expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)), "COM startup");
             try { gateway_ui(origin, mode); } catch (...) { CoUninitialize(); throw; }
             CoUninitialize();

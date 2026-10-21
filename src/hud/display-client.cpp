@@ -749,10 +749,14 @@ void DisplayClient::run(const std::shared_ptr<State> &state, std::wstring origin
                         network(WaitForSingleObject(state->cancel.get(), 0) == WAIT_TIMEOUT && GetTickCount64() < expires);
                         DisplayUpdate incoming{DisplayStatus::Receiving, std::move(envelope), subscribed,
                                                std::move(connection_state), chat_interrupted};
-                        if (state->pending && state->latest.status == DisplayStatus::Receiving &&
-                            state->latest.chat_interrupted && !chat_interrupted) {
-                            // An interruption must reach the owned renderer before
-                            // a new subscription replaces its previous text.
+                        if (state->pending &&
+                            (state->latest.status == DisplayStatus::Reconnecting ||
+                             (state->latest.status == DisplayStatus::Receiving &&
+                              state->latest.chat_interrupted && !chat_interrupted))) {
+                            // A lost transport needs a new, blank owned document
+                            // even if renewal and the next frame outrun the HUD tick.
+                            // Likewise, a provider interruption must clear old rows
+                            // before the recovered subscription is published.
                             state->after_interruption = std::move(incoming);
                         } else {
                             state->after_interruption.reset();

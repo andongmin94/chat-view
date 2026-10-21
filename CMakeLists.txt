@@ -98,6 +98,7 @@ add_library(chat-view-obs MODULE
     src/plugin/capture-risk-policy.hpp
     src/plugin/control-center-bridge.cpp
     src/plugin/control-center-bridge.hpp
+    src/plugin/public-banner-scene-check.hpp
     src/plugin/runtime-controller.cpp
     src/plugin/runtime-controller.hpp
     src/plugin/restart-policy.hpp
@@ -483,6 +484,14 @@ if(BUILD_TESTING)
         NAME chat-view-capture-risk-policy
         COMMAND chat-view-capture-risk-policy-test
     )
+
+    add_executable(chat-view-public-banner-scene-check-test
+        tests/public-banner-scene-check-test.cpp
+        src/plugin/public-banner-scene-check.hpp
+    )
+    target_include_directories(chat-view-public-banner-scene-check-test PRIVATE "${CHATVIEW_SOURCE_DIR}")
+    chatview_enable_warnings(chat-view-public-banner-scene-check-test)
+    add_test(NAME chat-view-public-banner-scene-check COMMAND chat-view-public-banner-scene-check-test)
 
     add_executable(chat-view-host-state-message-test
         tests/host-state-message-test.cpp

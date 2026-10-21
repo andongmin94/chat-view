@@ -2,6 +2,7 @@
 
 #include "plugin/capture-risk-policy.hpp"
 #include "plugin/control-center-bridge.hpp"
+#include "plugin/public-banner-scene-check.hpp"
 #include "plugin/runtime-controller.hpp"
 #include "common/win32-handle.hpp"
 
@@ -11,6 +12,7 @@
 #include <Windows.h>
 
 #include <array>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <memory>
@@ -363,6 +365,69 @@ void export_diagnostics(void *)
     }
 }
 
+void inspect_public_banner_scene(void *) noexcept
+{
+    if (frontend_exiting) return; // Frontend API is unavailable past EXIT.
+    // An explicit OBS Tools action, never part of an OBS output callback,
+    // server report or account/ad accounting. Read only the CURRENT scene's
+    // direct Browser Source settings. Groups/nested scenes are not inspected.
+    obs_source_t *current = obs_frontend_get_current_scene();
+    if (!current) {
+        MessageBoxW(nullptr,
+            L"현재 OBS 장면을 확인할 수 없습니다. 장면을 선택한 뒤 다시 확인하세요.\n"
+            L"배너가 송출됐다는 증거는 아닙니다.",
+            L"ChatView · 시험 배너 소스 확인", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    chatview::PublicBannerSceneCheck scan;
+    obs_scene_t *scene = obs_scene_from_source(current);
+    if (scene) {
+        obs_scene_enum_items(scene,
+            [](obs_scene_t *, obs_sceneitem_t *item, void *opaque) -> bool {
+                auto &check = *static_cast<chatview::PublicBannerSceneCheck *>(opaque);
+                obs_source_t *source = obs_sceneitem_get_source(item);
+                const char *id = source ? obs_source_get_unversioned_id(source) : nullptr;
+                if (!id || std::strcmp(id, "browser_source") != 0)
+                    return check.observe(id ? id : "", "", false);
+                obs_data_t *settings = obs_source_get_settings(source);
+                const char *url = settings ? obs_data_get_string(settings, "url") : nullptr;
+                const bool keep = check.observe("browser_source", url ? url : "",
+                    obs_sceneitem_visible(item));
+                if (settings) obs_data_release(settings);
+                return keep;
+            }, &scan);
+    }
+    obs_source_release(current);
+
+    try {
+        std::wstring message;
+        if (!scene) {
+            message = L"현재 OBS 장면을 직접 점검할 수 없습니다.";
+        } else if (scan.truncated) {
+            message = L"현재 장면의 직접 소스가 256개를 초과했습니다. 검사 범위를 넘어서 결과를 확정하지 않습니다.";
+        } else if (scan.matching == 0) {
+            message = L"현재 장면에 ChatView 공개 시험 URL 형식의 브라우저 소스가 직접 배치되지 않았습니다.\n"
+                L"OBS 소스 목록에서 브라우저 소스를 추가하고 관리 화면의 공개 URL을 붙여넣으세요.";
+        } else {
+            message = L"현재 장면의 ChatView 시험 URL 형식 브라우저 소스 후보: " +
+                std::to_wstring(scan.matching) + L"개\n" +
+                L"OBS 장면 항목의 표시 설정 켜짐: " + std::to_wstring(scan.visible) +
+                L"개 / 숨김: " + std::to_wstring(scan.matching - scan.visible) + L"개";
+            if (scan.matching > 1)
+                message += L"\n중복 후보가 있습니다. 각각의 URL과 사용 장면을 확인하세요.";
+        }
+        message += L"\n\nURL 형식과 현재 장면의 직접 항목만 읽었습니다.\n"
+            L"그룹·중첩 장면, 실제 렌더 픽셀·크기·가림·송출/녹화·시청자 노출은 확인하지 않습니다.\n"
+            L"OBS 브라우저 소스 속성의 URL이 내 캠페인 주소와 정확히 같은지,\n"
+            L"미리보기와 필요한 경우 시험 녹화에서 직접 확인하세요.\n"
+            L"이 점검은 광고 실적·HP·수익을 기록하지 않습니다.";
+        MessageBoxW(nullptr, message.c_str(), L"ChatView · 시험 배너 소스 확인",
+            MB_OK | (scan.matching && scan.visible && !scan.truncated ? MB_ICONINFORMATION : MB_ICONWARNING));
+    } catch (...) {
+        MessageBoxW(nullptr, L"장면 점검 표시를 완료하지 못했습니다. OBS 소스 목록에서 직접 확인하세요.",
+            L"ChatView · 시험 배너 소스 확인", MB_OK | MB_ICONWARNING);
+    }
+}
 void restart_hud(void *)
 {
     if (runtime_controller && !runtime_controller->restart_hud()) {
@@ -472,6 +537,8 @@ bool obs_module_load(void)
             obs_module_text("ChatView.RestartHud"), restart_hud, nullptr);
         obs_frontend_add_tools_menu_item(
             obs_module_text("ChatView.EditOverlay"), toggle_edit_mode, nullptr);
+        obs_frontend_add_tools_menu_item(
+            obs_module_text("ChatView.CheckPublicBanner"), inspect_public_banner_scene, nullptr);
         obs_frontend_add_tools_menu_item(
             obs_module_text("ChatView.Diagnostics"), export_diagnostics, nullptr);
         obs_frontend_add_tools_menu_item(

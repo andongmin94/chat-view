@@ -4,7 +4,15 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 첫 WebView2 렌더 ACK 유실 시 승인과 채팅을 보존한 표시 재시도
+## 현재 흐름: 컴패니언 재승인 첫 문서의 중복 중단·탐색 경합 축소
+
+시작 원격 `OBS` HEAD `bf986a1123762134bfee6221d364a3f249f828c9`. 첫 렌더 ACK 유실 복구 기능은 합성 WinHTTP/WebView2 `native-logout`에서 통과했으나, 직후의 컴패니언 재승인 시나리오에서 초기 소유 문서 handshake가 간헐적으로 준비되지 않았다.
+
+- **Windows #469의 실제 실패:** [Windows development #469/run `39568767749`](https://github.com/andongmin94/chat-view/actions/runs/39568767749) **completed/failure, CTest 50/51·실패1·총324.26초**. `native-logout` **52.49초 통과**(신규 `render-ack-lost`가 포함된 실제 WebView2·WinHTTP 합성), `native-chat-surface` **5.11초**, `native-display-client` **68.87초**, `native-chat-switch` **25.89초** 등은 통과했다. 실패한 `companion-chat-reapproval` **28.13초**는 새 실제 gaming 재승인에서 `active=1/worker=1/metadata=1/pending_frame=1`이지만 `surface_ready=0/frames=0/rows=0/rejected=0`을 남겨 처음 비어 있는 자체 채팅 DOM 단계에 도달하지 못했다. 이는 기존 D1과 같은 관측 범위이지만 같은 근본 원인으로 확정하지 않으며, 성공 결과로 덮어쓰거나 대기 한도를 늘리지 않는다. [CHZZK contract #137/run `39568767544`](https://github.com/andongmin94/chat-view/actions/runs/39568767544)은 **completed/success 5/5**, Ubuntu·Windows × Node22/24 각 384/384·Chromium 29/29·strict TypeScript·npm audit 취약점0.
+- **수정:** `WebViewHost::navigate_local_document`에서 새 소유 URL·NavigationId를 먼저 결속하고, WebView2의 `Navigate`를 직접 호출한다. 별도의 `Stop()` 뒤 `Navigate`하는 이중 탐색 중단 경계를 제거한다. WebView2는 Navigate에 대해 비동기 NavigationStarting을 전달하며 Stop은 진행 중 탐색·리소스 요청 자체를 중지하므로, 빠른 설정/개인 문서 교체에서 서로 다른 탐색을 연쇄적으로 중단시키지 않는다. 호스트 허용 URL/유효 NavigationId/nonce·frameId 검증, 새로운 승인 요구/권한 철회 및 영상 캡처 제외는 보존한다. 실제 WebView2에서 개인 문서를 펌프 없이 연속 두 번 교체→최신 소스·기존 소스 거부→실제 첫 텍스트·ACK가 되는 회귀를 추가한다. 기존 설정 reload/불필요 탐색 금지·D1 첫 표시·로그아웃·게임 PC OBS 없음 테스트는 유지한다.
+- **검증/한계:** 관련 네이티브 Windows development CTest와 변경 diff로 검증하며 이전 #469 실패를 임의 무시하지 않는다. 단일 개발용 합성 통과도 실제 치지직 계정·게임 PC/SDR HDMI·캡처카드, D1 반복/자원/배포 qualification·D2/D4/D6/D7을 종결하지 못한다. 다음은 첫 표시·재승인과 게임 중 HUD 읽기/클릭 통과의 실제 사용성 검증이다. G1~G5와 체크리스트 **10/21(47.6%)**는 그대로 유지한다.
+
+## 직전 완료 흐름: 첫 WebView2 렌더 ACK 유실 시 승인과 채팅을 보존한 표시 재시도
 
 시작 원격 `OBS` HEAD `ef7f4340213f99b9bff7b54eacbb57b3876c6539`. 첫 치지직 채팅 스냅샷이 승인된 자체 WebView2 문서로 전달됐지만 개별 `chat-rendered:nonce:frameId` ACK가 도착하지 않는 D1 경계에서, 지금까지는 렌더 15초 마감 후 서버 연결을 중지하고 수동 재연결만 남았다.
 

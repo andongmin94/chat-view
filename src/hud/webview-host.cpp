@@ -519,15 +519,17 @@ bool WebViewHost::navigate_local_document(
         url.append(guid.data() + 1, 36U);
         url += L"/index.html";
         document_url = url; // Bind the caller before Navigate can raise events.
-        // Stop may synchronously deliver events for the old URL. Replace its
-        // ownership and navigation ID before cancelling the old request so
-        // none of those callbacks can authorize or retire this new document.
+        // Selecting the new owned URL invalidates every old navigation ID.
+        // Navigate supersedes the old page without a separate Stop() call:
+        // Stop()+Navigate on rapid private/setup replacements can cancel
+        // another pending load before its own NavigationStarting is delivered.
+        // The old URL is no longer allowed by the host filter, and its source
+        // and nonce cannot satisfy the new private receiver.
         current_navigation_id_ = 0U;
         current_url_.clear();
         local_document_url_ = std::move(url);
         local_document_utf8_ = std::move(bytes);
-        if (SUCCEEDED(webview_->Stop()) &&
-            SUCCEEDED(webview_->Navigate(local_document_url_.c_str()))) return true;
+        if (SUCCEEDED(webview_->Navigate(local_document_url_.c_str()))) return true;
     } catch (...) {
         // Allocation/conversion failures must not cross a Win32 callback.
     }

@@ -327,6 +327,19 @@ int main()
         // neither authorize its stale document nor invalidate the newer one.
         expect(surface.open(host), "immediate reopen while clear is queued");
         await([&] { return surface.ready(); }, "queued clear followed by fresh handshake");
+        // Replacing an already owned private document twice without pumping
+        // must not require Stop() or authorize either superseded nonce. The
+        // latest permitted URL and exact first render are still required.
+        const std::wstring superseded_owned_url = source(core.Get());
+        expect(surface.open(host), "first rapid private document replacement");
+        expect(surface.open(host), "second rapid private document replacement");
+        await([&] { return surface.ready(); }, "latest private document survives rapid replacement");
+        expect(source(core.Get()) != superseded_owned_url,
+            "stale own document cannot remain the selected source");
+        expect_cancelled(core.Get(), superseded_owned_url);
+        expect(surface.publish(kMessage), "first message on latest rapidly selected document");
+        await([&] { return surface.rendered_frames() == 1U && surface.rendered_messages() == 1U; },
+            "latest own document receives its actual first text after rapid replacement");
         // Each case supersedes two pending setup navigations without pumping
         // between requests. No retry-on-failure or relaxed DOM/time bounds.
         for (unsigned transition = 0; transition < 4; ++transition) {

@@ -57,7 +57,8 @@ for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gatew
   const timers: ReturnType<typeof setInterval>[] = [];
   let requests = 0, upgrades = 0, redirected = 0, rendered = false;
   let providerLost = false, providerReturned = false, providerBurst = false;
-  let transportBurst = false, transportRenewals = 0, firstDisplaySocket: Duplex | undefined;
+  let transportBurst = false, transportRenewals = 0, renewalsBeforeRevocation: number | undefined;
+  let firstDisplaySocket: Duplex | undefined;
   let child: ReturnType<typeof spawn> | undefined;
   const server = createServer((request, response) => {
     if (ui) {
@@ -197,7 +198,13 @@ for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gatew
         firstDisplaySocket.destroy();
       }
       if (/(^|\n)rendered\r?\n/u.test(output) && !rendered) {
-        rendered = true; assert(grantId); access.revokeSessions(); gateway.changed();
+        rendered = true; assert(grantId);
+        // The fixture revokes the approved session *after* the native DOM
+        // acknowledgement. That teardown may legitimately make one final,
+        // denied /display/refresh. It must not be counted as a recovery.
+        if (mode.startsWith('gateway-transport-burst'))
+          renewalsBeforeRevocation = transportRenewals;
+        access.revokeSessions(); gateway.changed();
       }
     });
     let errors = '';
@@ -228,9 +235,14 @@ for (const mode of ['gateway', 'gateway-gaming', 'gateway-provider-loss', 'gatew
       'the native HUD reported both the upstream interruption and its fresh first chat');
     if (mode === 'gateway-provider-burst')
       assert(providerBurst, 'two ordered provider frames arrived before the HUD owner resumed polling');
-    if (mode.startsWith('gateway-transport-burst'))
-      assert(transportBurst && transportRenewals === 1 && upgrades === 2,
-        'transport recovered by renewing the original approval, never starting a second login');
+    if (mode.startsWith('gateway-transport-burst')) {
+      assert(transportBurst, 'original display transport was actually interrupted');
+      assert.equal(upgrades, 2, 'one original and one renewed WebSocket, with no extra connection');
+      assert.equal(renewalsBeforeRevocation, 1,
+        'exactly one same-role approval renewal before successful new DOM acknowledgement');
+      assert(transportRenewals === 1 || transportRenewals === 2,
+        'only the verified reconnect and an optional denied post-revocation refresh may occur');
+    }
     if (['wrong-scope', 'wrong-role', 'redirect', 'cancel'].includes(mode)) assert.equal(upgrades, 0);
     console.log(`${mode}: passed`);
   } finally {

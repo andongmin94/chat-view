@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { TEST_CAMPAIGN } from './campaigns.mts';
+import { TEST_CAMPAIGNS } from './campaigns.mts';
 import type { Campaigns, CampaignStatus } from './campaigns.mts';
 import type { OutputView } from '../chat/broadcast-output.mts';
 
@@ -70,6 +70,8 @@ export function campaignsPage(status: CampaignStatus, csrf: string, origin: stri
   }): string {
   const form = (path: string, label: string) => `<form method="post" action="${path}"><input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="view" value="${viewToken}"><button>${label}</button></form>`;
   const source = status.sourceId ? `${origin}/public/ads/${status.sourceId}` : undefined;
+  const selectedCampaign = status.selected
+    ? TEST_CAMPAIGNS.find(campaign => campaign.id === status.campaignId) : undefined;
   const selectionText = selectionState === 'provider-required'
     ? '치지직 재승인 필요 · 이 계정의 치지직 승인이 유효하지 않습니다.'
     : selectionState === 'streaming-required'
@@ -128,10 +130,19 @@ ${selectionState !== 'ready' ? `<ol>
 <p><a href="/campaigns">선택 준비 상태 다시 확인</a> · <a href="/account">이 계정의 PC 역할 확인</a></p>
 ${source && !status.selected ? `<p data-banner-manual-reselect="${selectionState === 'ready' ? 'ready' : 'sender-required'}">기존 공개 URL은 그대로 사용할 수 있습니다. 송출 역할을 다시 승인해도 광고는 자동 선택되지 않습니다. 준비 상태 확인 후 캠페인을 다시 선택하세요.</p>` : ''}
 </section>
-<section><h2>${escape(TEST_CAMPAIGN.brand)} · ${escape(TEST_CAMPAIGN.title)}</h2>
-<p>${escape(TEST_CAMPAIGN.description)}</p><p>권장 브라우저 소스 크기: <strong>960 × 180</strong></p>
-${selectionState === 'ready' ? form(`/campaigns/${TEST_CAMPAIGN.id}/select`, status.selected ? '이 시험 캠페인 다시 선택' : '이 시험 캠페인 선택') : ''}</section>
-<p>현재 선택: <strong>${status.selected ? '시험 캠페인 선택됨' : '없음'}</strong></p>
+<p>운영자가 고정한 비지급 시험 소재 두 가지 중 한 가지를 직접 선택합니다.
+서로 다른 배너 문구를 시험할 수 있지만 광고 시청시간·HP·보상은 기록하지 않습니다.</p>
+${TEST_CAMPAIGNS.map((campaign, index) => `<section data-test-campaign="${campaign.id}" data-campaign-selected="${selectedCampaign?.id === campaign.id}">
+<h2>${escape(campaign.brand)} · ${escape(campaign.title)}</h2>
+<p>${escape(campaign.description)}</p><p>권장 브라우저 소스 크기: <strong>960 × 180</strong></p>
+${selectionState === 'ready' ? form(`/campaigns/${campaign.id}/select`,
+  selectedCampaign?.id === campaign.id ? '이 시험 캠페인 다시 선택'
+    : index === 0 && !status.selected ? '이 시험 캠페인 선택'
+    : `${escape(campaign.title)} 선택`) : ''}</section>`).join('')}
+<p data-selected-test-campaign="${selectedCampaign?.id ?? 'none'}">현재 선택:
+<strong>${selectedCampaign ? escape(selectedCampaign.title) : '없음'}</strong></p>
+<p>시험 소재를 바꾸면 기존 OBS 공개 URL은 유지됩니다. 공개 소스의 다음 유효 조회부터 새 문구를 사용하며,
+바꾸기 전후의 비지급 출력 보고 구간은 이어 계산하지 않습니다. 실제 OBS 소스 표시·시청자 노출 증거는 아닙니다.</p>
 <p data-campaign-form-guidance="fresh-review">브라우저 뒤로가기나 오래된 관리 탭은 현재 선택을 바꾸지 않습니다. 선택·중지 버튼이 오래된 확인 화면이라면 실행되지 않으며, <a href="/campaigns">현재 상태 다시 확인</a> 후 직접 결정해야 합니다. 송출 PC 역할 승인을 실제로 해제한 경우에는 새 송출 승인 뒤에도 광고를 직접 재선택해야 합니다.</p>
 <section id="public-banner-status" aria-labelledby="public-banner-status-title">
 <h3 id="public-banner-status-title">공개 배너 서버 준비 상태</h3>

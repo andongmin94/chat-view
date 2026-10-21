@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import type { ActivitySummary, ActivityEvidenceRow, ActivityReason, ActivityState } from './activity.mts';
+import { testCampaign } from './campaigns.mts';
 import type { AudienceReason } from '../chzzk/audience.mts';
 const states: Record<ActivityState, string> = {
   streaming: '송출 활성 보고', recording: '녹화 활성 보고', both: '송출·녹화 동시 보고',
@@ -127,7 +128,8 @@ export function activityPage(summary: ActivitySummary, rows: readonly ActivityEv
 <nav aria-label="측정 근거 단계"><a href="#activity-output">1. 송출 PC 출력 보고</a> ·
 <a href="#activity-audience">2. 채널 시청자 추정</a> ·
 <a href="#activity-exposure">3. 광고 노출·HP 미측정</a></nav>
-<p>선택한 시험 캠페인의 승인된 송출 연결이 보낸 보고만 기록합니다.
+<p>이 계정이 최근 선택했던 시험 캠페인들의 승인된 송출 연결이 보낸 보고만 기록합니다.
+시험 소재를 전환하면 다음 보고에서 새 구간이 시작되며 이전 구간을 이어 합산하지 않습니다.
 같은 상태의 연속 보고 두 개 사이를 보수적으로 근사하며, 실제 지속 송출을 보증하지 않습니다.
 첫 보고·상태 전환·누락 구간은 계산하지 않고 마지막 보고 이후 시간도 더하지 않습니다.</p>
 <section id="activity-output" aria-labelledby="activity-output-title" data-evidence-stage="output">
@@ -184,11 +186,11 @@ ${review ? `<p data-review-count="${rows.length}">확인할 근거 ${rows.length
 아래는 ${review ? '점검 대상 중 최근 50건' : '최근 50건'}입니다. 각 행의 채널 시청자 시간은 별도 근거의 <strong>추정</strong>이며 광고 실측값은 아닙니다. 전체 방송 이력이나 평생 합계가 아닙니다.</p>
 ${listedRows.length ? `<div style="overflow-x:auto"><table style="width:100%;text-align:left;font-size:14px;border-collapse:collapse">
 <caption>${review ? '연속성·채널 표본 확인 구간' : '최근 활동 근거'} (서버 수신 시각, UTC)</caption>
-<thead><tr><th scope="col">시작 → 마지막 보고</th><th scope="col">구분 / 근거</th><th scope="col">계산 구간</th><th scope="col">공식 채널 표본 · 시청자 시간 추정</th>${review ? '<th scope="col">점검 안내</th>' : ''}</tr></thead>
+<thead><tr><th scope="col">시작 → 마지막 보고</th><th scope="col">시험 캠페인 / 구분 / 근거</th><th scope="col">계산 구간</th><th scope="col">공식 채널 표본 · 시청자 시간 추정</th>${review ? '<th scope="col">점검 안내</th>' : ''}</tr></thead>
 <tbody>${listedRows.map(row => {
   const sample = channelEvidence(row);
   return `<tr><td>${date(row.from)}<br>→ ${date(row.to)}</td>
-<td>${states[row.state]}<br>${reasons[row.reason]}</td>
+<td>${testCampaign(row.campaignId)?.title ?? '알 수 없는 시험 캠페인'}<br>${states[row.state]}<br>${reasons[row.reason]}</td>
 <td>${row.state === 'unknown' ? '미산정' : duration(row.durationMs)}</td>
 <td data-sample-coverage="${sample.state}" data-sample-covered-ms="${row.audienceCoverageMs ?? ''}" data-estimated-viewer-ms="${row.estimatedViewerMs ?? ''}">${sample.coverage}<br>${sample.estimate}</td>
 ${review ? `<td>${reviewGuidance(row)}</td>` : ''}</tr>`;

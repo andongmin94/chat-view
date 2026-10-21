@@ -10,7 +10,7 @@ import { Creators } from './creators.mts';
 import type { BrowserIdentity } from './creators.mts';
 import type { Channel } from '../chzzk/api.mts';
 import { readOutputReport } from '../chat/broadcast-output.mts';
-import { Campaigns, CampaignError, TEST_CAMPAIGN } from '../ads/campaigns.mts';
+import { Campaigns, CampaignError, testCampaign } from '../ads/campaigns.mts';
 import { activityCsv, activityPage, needsActivityReview } from '../ads/activity-page.mts';
 import { campaignSetupScriptHash, campaignsPage, servePublicAd } from '../ads/pages.mts';
 
@@ -620,7 +620,7 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
       if (campaign) {
         // Unknown campaign routes retain their 404 semantics regardless of a
         // browser tab's last reviewed sender or pending approval.
-        if (campaign[1] !== TEST_CAMPAIGN.id) throw new CampaignError(404);
+        if (!testCampaign(campaign[1]!)) throw new CampaignError(404);
         if (!this.#creators.describe(b.owner).authorized) throw new DisplayAccessError(401);
         if (!this.#confirmCampaignView(response, b, view)) return;
         try {

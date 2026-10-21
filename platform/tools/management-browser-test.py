@@ -203,7 +203,18 @@ def run() -> None:
                             flow.page.get_by_role("link", name="캠페인 선택·중지").click()
                             expect(flow.page).to_have_url(f.origin + "/campaigns")
                             assert source.input_value() == public_url, "evidence navigation cannot change public OBS URL"
-                            results.append("selected campaign copies public OBS URL and returns from private evidence intact")
+                            # Real Chromium forms switch between fixed nonpayable creatives.
+                            # The same registered public OBS URL must survive both choices.
+                            expect(flow.page.locator('[data-selected-test-campaign="chatview-test"]')).to_have_count(1)
+                            flow.page.locator('form[action="/campaigns/chatview-test-chat/select"] button').click()
+                            expect(flow.page.locator('[data-selected-test-campaign="chatview-test-chat"]')).to_have_count(1)
+                            assert flow.page.locator("#source-url").input_value() == public_url
+                            expect(flow.page.locator('[data-campaign-selected="true"]')).to_contain_text(
+                                "채팅은 내 화면에, 영상은 방송에")
+                            flow.page.locator('form[action="/campaigns/chatview-test/select"] button').click()
+                            expect(flow.page.locator('[data-selected-test-campaign="chatview-test"]')).to_have_count(1)
+                            assert flow.page.locator("#source-url").input_value() == public_url
+                            results.append("creator switches approved nonpayable test creatives through Chromium without changing OBS URL")
                         elif path == "/account":
                             # The fixture keeps one Alice streaming-role peer open.
                             # Its gaming approval count is zero; Bob's distinct

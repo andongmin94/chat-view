@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { campaignsPage } from '../server/ads/pages.mts';
+import { TEST_CAMPAIGN } from '../server/ads/campaigns.mts';
 
 const cases = [
   ['provider-required', false, false, false, 'provider-required'],
@@ -20,7 +21,8 @@ const cases = [
 for (const [selectionState, selected, streamingConnected, previewReady, expected] of cases) {
   test(`recovery ${selectionState}/${selected}/${streamingConnected}/${previewReady} -> ${expected}`, () => {
     const url = `https://service.invalid/public/ads/${'1'.repeat(32)}`;
-    const html = campaignsPage({ selected, sourceId: '1'.repeat(32) }, 'a'.repeat(64),
+    const html = campaignsPage({ selected, sourceId: '1'.repeat(32),
+      ...(selected ? { campaignId: TEST_CAMPAIGN.id } : {}) }, 'a'.repeat(64),
       'https://service.invalid', { selectionState, streamingConnected, previewReady,
         output: { state: 'unknown' }, viewToken: 'b'.repeat(64) });
     const recovery = /<div data-banner-recovery-state="([^"]+)">([\s\S]*?)<\/div>/u.exec(html);
@@ -28,6 +30,8 @@ for (const [selectionState, selected, streamingConnected, previewReady, expected
     assert.equal(recovery[1], expected);
     assert.equal((html.match(/data-banner-recovery-state=/gu) ?? []).length, 1);
     assert.equal(html.includes('data-public-banner-state="report-ready"'), expected === 'report-ready');
+    assert.equal(html.includes('data-selected-test-campaign="chatview-test"'), selected);
+    assert.equal(html.includes('data-selected-test-campaign="none"'), !selected);
     assert(html.includes(`value="${url}"`), 'recovery keeps the exact public URL');
     assert.match(html, /href="\/campaigns">현재 상태 새로고침/u);
     assert.match(html, /href="\/account#two-pc-status"/u);
@@ -59,7 +63,8 @@ test('creator sees real output-report distinctions separately from public test-b
   ];
   for (const { output, expected, pattern } of states) {
     const ready = output.state === 'reported';
-    const html = campaignsPage({ selected: true, sourceId: '1'.repeat(32) }, 'a'.repeat(64),
+    const html = campaignsPage({ selected: true, campaignId: TEST_CAMPAIGN.id,
+      sourceId: '1'.repeat(32) }, 'a'.repeat(64),
       'https://service.invalid', { selectionState: 'ready', streamingConnected: true, previewReady: ready,
         output, viewToken: 'b'.repeat(64) });
     const paragraph = /<p data-output-report-state="([^"]+)">([^<]+)<\/p>/u.exec(html);

@@ -9,6 +9,12 @@ export const TEST_CAMPAIGN = Object.freeze({
   id: 'chatview-test', brand: 'ChatView', title: '방송과 함께하는 챗뷰',
   description: '공개 배너 연결을 확인하는 시험 캠페인입니다.',
 });
+export const TEST_CAMPAIGN_ALT = Object.freeze({
+  id: 'chatview-test-chat', brand: 'ChatView', title: '채팅은 내 화면에, 영상은 방송에',
+  description: '개인 채팅 HUD와 공개 배너를 구분하는 두 번째 시험 소재입니다.',
+});
+export const TEST_CAMPAIGNS = Object.freeze([TEST_CAMPAIGN, TEST_CAMPAIGN_ALT]);
+export const testCampaign = (id: string) => TEST_CAMPAIGNS.find(campaign => campaign.id === id);
 export const AD_MAX_AGE_MS = 15_000;
 export const HIDDEN_AD = Object.freeze({ type: 'ad-snapshot' as const, version: 1 as const,
   mode: 'test' as const, state: 'hidden' as const, expiresInMs: 0 });
@@ -16,7 +22,7 @@ export class CampaignError extends Error {
   readonly status: number;
   constructor(status: number) { super('ChatView campaign unavailable'); this.status = status; }
 }
-export type CampaignStatus = Readonly<{ sourceId?: string; selected: boolean }>;
+export type CampaignStatus = Readonly<{ sourceId?: string; selected: boolean; campaignId?: string }>;
 type Options = { sessions: SessionStore; output: (owner: string, membership: Membership) => OutputView };
 
 export class Campaigns {
@@ -36,15 +42,18 @@ export class Campaigns {
       ) STRICT;`);
   }
   status(owner: string): CampaignStatus {
-    const row = this.#options.sessions.database.prepare(`SELECT a.source_id, s.connection_id
+    const row = this.#options.sessions.database.prepare(`SELECT a.source_id, s.connection_id, s.campaign_id
       FROM ad_sources a LEFT JOIN ad_selections s ON s.source_id = a.source_id
       WHERE a.owner = ?`).get(owner);
     if (!row) return { selected: false };
-    return { sourceId: String(row.source_id), selected: row.connection_id !== null &&
-      this.#options.sessions.remaining(String(row.connection_id), owner) > 0 };
+    const campaign = row.campaign_id === null ? undefined : testCampaign(String(row.campaign_id));
+    const selected = !!campaign && row.connection_id !== null &&
+      this.#options.sessions.remaining(String(row.connection_id), owner) > 0;
+    return { sourceId: String(row.source_id), selected,
+      ...(selected ? { campaignId: campaign!.id } : {}) };
   }
   select(owner: string, campaignId: string): void {
-    if (campaignId !== TEST_CAMPAIGN.id) throw new CampaignError(404);
+    if (!testCampaign(campaignId)) throw new CampaignError(404);
     const connection = this.#options.sessions.connections(owner).find(c => c.role === 'streaming');
     if (!connection) throw new CampaignError(409);
     const db = this.#options.sessions.database;
@@ -65,7 +74,9 @@ export class Campaigns {
     if (!/^[a-f0-9]{32}$/u.test(sourceId)) return HIDDEN_AD;
     const row = this.#options.sessions.database.prepare(`SELECT a.owner, s.connection_id, s.campaign_id
       FROM ad_sources a JOIN ad_selections s ON s.source_id = a.source_id WHERE a.source_id = ?`).get(sourceId);
-    if (!row || row.campaign_id !== TEST_CAMPAIGN.id) return HIDDEN_AD;
+    if (!row) return HIDDEN_AD;
+    const campaign = testCampaign(String(row.campaign_id));
+    if (!campaign) return HIDDEN_AD;
     const owner = String(row.owner);
     const membership = this.#options.sessions.connections(owner)
       .find(c => c.role === 'streaming' && c.connectionId === row.connection_id);
@@ -80,6 +91,6 @@ export class Campaigns {
     // Both stopped and active OBS reports allow arranging the banner in preview.
     // Neither public reads nor a visible instruction constitute ad exposure.
     return { type: 'ad-snapshot' as const, version: 1 as const, mode: 'test' as const,
-      state: 'visible' as const, expiresInMs, campaign: TEST_CAMPAIGN };
+      state: 'visible' as const, expiresInMs, campaign };
   }
 }

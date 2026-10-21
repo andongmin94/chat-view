@@ -15,7 +15,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocket } from 'ws';
 import { fixture } from '../tests/fixtures/service.mts';
 import { DisplayGateway } from '../server/chat/display-gateway.mts';
-import { TEST_CAMPAIGN } from '../server/ads/campaigns.mts';
+import { TEST_CAMPAIGN, TEST_CAMPAIGN_ALT } from '../server/ads/campaigns.mts';
 
 const exec = promisify(execFile);
 assert.equal(process.platform, 'win32', 'official Windows OBS fixture required');
@@ -144,11 +144,11 @@ try {
   }
   await call('SetCurrentProgramScene', { sceneName: main });
   const alice = await f.connect('obs-ad-fixture', 'streaming');
-  const select = async () => {
+  const select = async (campaignId = TEST_CAMPAIGN.id) => {
     // Real creator workflow: confirm current same-owner sender and campaign
     // page before every manual select, never replaying a stale form.
     await f.page('/campaigns', alice.b);
-    assert.equal((await f.post(`/campaigns/${TEST_CAMPAIGN.id}/select`, alice.b)).status, 303);
+    assert.equal((await f.post(`/campaigns/${campaignId}/select`, alice.b)).status, 303);
   };
   const stop = async () => {
     await f.page('/campaigns', alice.b);
@@ -182,14 +182,16 @@ try {
     assert.equal(t.positionX, x); assert.equal(t.positionY, y);
     assert.equal(t.scaleX, scale); assert.equal(t.scaleY, scale);
   };
-  const capture = async (label: string, sceneName: string, rectangle = [0, 0, 0, 0], timeout = 15000) => {
+  const capture = async (label: string, sceneName: string, rectangle = [0, 0, 0, 0],
+    timeout = 15000, variant: 'primary' | 'alternate' = 'primary') => {
     const path = join(evidence, `${label}.png`), deadline = performance.now() + timeout;
     let metrics: Record<string, unknown> = {};
     do {
       await call('SaveSourceScreenshot', { sourceName: sceneName, imageFormat: 'png', imageFilePath: path,
         imageWidth: 1280, imageHeight: 720 });
       const result = await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', pixelScript, '-Image', path,
-        '-X', String(rectangle[0]), '-Y', String(rectangle[1]), '-Width', String(rectangle[2]), '-Height', String(rectangle[3])],
+        '-X', String(rectangle[0]), '-Y', String(rectangle[1]), '-Width', String(rectangle[2]), '-Height', String(rectangle[3]),
+        '-Variant', variant],
       { timeout: 8000, maxBuffer: 4096 });
       metrics = JSON.parse(result.stdout.trim());
       if (metrics.matches === true) {
@@ -225,6 +227,19 @@ try {
   assert(reads > beforeReturn, 'show must start a fresh read');
   await capture('return-after-stop', main);
   await select(); await capture('reselected', main, [60, 50, 480, 90]);
+  // Actual official OBS/CEF keeps the exact same Browser Source and public URL,
+  // but must switch the composed first-party creative color (not just JSON).
+  await select(TEST_CAMPAIGN_ALT.id);
+  const switched = await f.page('/campaigns', alice.b);
+  assert.match(switched, /data-selected-test-campaign="chatview-test-chat"/u);
+  assert.equal(/\/public\/ads\/([a-f0-9]{32})/u.exec(switched)?.[1], id);
+  const alternate = await f.request(`/public/ads/${id}/state`);
+  assert.equal(alternate.status, 200);
+  assert.deepEqual((await alternate.json()).campaign, TEST_CAMPAIGN_ALT);
+  await capture('creative-switched', main, [60, 50, 480, 90], 15000, 'alternate');
+  await select();
+  assert.deepEqual((await (await f.request(`/public/ads/${id}/state`)).json()).campaign, TEST_CAMPAIGN);
+  await capture('creative-restored', main, [60, 50, 480, 90]);
   await call('SetCurrentProgramScene', { sceneName: away });
   await stableHiddenReads(); await capture('scene-away', away);
   stalled = true;

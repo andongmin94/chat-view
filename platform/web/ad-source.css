@@ -6,6 +6,11 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background:
 #banner { height: 100%; width: 100%; display: flex; align-items: center; gap: 3vw;
   padding: 2.5vh 3vw; border: 2px solid #6377a2; border-radius: 16px;
   background: #141e32; color: #f6f8fc; }
+/* The alternate creative is fixed first-party artwork, not advertiser CSS. */
+#banner[data-campaign="chatview-test-chat"] {
+  border-color: #2bb5a1; background: #103b40;
+}
+#banner[data-campaign="chatview-test-chat"] .badge { color: #a8f4dd; }
 .brand-block { flex: 0 0 22%; min-width: 0; }
 #brand { font-size: clamp(16px, 4vw, 38px); font-weight: 750; overflow-wrap: anywhere; }
 .badge { margin-top: 8px; font-size: clamp(10px, 1.5vw, 16px); color: #fbd38d; }

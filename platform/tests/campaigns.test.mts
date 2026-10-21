@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionStore, SESSION_MS } from '../server/chat/session-store.mts';
-import { Campaigns, CampaignError, TEST_CAMPAIGN, HIDDEN_AD } from '../server/ads/campaigns.mts';
+import { Campaigns, CampaignError, TEST_CAMPAIGN, TEST_CAMPAIGN_ALT, TEST_CAMPAIGNS, HIDDEN_AD } from '../server/ads/campaigns.mts';
 import type { OutputView } from '../server/chat/broadcast-output.mts';
 
 const denied = (status: number) => (e: unknown) => e instanceof CampaignError && e.status === status;
@@ -50,6 +50,38 @@ test('public snapshots contain only artwork; absence, stop and invalid ID disclo
     assert.ok(sessions.find(approval.token), 'stopping an ad does not revoke private chat');
     ads.select('private-alice-channel', TEST_CAMPAIGN.id);
     assert.equal(ads.status('private-alice-channel').sourceId, id, 'OBS source address survives stop/reselect');
+  } finally { sessions.close(); }
+});
+
+test('two operator-approved nonpayable creatives switch on the same public source without cross-owner effects', () => {
+  const sessions = new SessionStore(), ads = new Campaigns({ sessions, output: reported });
+  try {
+    assert.equal(TEST_CAMPAIGNS.length, 2);
+    sessions.create('alice', 'streaming'); sessions.create('bob', 'streaming');
+    ads.select('alice', TEST_CAMPAIGN.id);
+    ads.select('bob', TEST_CAMPAIGN.id);
+    const aliceSource = ads.status('alice').sourceId!, bobSource = ads.status('bob').sourceId!;
+    assert.notEqual(aliceSource, bobSource);
+    assert.equal(ads.status('alice').campaignId, TEST_CAMPAIGN.id);
+    assert.deepEqual(ads.snapshot(aliceSource).campaign, TEST_CAMPAIGN);
+
+    ads.select('alice', TEST_CAMPAIGN_ALT.id);
+    assert.deepEqual(ads.status('alice'), { sourceId: aliceSource, selected: true, campaignId: TEST_CAMPAIGN_ALT.id },
+      'same creator keeps one OBS source and one selected campaign');
+    assert.deepEqual(ads.snapshot(aliceSource).campaign, TEST_CAMPAIGN_ALT,
+      'read-only public response serves only the newly selected fixed artwork');
+    assert.deepEqual(ads.snapshot(bobSource).campaign, TEST_CAMPAIGN, 'another creator retains their own selection');
+    assert.equal(sessions.database.prepare('SELECT COUNT(*) AS count FROM ad_selections WHERE source_id = ?')
+      .get(aliceSource)?.count, 1, 'switch replaces the same row, never a duplicate campaign/source');
+    assert.throws(() => ads.select('alice', 'chatview-test-script'), denied(404));
+    assert.equal(ads.status('alice').campaignId, TEST_CAMPAIGN_ALT.id, 'unknown creative cannot overwrite selection');
+
+    ads.stop('alice');
+    assert.deepEqual(ads.snapshot(aliceSource), HIDDEN_AD, 'Stop hides the last selected creative');
+    assert.deepEqual(ads.status('alice'), { sourceId: aliceSource, selected: false });
+    ads.select('alice', TEST_CAMPAIGN.id);
+    assert.equal(ads.status('alice').sourceId, aliceSource);
+    assert.deepEqual(ads.snapshot(aliceSource).campaign, TEST_CAMPAIGN);
   } finally { sessions.close(); }
 });
 

@@ -1,0 +1,108 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Real owner-cookie/CSRF + SQLite + streaming WebSocket + public renderer DTO.
+// All provider, OBS output and campaign creatives are synthetic and non-payable.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
+import { WebSocket } from 'ws';
+import { fixture } from './fixtures/service.mts';
+import { TEST_CAMPAIGN, TEST_CAMPAIGN_ALT, HIDDEN_AD } from '../server/ads/campaigns.mts';
+
+test('creator chooses a second approved nonpayable banner while OBS source URL and owner boundaries stay intact', async () => {
+  const f = await fixture();
+  const readers: WebSocket[] = [];
+  try {
+    const alice = await f.connect('alice', 'streaming');
+    const bob = await f.connect('bob', 'streaming');
+    const select = async (b: typeof alice.b, campaignId: string) => {
+      await f.page('/campaigns', b); // Fresh CSRF-bound review of the actual streaming approval.
+      assert.equal((await f.post(`/campaigns/${campaignId}/select`, b)).status, 303);
+      return await f.page('/campaigns', b);
+    };
+    const first = await select(alice.b, TEST_CAMPAIGN.id);
+    const bobPage = await select(bob.b, TEST_CAMPAIGN.id);
+    const source = /\/public\/ads\/([a-f0-9]{32})/u.exec(first)?.[1];
+    const bobSource = /\/public\/ads\/([a-f0-9]{32})/u.exec(bobPage)?.[1];
+    assert(source && bobSource && source !== bobSource);
+    assert.match(first, /data-selected-test-campaign="chatview-test"/u);
+    assert.match(first, /data-test-campaign="chatview-test-chat" data-campaign-selected="false"/u);
+    assert.match(first, /action="\/campaigns\/chatview-test-chat\/select"/u);
+    assert.match(first, /시험 광고 · 지급 없음/u);
+
+    for (const token of [alice.lease.token, bob.lease.token]) {
+      const peer = new WebSocket(f.origin.replace('http:', 'ws:') + '/display/events', {
+        headers: { Authorization: 'Bearer ' + token }, handshakeTimeout: 3000,
+      });
+      peer.on('error', () => {}); readers.push(peer); await once(peer, 'open');
+    }
+    const report = async (sequence: number, token = alice.lease.outputToken!) => {
+      const response = await f.request('/broadcast/output', { method: 'POST', headers: {
+        Authorization: `ChatView-Output ${token}`, 'Content-Type': 'application/json',
+      }, body: JSON.stringify({ sequence, streaming: true, recording: false, sampleAgeMs: 0 }) });
+      assert.equal(response.status, 200);
+    };
+    const snapshot = async (id: string) => {
+      const response = await f.request(`/public/ads/${id}/state`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('set-cookie'), null);
+      return await response.json();
+    };
+    await report(1);
+    await delay(620); await report(2);
+    await report(1, bob.lease.outputToken!);
+    const before = f.creators.activity.summary('alice').streamingMs;
+    assert(before > 0);
+    assert.deepEqual((await snapshot(source)).campaign, TEST_CAMPAIGN);
+    assert.deepEqual((await snapshot(bobSource)).campaign, TEST_CAMPAIGN);
+
+    const oldView = alice.b.view!;
+    const after = await select(alice.b, TEST_CAMPAIGN_ALT.id);
+    assert.match(after, /data-selected-test-campaign="chatview-test-chat"/u);
+    assert.match(after, /data-test-campaign="chatview-test" data-campaign-selected="false"/u);
+    assert.match(after, /채팅은 내 화면에, 영상은 방송에/u);
+    assert(after.includes(`/public/ads/${source}`), 'the previous OBS Browser Source URL is unchanged');
+    const second = await snapshot(source);
+    assert.equal(second.state, 'visible');
+    assert.deepEqual(second.campaign, TEST_CAMPAIGN_ALT, 'live source uses the newly selected fixed creative');
+    assert.deepEqual((await snapshot(bobSource)).campaign, TEST_CAMPAIGN, 'other owner retains their own creative');
+    for (const secret of [alice.lease.token, alice.lease.outputToken!, alice.lease.sessionToken,
+      alice.lease.membership.broadcastSessionId, 'alice'])
+      assert(!JSON.stringify(second).includes(secret), 'public creative never contains private session data');
+
+    const stale = await f.request(`/campaigns/${TEST_CAMPAIGN.id}/select`, {
+      method: 'POST', headers: { Cookie: alice.b.cookie, Origin: f.origin,
+        'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ csrf: alice.b.csrf, view: oldView }),
+    });
+    assert.equal(stale.status, 409, 'an old management tab cannot undo the freshly chosen creative');
+    assert.deepEqual((await snapshot(source)).campaign, TEST_CAMPAIGN_ALT);
+
+    await delay(620); await report(3);
+    assert.equal(f.creators.activity.summary('alice').streamingMs, before,
+      'creative switch retires the previous output bracket without fabricating activity');
+    await delay(620); await report(4);
+    const evidence = f.creators.activity.evidence('alice');
+    assert(evidence.some(row => row.campaignId === TEST_CAMPAIGN.id && row.reason === 'continuous'));
+    assert(evidence.some(row => row.campaignId === TEST_CAMPAIGN_ALT.id && row.reason === 'continuous'));
+    const history = await f.page('/campaigns/activity', alice.b);
+    assert.match(history, /방송과 함께하는 챗뷰/u);
+    assert.match(history, /채팅은 내 화면에, 영상은 방송에/u);
+    assert.match(history, /시험 소재를 전환하면 다음 보고/u);
+    assert.doesNotMatch(history, /확정 지급|광고 실측 노출 확인/u);
+
+    await f.page('/campaigns', alice.b);
+    assert.equal((await f.post('/campaigns/stop', alice.b)).status, 303);
+    assert.deepEqual(await snapshot(source), HIDDEN_AD, 'Stop hides whichever creative was selected');
+    assert.equal(await f.page('/campaigns', alice.b).then(html => /data-selected-test-campaign="none"/u.test(html)), true);
+    const restored = await select(alice.b, TEST_CAMPAIGN.id);
+    assert(restored.includes(`/public/ads/${source}`));
+    assert.deepEqual((await snapshot(source)).campaign, TEST_CAMPAIGN,
+      'an explicit new selection restores the same OBS public source without another URL');
+    assert.deepEqual((await snapshot(bobSource)).campaign, TEST_CAMPAIGN);
+    assert.equal(readers[0]!.readyState, WebSocket.OPEN, 'creative selection leaves private chat connected');
+  } finally {
+    for (const reader of readers) reader.terminate();
+    await f.close();
+  }
+});

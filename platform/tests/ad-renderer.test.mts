@@ -2,12 +2,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { adSnapshot, paintAd, connectAd } from '../web/ad-renderer.js';
+import { TEST_CAMPAIGN, TEST_CAMPAIGN_ALT } from '../server/ads/campaigns.mts';
 
 const visible = () => ({ type: 'ad-snapshot', version: 1, mode: 'test', state: 'visible', expiresInMs: 15000,
   campaign: { id: 'chatview-test', brand: 'ChatView', title: '테스트 😀 <img onerror=evil()>', description: '지급 없음' } });
 const hidden = () => ({ type: 'ad-snapshot', version: 1, mode: 'test', state: 'hidden', expiresInMs: 0 });
 function document() {
-  const elements = new Map(['banner', 'brand', 'title', 'description'].map(id => [id, { hidden: false, textContent: '' }]));
+  const elements = new Map(['banner', 'brand', 'title', 'description'].map(id => [id,
+    { hidden: false, textContent: '', dataset: { campaign: '' } }]));
   return { getElementById: (id: string) => elements.get(id)! };
 }
 function clock() {
@@ -38,8 +40,19 @@ test('only bounded test snapshots render; advertiser text is inert and hidden st
   const d = document(); paintAd(d, adSnapshot(visible()));
   assert.equal(d.getElementById('banner').hidden, false);
   assert.equal(d.getElementById('title').textContent, visible().campaign.title);
+  assert.equal(d.getElementById('banner').dataset.campaign, TEST_CAMPAIGN.id);
+  paintAd(d, adSnapshot({ ...visible(), campaign: TEST_CAMPAIGN_ALT }));
+  assert.equal(d.getElementById('banner').hidden, false);
+  assert.equal(d.getElementById('banner').dataset.campaign, TEST_CAMPAIGN_ALT.id);
+  assert.equal(d.getElementById('title').textContent, TEST_CAMPAIGN_ALT.title);
+  assert.equal(d.getElementById('description').textContent, TEST_CAMPAIGN_ALT.description);
+  paintAd(d, adSnapshot({ ...visible(), campaign: TEST_CAMPAIGN }));
+  assert.equal(d.getElementById('banner').dataset.campaign, TEST_CAMPAIGN.id);
+  assert.equal(d.getElementById('title').textContent, TEST_CAMPAIGN.title);
   paintAd(d, adSnapshot(hidden()));
-  assert.equal(d.getElementById('banner').hidden, true); assert.equal(d.getElementById('title').textContent, '');
+  assert.equal(d.getElementById('banner').hidden, true);
+  assert.equal(d.getElementById('banner').dataset.campaign, '');
+  assert.equal(d.getElementById('title').textContent, '');
   for (const input of [null, {}, { ...visible(), mode: 'paid' }, { ...visible(), expiresInMs: 15001 },
     { ...visible(), expiresInMs: -1 }, { ...visible(), expiresInMs: 1.5 }, { ...visible(), script: 'evil' },
     { ...visible(), campaign: { ...visible().campaign, trackingUrl: 'evil' } },

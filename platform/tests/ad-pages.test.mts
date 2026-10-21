@@ -66,6 +66,10 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     assert.match(management, /name="view" value="b{64}"/u);
     assert.match(management, /960 × 180/u);
     assert.match(management, /data-public-banner-state="report-ready"/u);
+    assert.match(management, /data-selected-test-campaign="chatview-test"/u);
+    assert.match(management, /data-test-campaign="chatview-test-chat" data-campaign-selected="false"/u);
+    assert.match(management, /action="\/campaigns\/chatview-test-chat\/select"/u,
+      'owner may explicitly switch to a second operator-defined nonpayable creative');
     assert.match(management, /id="obs-source-setup"/u);
     assert.match(management, /<input id="source-url" type="url" readonly/u);
     assert.match(management, /<button id="copy-public-source" type="button">공개 주소 복사<\/button>/u);
@@ -89,6 +93,7 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     ads.stop('private-account');
     const stopped = campaignsPage(ads.status('private-account'), 'a'.repeat(64), origin, { selectionState: 'ready', streamingConnected: true, previewReady: false, output: { state: 'unknown' }, viewToken: 'b'.repeat(64) });
     assert.match(stopped, /data-public-banner-state="not-selected"/u);
+    assert.match(stopped, /data-selected-test-campaign="none"/u);
     assert(!stopped.includes('data-public-banner-state="report-ready"'));
     assert.match(stopped, /id="source-url"/u, 'public URL persists after Stop');
     assert.match(stopped, /data-obs-setup-readiness="not-selected"/u);
@@ -116,6 +121,10 @@ for (const selection of ['provider-required', 'streaming-required', 'ready'] as 
       assert.match(html, /href="\/campaigns">선택 준비 상태 다시 확인/u);
       assert.match(html, /href="\/account">이 계정의 PC 역할 확인/u);
       assert.match(html, /시험 광고 · 지급 없음/u);
+      assert.match(html, /data-test-campaign="chatview-test-chat"/u,
+        'second campaign is only a fixed catalog entry, not an implicit selection');
+      assert.equal(html.includes('action="/campaigns/chatview-test-chat/select"'), selection === 'ready',
+        'the second campaign follows exactly the same role prerequisites');
       if (selection !== 'ready') {
         assert.match(html, /게임 PC에 OBS를 설치하거나 실행하지 않습니다/u);
         assert.match(html, /이 관리 화면과 같은 치지직 채널/u);

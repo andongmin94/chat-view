@@ -27,6 +27,9 @@ export function adSnapshot(value) {
 export function paintAd(document, snapshot) {
   const banner = document.getElementById('banner');
   banner.hidden = true;
+  // Only two fixed first-party CSS selectors are installed. Never inject
+  // advertiser styles, URLs or arbitrary page markup into the public source.
+  banner.dataset.campaign = snapshot.state === 'visible' ? snapshot.campaign.id : '';
   for (const name of ['brand', 'title', 'description'])
     document.getElementById(name).textContent = snapshot.state === 'visible' ? snapshot.campaign[name] : '';
   banner.hidden = snapshot.state !== 'visible';

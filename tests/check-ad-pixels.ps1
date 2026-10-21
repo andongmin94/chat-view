@@ -2,7 +2,8 @@
 # Synthetic OBS composite PNG only. No desktop capture or OCR.
 param(
     [Parameter(Mandatory = $true)][string]$Image,
-    [int]$X = 0, [int]$Y = 0, [int]$Width = 0, [int]$Height = 0
+    [int]$X = 0, [int]$Y = 0, [int]$Width = 0, [int]$Height = 0,
+    [ValidateSet('primary','alternate')][string]$Variant = 'primary'
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
@@ -28,8 +29,21 @@ try {
             }
         }
     }
-    $matches = $outside -gt 0 -and $outsideChanged -eq 0 -and
+    # Fixed first-party dark-panel color in a text-free portion of the actual
+    # OBS composite. This distinguishes two creatives at the SAME URL without
+    # OCR, CEF DOM inspection or trusting the service's advertised campaign ID.
+    $variantMatches = $true
+    if ($Width -gt 0) {
+        $sample = $bitmap.GetPixel($X + $Width - 8, $Y + [int][Math]::Floor($Height / 2))
+        $expected = if ($Variant -eq 'alternate') { @(16, 59, 64) } else { @(20, 30, 50) }
+        $distance = [Math]::Abs([int]$sample.R - $expected[0]) +
+            [Math]::Abs([int]$sample.G - $expected[1]) +
+            [Math]::Abs([int]$sample.B - $expected[2])
+        $variantMatches = $distance -le 18
+    }
+    $matches = $outside -gt 0 -and $outsideChanged -eq 0 -and $variantMatches -and
         ($Width -eq 0 -or ($inside -gt 0 -and $painted / $inside -ge 0.95))
     @{ matches = $matches; insideSamples = $inside; paintedSamples = $painted;
-       outsideSamples = $outside; outsideChanged = $outsideChanged } | ConvertTo-Json -Compress
+       outsideSamples = $outside; outsideChanged = $outsideChanged;
+       creativeColorMatches = $variantMatches } | ConvertTo-Json -Compress
 } finally { $bitmap.Dispose() }

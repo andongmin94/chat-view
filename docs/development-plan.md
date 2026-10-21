@@ -11,6 +11,10 @@
 - **사용자 동선:** 로그인한 관리 브라우저 `/campaigns`에서 운영자가 고정한 두 가지 지급 불가 ChatView 배너(기존 `chatview-test`, 두 번째 `chatview-test-chat`) 중 하나를 직접 선택한다. 현재 선택된 소재 제목·선택 상태를 화면에서 구별하고 **다른 시험 소재를 선택해도 송출 PC OBS Browser Source 공개 URL은 그대로** 유지한다. 공개 배너의 다음 유효한 조회에서 고정된 다른 문구·배경색이 적용된다. 언제든 기존 소재로 복귀하거나 **공개 배너 중지**를 택할 수 있다. 선택·교체·중지는 지급/실측 광고 시청 실적이 아니고, 라이브 OBS에서는 소스가 표시 중이라면 문구가 바뀔 수 있으므로 미리보기·테스트 장면에서 먼저 확인한다.
 - **권한/데이터 경계:** 기존 송출 역할 승인·계정 소유자 쿠키/CSRF·최신 캠페인 뷰 토큰 검사와 원자적 단일 `ad_selections` 행을 그대로 사용한다. 과거 관리 탭·타 계정/기기 또는 알 수 없는 소재의 재선택/덮어쓰기는 거부한다. 공개 JSON에는 해당 고정 시험 소재의 유효한 텍스트 네 필드만 남고 자격정보·개인 채팅·광고주 JS/트래커·HP/수익을 새로 넣지 않는다. 광고 선택 교체 시 `CampaignActivity.clear(owner)`로 새 출력 보고 연속구간을 시작하되 과거 비지급 근거를 지우지 않는다. 계정의 활동 표에는 과거 소재 제목을 구별해 표시하고 CSV에는 기존 캠페인 ID를 보존한다. 송출 보고·공개 배너·채널 시청자 추정은 **광고 주목·실측 노출/수익과 분리**한다.
 - **회귀:** `campaigns` 저장소·실제 HTTP/SQLite/WebSocket/관리 Chromium에서 원래→대체→복귀·중지, 같은 OBS URL·정확한 선택·다른 소유자 격리·오래된 탭 차단, 송출 보고/표본 이력의 전환 경계, 비지급 문구를 확인한다. 고정 ID에만 CSS 색상을 부여하고 `ad-renderer`가 현재 문구와 색을 교체·숨김 해제하는지 검사한다. 공식 OBS32.2.2/CEF 합성 장면은 같은 Browser Source URL에서 원래 배경색→다른 배경색→원래 배경색의 실제 합성 픽셀을 검증한다. 이것은 운영자 지정 **시험 소재** 두 개일 뿐 실제 광고 계약·운영 카탈로그/광고주 관리·시청자 광고 주목 계측/HP/유료 정산이나 실방송 지원의 완료는 아니다.
+- **기능 SHA `9ec929460cd10fe219545d5d2935fa2df1c76ec5` 초기 검증:** [CHZZK #127/run `39532866396`](https://github.com/andongmin94/chat-view/actions/runs/39532866396) **failure**. 7개 Node 테스트는 기존 `ad-source.test.mts`의 합성 DOM이 신설 `dataset.campaign`을 누락한 6건과 새 `campaign-creative-switch.test.mts`의 테스트 전용 WebSocket gateway가 없는 1건이다. 실사용 정책이나 렌더 수명 예산을 완화하지 않고 기존 생산용 `DisplayGateway`를 시험에 연결·가상 DOM 필드를 갱신했다.
+- **수정 및 최종 계약:** `c9c13dadf6081f86e7d704a87fc2b994837c81a4`의 [CHZZK #128/run `39533128988`](https://github.com/andongmin94/chat-view/actions/runs/39533128988)은 **런타임 382/382 성공, TypeScript 실패 5건**(hidden/visible 합타입을 무조건 campaign으로 취급한 기존 신규 테스트 4건, 첫 소재 ID 리터럴로 추론한 공식 OBS 도구 테스트 인자 1건). 명시적인 가시성 판별과 문자열 타입 지정만 적용했다. `18e58f1469d8701afdff47ad7fc5886dc26664a1`의 [CHZZK #129/run `39533440590`](https://github.com/andongmin94/chat-view/actions/runs/39533440590)은 **completed/success, 5/5 작업**. Ubuntu/Windows × Node22/24 각 **382/382 pass, fail0·skip0**, 엄격 TypeScript·잠금 의존성·npm audit **0 취약점**, Chromium 관리 브라우저 **29/29 합성 제공자 성공**.
+- **공식 OBS/CEF 합성 화면:** 기능 SHA `9ec9294`의 [public ad #41/run `39532866443`](https://github.com/andongmin94/chat-view/actions/runs/39532866443) 및 타입만 수정한 `18e58f1`의 [public ad #42/run `39533440877`](https://github.com/andongmin94/chat-view/actions/runs/39533440877) 모두 **completed/success, 15/15 합성 장면 픽셀 검사**. OBS32.2.2/CEF의 같은 공개 URL·브라우저 소스에서 기존→대체→기존의 구분되는 고정 배경색이 실제 합성 픽셀로 바뀌었고, 기존 숨김/장면 전환/중지·투명 복귀도 통과했다. 계정은 합성, 실제 송출·시청자 노출·수익 미측정. `9ec9294`의 [Windows development #463/run `39532866431`](https://github.com/andongmin94/chat-view/actions/runs/39532866431)은 별도 native scope·Windows native 회귀로 실행됐으며 종료를 확인하기 전에는 통과로 세지 않는다. 물리 G3/G2, 실계정 G4, G5 실측/HP/지급 및 D1/D2/D4/D6/D7·R 전체 qualification은 계속 미완료.
+
 
 ## 직전 완료 흐름: OBS 현재 장면의 시험 배너 브라우저 소스를 직접 점검
 
@@ -400,7 +404,7 @@ HUD가 보이면서 수신 영상에는 없어야 한다. HUD 숨김은 보호�
 
 개인 HUD·OBS 활동 보고·채널 시청자 추정은 검증된 광고 시청 실적이 아니다. 시험 수치는 지급 불가다.
 
-- [x] **G5-01 — 시험 캠페인 목록·선택·중지.** 계정/CSRF·송출 승인 결합·철회·재시작 보존·재선택. 패널/관리 브라우저 전환은 선택을 바꾸지 않는다.
+- [x] **G5-01 — 시험 캠페인 목록·선택·중지.** 2개 고정 비지급 소재 간 명시적 선택·교체/복귀 및 기존 공개 URL 유지(#129·공식 OBS CEF #42 합성 통과). 계정/CSRF·송출 승인 결합·철회·재시작 보존·재선택. 패널/관리 브라우저 전환은 선택을 바꾸지 않는다.
 - [x] **G5-02 — 별도 OBS 공개 시험 소스.** 독립 공개 배너·공개 URL 복사/수동 복사·OBS Browser Source 설정 안내 구현. OBS 도구에서 **현재 장면 직접 배치/표시 플래그만** 확인하는 점검 메뉴 #462 Windows CTest 통과(실제 픽셀·방송 증거 아님). `1cda0c0` 공식 OBS32.2.2/CEF#11/#12 각각 합성 PNG13개 통과. 선택 준비는 #65, 접속·보고 대기 복귀는 #66 서비스/Chromium 통과. D7·실제 방송 수신·관중 노출·HP/정산은 별도.
 - [ ] **G5-03 — 시청시간 집계.** 비지급 활동·누락 기록·공식 Live API 표본/추정. 0명/미측정 구분, 녹화/미리보기 제외, 소유자만 조회, 공개 조회로 증가하지 않음. 기본 꺼짐; 권한·할당량·보관 조건 확인 후 `CHATVIEW_AUDIENCE_SAMPLING=1`. 실제 광고 노출/주의 미검증.
 - [ ] **G5-04 — 서버 HP·수익.** 규격 미정. 비지급/예상/확정 구분, HP0 지급 조건 임의 추가 금지.

@@ -207,11 +207,22 @@ def run() -> None:
                             # The same registered public OBS URL must survive both choices.
                             expect(flow.page.locator('[data-selected-test-campaign="chatview-test"]')).to_have_count(1)
                             flow.page.locator('form[action="/campaigns/chatview-test-chat/select"] button').click()
+                            expect(flow.page.locator('[data-campaign-switch="confirm"]')).to_have_count(1)
+                            expect(flow.page.locator('[data-campaign-switch="confirm"]')).to_contain_text(
+                                "같은 OBS 브라우저 소스 URL")
+                            flow.page.get_by_role("link", name="취소하고 기존 소재 유지").click()
+                            expect(flow.page.locator('[data-selected-test-campaign="chatview-test"]')).to_have_count(1)
+                            assert flow.page.locator("#source-url").input_value() == public_url
+                            flow.page.locator('form[action="/campaigns/chatview-test-chat/select"] button').click()
+                            expect(flow.page.locator('[data-campaign-switch="confirm"]')).to_have_count(1)
+                            flow.page.get_by_role("button", name="위 시험 소재로 교체 확인").click()
                             expect(flow.page.locator('[data-selected-test-campaign="chatview-test-chat"]')).to_have_count(1)
                             assert flow.page.locator("#source-url").input_value() == public_url
                             expect(flow.page.locator('[data-campaign-selected="true"]')).to_contain_text(
                                 "채팅은 내 화면에, 영상은 방송에")
                             flow.page.locator('form[action="/campaigns/chatview-test/select"] button').click()
+                            expect(flow.page.locator('[data-campaign-switch="confirm"]')).to_have_count(1)
+                            flow.page.get_by_role("button", name="위 시험 소재로 교체 확인").click()
                             expect(flow.page.locator('[data-selected-test-campaign="chatview-test"]')).to_have_count(1)
                             assert flow.page.locator("#source-url").input_value() == public_url
                             results.append("creator switches approved nonpayable test creatives through Chromium without changing OBS URL")

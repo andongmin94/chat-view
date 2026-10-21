@@ -20,7 +20,17 @@ test('creator chooses a second approved nonpayable banner while OBS source URL a
     const bob = await f.connect('bob', 'streaming');
     const select = async (b: typeof alice.b, campaignId: string) => {
       await f.page('/campaigns', b); // Fresh CSRF-bound review of the actual streaming approval.
-      assert.equal((await f.post(`/campaigns/${campaignId}/select`, b)).status, 303);
+      const response = await f.post(`/campaigns/${campaignId}/select`, b);
+      if (response.status === 200) {
+        const prompt = await response.text();
+        assert.match(prompt, /data-campaign-switch="confirm"/u);
+        assert.match(prompt, /취소하고 기존 소재 유지/u);
+        assert.match(prompt, /시청자 광고 실측·HP·수익을 기록하지 않습니다/u);
+        const newView = /name="view" value="([a-f0-9]{64})"/u.exec(prompt)?.[1];
+        assert(newView && newView !== b.view, 'a one-use review replaces the older form token');
+        b.view = newView;
+        assert.equal((await f.post(`/campaigns/${campaignId}/confirm`, b)).status, 303);
+      } else assert.equal(response.status, 303);
       return await f.page('/campaigns', b);
     };
     const first = await select(alice.b, TEST_CAMPAIGN.id);
@@ -59,7 +69,46 @@ test('creator chooses a second approved nonpayable banner while OBS source URL a
     assert.deepEqual((await snapshot(source)).campaign, TEST_CAMPAIGN);
     assert.deepEqual((await snapshot(bobSource)).campaign, TEST_CAMPAIGN);
 
+    await f.page('/campaigns', alice.b);
+    assert.equal((await f.post(`/campaigns/${TEST_CAMPAIGN.id}/select`, alice.b)).status, 303,
+      'reselecting the same material is an immediate no-op, not a destructive switch');
+    assert.equal(f.creators.activity.summary('alice').streamingMs, before,
+      'same-creative click cannot erase the previous nonpayable interval');
+
     const oldView = alice.b.view!;
+    // A first click on another creative is only a preview of consequences:
+    // the public artwork, active sender and stored interval remain unchanged.
+    await f.page('/campaigns', alice.b);
+    const firstClick = await f.post(`/campaigns/${TEST_CAMPAIGN_ALT.id}/select`, alice.b);
+    assert.equal(firstClick.status, 200, 'switching requires a second explicit browser confirmation');
+    const pendingHtml = await firstClick.text();
+    assert.match(pendingHtml, /data-campaign-switch="confirm"/u);
+    assert.match(pendingHtml, /방송과 함께하는 챗뷰/u);
+    assert.match(pendingHtml, /채팅은 내 화면에, 영상은 방송에/u);
+    const pendingView = /name="view" value="([a-f0-9]{64})"/u.exec(pendingHtml)?.[1];
+    assert(pendingView && pendingView !== alice.b.view);
+    assert.deepEqual((await snapshot(source)).campaign, TEST_CAMPAIGN);
+    assert.equal(f.creators.activity.summary('alice').streamingMs, before,
+      'unconfirmed creative switch cannot retire or invent an activity bracket');
+    await f.page('/campaigns', bob.b);
+    assert.equal((await f.post(`/campaigns/${TEST_CAMPAIGN_ALT.id}/confirm`, bob.b)).status, 409,
+      'a different creator cannot confirm Alice\'s pending switch');
+    assert.deepEqual((await snapshot(bobSource)).campaign, TEST_CAMPAIGN,
+      'cross-owner confirm cannot alter a separate OBS source');
+
+    // Cancel via the ordinary management link, then attempt the old Yes.
+    await f.page('/campaigns', alice.b);
+    const staleConfirmation = await f.request(`/campaigns/${TEST_CAMPAIGN_ALT.id}/confirm`, {
+      method: 'POST', headers: { Cookie: alice.b.cookie, Origin: f.origin,
+        'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ csrf: alice.b.csrf, view: pendingView }),
+    });
+    assert.equal(staleConfirmation.status, 409);
+    assert.deepEqual((await snapshot(source)).campaign, TEST_CAMPAIGN,
+      'cancelling keeps the original public OBS creative and stable URL');
+    const wrongConfirm = await f.post(`/campaigns/${TEST_CAMPAIGN_ALT.id}/confirm`, alice.b);
+    assert.equal(wrongConfirm.status, 409, 'a confirm without a pending switch cannot modify the public source');
+
     const after = await select(alice.b, TEST_CAMPAIGN_ALT.id);
     assert.match(after, /data-selected-test-campaign="chatview-test-chat"/u);
     assert.match(after, /data-test-campaign="chatview-test" data-campaign-selected="false"/u);

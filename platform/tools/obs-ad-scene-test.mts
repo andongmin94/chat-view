@@ -144,11 +144,23 @@ try {
   }
   await call('SetCurrentProgramScene', { sceneName: main });
   const alice = await f.connect('obs-ad-fixture', 'streaming');
-  const select = async (campaignId: string = TEST_CAMPAIGN.id) => {
+  const select = async (campaignId: string = TEST_CAMPAIGN.id,
+    beforeConfirmation?: () => Promise<void>) => {
     // Real creator workflow: confirm current same-owner sender and campaign
     // page before every manual select, never replaying a stale form.
     await f.page('/campaigns', alice.b);
-    assert.equal((await f.post(`/campaigns/${campaignId}/select`, alice.b)).status, 303);
+    const response = await f.post(`/campaigns/${campaignId}/select`, alice.b);
+    if (response.status === 200) {
+      const prompt = await response.text();
+      assert.match(prompt, /data-campaign-switch="confirm"/u);
+      // The current official OBS CEF must keep displaying the OLD creative
+      // until a distinct user-confirmation POST authorizes the switch.
+      const confirmation = /name="view" value="([a-f0-9]{64})"/u.exec(prompt)?.[1];
+      assert(confirmation && confirmation !== alice.b.view);
+      if (beforeConfirmation) await beforeConfirmation();
+      alice.b.view = confirmation;
+      assert.equal((await f.post(`/campaigns/${campaignId}/confirm`, alice.b)).status, 303);
+    } else assert.equal(response.status, 303);
   };
   const stop = async () => {
     await f.page('/campaigns', alice.b);
@@ -229,7 +241,13 @@ try {
   await select(); await capture('reselected', main, [60, 50, 480, 90]);
   // Actual official OBS/CEF keeps the exact same Browser Source and public URL,
   // but must switch the composed first-party creative color (not just JSON).
-  await select(TEST_CAMPAIGN_ALT.id);
+  await select(TEST_CAMPAIGN_ALT.id, async () => {
+    const stillOld = await f.request(`/public/ads/${id}/state`);
+    assert.equal(stillOld.status, 200);
+    assert.deepEqual((await stillOld.json()).campaign, TEST_CAMPAIGN,
+      'first click cannot change public creative before the second browser confirmation');
+    await capture('creative-unconfirmed', main, [60, 50, 480, 90]);
+  });
   const switched = await f.page('/campaigns', alice.b);
   assert.match(switched, /data-selected-test-campaign="chatview-test-chat"/u);
   assert.equal(/\/public\/ads\/([a-f0-9]{32})/u.exec(switched)?.[1], id);

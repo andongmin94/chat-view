@@ -141,7 +141,9 @@ ${selectionState === 'ready' ? form(`/campaigns/${campaign.id}/select`,
     : `${escape(campaign.title)} 선택`) : ''}</section>`).join('')}
 <p data-selected-test-campaign="${selectedCampaign?.id ?? 'none'}">현재 선택:
 <strong>${selectedCampaign ? escape(selectedCampaign.title) : '없음'}</strong></p>
-<p>시험 소재를 바꾸면 기존 OBS 공개 URL은 유지됩니다. 공개 소스의 다음 유효 조회부터 새 문구를 사용하며,
+<p>선택 중인 소재를 다른 것으로 교체할 때는 <strong>별도의 교체 확인 화면</strong>에서 한 번 더 승인해야 합니다.
+확인 전에 취소하면 기존 배너와 비지급 구간을 그대로 유지합니다. 최초 선택과 중지는 바로 반영됩니다.</p>
+<p>교체를 확정하면 기존 OBS 공개 URL은 유지됩니다. 공개 소스의 다음 유효 조회부터 새 문구를 사용하며,
 바꾸기 전후의 비지급 출력 보고 구간은 이어 계산하지 않습니다. 실제 OBS 소스 표시·시청자 노출 증거는 아닙니다.</p>
 <p data-campaign-form-guidance="fresh-review">브라우저 뒤로가기나 오래된 관리 탭은 현재 선택을 바꾸지 않습니다. 선택·중지 버튼이 오래된 확인 화면이라면 실행되지 않으며, <a href="/campaigns">현재 상태 다시 확인</a> 후 직접 결정해야 합니다. 송출 PC 역할 승인을 실제로 해제한 경우에는 새 송출 승인 뒤에도 광고를 직접 재선택해야 합니다.</p>
 <section id="public-banner-status" aria-labelledby="public-banner-status-title">

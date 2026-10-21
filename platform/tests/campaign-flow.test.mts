@@ -181,6 +181,18 @@ test('public addresses and native capabilities cannot select campaigns or read p
     assert.equal((await f.request(selectPath, { method: 'POST', headers: {
       Cookie: alice.b.cookie, Origin: 'https://foreign.invalid', 'Content-Type': 'application/x-www-form-urlencoded',
     }, body: `csrf=${alice.b.csrf}` })).status, 403);
+    const switchConfirm = '/campaigns/chatview-test-chat/confirm';
+    assert.equal((await f.request(switchConfirm, { method: 'POST', headers: {
+      Authorization: `ChatView-Session ${alice.lease.sessionToken}`,
+      'Content-Type': 'application/x-www-form-urlencoded', Origin: f.origin,
+    }, body: new URLSearchParams({ csrf: alice.b.csrf, view: alice.b.view! }) })).status, 403,
+    'native display/session credentials cannot confirm a creator-side banner change');
+    assert.equal((await f.request(switchConfirm, { method: 'POST', headers: {
+      Cookie: alice.b.cookie, Origin: f.origin, 'Content-Type': 'application/x-www-form-urlencoded',
+    }, body: new URLSearchParams({ csrf: nonce(), view: alice.b.view! }) })).status, 403,
+    'forged CSRF cannot turn a second-stage confirmation into an ad selection');
+    assert.equal((await f.post(switchConfirm, alice.b)).status, 409,
+      'even a valid browser/CSRF/view cannot confirm without a pending creative switch');
     assert.equal((await f.request(`/public/ads/${id}`, { method: 'POST' })).status, 405);
     const query = await f.request(`/public/ads/${id}?owner=alice`);
     assert.equal(query.status, 400); assert.equal(await query.text(), '', 'public error does not render private error text');

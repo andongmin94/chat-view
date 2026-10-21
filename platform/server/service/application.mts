@@ -31,7 +31,8 @@ type Browser = { key: string; csrf: string; expires: number; controller: AbortCo
   // Only the account and exact streaming grant the user reviewed on this
   // browser's current campaign page. Any campaign write invalidates all same-
   // owner browser views, so an old tab cannot undo another browser's Stop.
-  campaignView?: { owner: string; connectionId: string; viewToken: string };
+  campaignView?: { owner: string; connectionId: string; viewToken: string;
+    switch?: { sourceId: string; fromId: string; targetId: string; expires: number } };
   attempt?: Attempt; pending?: { identity: BrowserIdentity; page: ManagementPage; expires: number } };
 const managementPage = (path: string): path is ManagementPage =>
   MANAGEMENT_PAGES.some(page => page === path);
@@ -570,7 +571,7 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
       if (!b) throw new DisplayAccessError(
         /^\/(?:account(?:\/|$)|campaigns(?:\/|$)|connections\/)/u.test(url.pathname) ? 401 : 403);
       const campaignAction = url.pathname === '/campaigns/stop' ||
-        /^\/campaigns\/[a-z0-9-]{1,64}\/select$/u.test(url.pathname);
+        /^\/campaigns\/[a-z0-9-]{1,64}\/(?:select|confirm)$/u.test(url.pathname);
       const view = await csrfForm(request, b.csrf, campaignAction); this.#live(b);
       const loginPage = url.pathname.endsWith('/login') ? url.pathname.slice(0, -6) : '';
       if (managementPage(loginPage)) {
@@ -616,15 +617,60 @@ ${this.#form(b, '/logout', '이 브라우저만 로그아웃')}
         this.#redirect(response, '/'); return;
       }
       if (!b.owner) throw new DisplayAccessError(401);
-      const campaign = /^\/campaigns\/([a-z0-9-]{1,64})\/select$/u.exec(url.pathname);
+      const campaign = /^\/campaigns\/([a-z0-9-]{1,64})\/(select|confirm)$/u.exec(url.pathname);
       if (campaign) {
-        // Unknown campaign routes retain their 404 semantics regardless of a
-        // browser tab's last reviewed sender or pending approval.
-        if (!testCampaign(campaign[1]!)) throw new CampaignError(404);
+        // Only operator-fixed, non-payable creatives are valid. The second
+        // step receives no new account/advertising authority from the URL.
+        const target = testCampaign(campaign[1]!);
+        if (!target) throw new CampaignError(404);
         if (!this.#creators.describe(b.owner).authorized) throw new DisplayAccessError(401);
         if (!this.#confirmCampaignView(response, b, view)) return;
+        const current = this.#campaigns.status(b.owner);
+        if (campaign[2] === 'confirm') {
+          const pending = b.campaignView?.switch;
+          if (!pending || pending.targetId !== target.id || pending.fromId !== current.campaignId ||
+              pending.sourceId !== current.sourceId || !current.selected ||
+              pending.expires <= Date.now()) {
+            // A changed selection, expired prompt or a stale tab cannot apply
+            // an earlier "Yes" to a different live banner.
+            b.campaignView = undefined;
+            this.#page(response, '시험 소재 교체 확인 만료',
+              '<p>교체 확인이 만료되었거나 현재 소재가 변경됐습니다. 기존 선택은 유지됩니다.</p><p><a href="/campaigns">현재 소재를 다시 확인</a></p>', 409);
+            return;
+          }
+        } else if (current.selected && current.campaignId === target.id) {
+          // Re-selecting the exact same creative must not reset nonpayable
+          // activity or renew an existing public exposure interval.
+          this.#retireCampaignViews(b.owner);
+          this.#redirect(response, '/campaigns'); return;
+        } else if (current.selected && current.campaignId && current.sourceId) {
+          // Always ask before changing visible artwork. A missing/stale OBS
+          // streaming flag is NOT proof that the creator is safely offline.
+          const reviewed = b.campaignView!;
+          const newView = nonce();
+          b.campaignView = { ...reviewed, viewToken: newView, switch: {
+            sourceId: current.sourceId, fromId: current.campaignId,
+            targetId: target.id, expires: Date.now() + 60_000,
+          } };
+          const previous = testCampaign(current.campaignId);
+          this.#page(response, '시험 배너 교체 확인', this.#accountNotice(b) + `
+<section data-campaign-switch="confirm">
+<p><strong>현재 소재:</strong> ${escape(previous?.title ?? '알 수 없음')}</p>
+<p><strong>교체할 소재:</strong> ${escape(target.title)}</p>
+<p>같은 OBS 브라우저 소스 URL에서 배너의 문구와 색상이 바뀝니다.
+실제 송출 여부는 서버의 최신 활동 보고만으로 확인할 수 없습니다.
+OBS 화면이나 녹화 중에도 소재가 즉시 교체될 수 있으므로
+송출 PC의 장면을 먼저 확인하세요.</p>
+<p>이것은 지급 없는 시험 배너이며 시청자 광고 실측·HP·수익을 기록하지 않습니다.</p>
+<form method="post" action="/campaigns/${target.id}/confirm">
+<input type="hidden" name="csrf" value="${b.csrf}"><input type="hidden" name="view" value="${newView}">
+<button>위 시험 소재로 교체 확인</button></form>
+<p><a href="/campaigns">취소하고 기존 소재 유지</a></p>
+</section>`);
+          return; // No campaign write, ad renderer change or activity reset.
+        }
         try {
-          this.#campaigns.select(b.owner, campaign[1]!);
+          this.#campaigns.select(b.owner, target.id);
           this.#creators.activity.clear(b.owner);
         } catch (error) {
           if (!(error instanceof CampaignError) || error.status !== 409) throw error;

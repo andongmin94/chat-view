@@ -67,6 +67,8 @@ test('public HTTP serves only transparent-first artwork and fixed assets; manage
     assert.match(management, /960 × 180/u);
     assert.match(management, /data-public-banner-state="report-ready"/u);
     assert.match(management, /data-selected-test-campaign="chatview-test"/u);
+    assert.match(management, /별도의 교체 확인 화면/u);
+    assert.match(management, /확인 전에 취소하면 기존 배너와 비지급 구간을 그대로 유지/u);
     assert.match(management, /data-test-campaign="chatview-test-chat" data-campaign-selected="false"/u);
     assert.match(management, /action="\/campaigns\/chatview-test-chat\/select"/u,
       'owner may explicitly switch to a second operator-defined nonpayable creative');

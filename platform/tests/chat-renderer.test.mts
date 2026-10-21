@@ -6,6 +6,7 @@ import { renderChat } from '../web/chat-renderer.js';
 class Element {
   readonly tag: string;
   children: Element[] = [];
+  parent: Element | null = null;
   textContent = '';
   className = '';
   dir = '';
@@ -30,15 +31,34 @@ class Element {
   addEventListener(name: string, listener: () => void) { this.listeners.set(name, listener); }
   fire(name: string) { this.listeners.get(name)?.(); }
   set innerHTML(_value: string) { throw new Error('HTML injection'); }
-  get scrollHeight() { return this.children.length * 30; }
+  get rowHeight() {
+    return 30 + ((Number.parseInt(this.style.fontSize || '16', 10) - 16) * 3) +
+      (this.classList.contains('chat-high-contrast') ? 4 : 0);
+  }
+  get scrollHeight() { return this.children.length * (this.tag === 'ol' ? this.rowHeight : 30); }
   get firstChild() { return this.children[0]; }
-  append(...children: Element[]) { this.children.push(...children); }
-  appendChild(child: Element) { this.added++; this.children.push(child); }
+  getBoundingClientRect() {
+    if (this.parent?.tag === 'ol') {
+      const height = this.parent.rowHeight;
+      const top = this.parent.children.indexOf(this) * height - this.parent.scrollTop;
+      return { top, bottom: top + height };
+    }
+    return { top: 0, bottom: this.clientHeight };
+  }
+  append(...children: Element[]) {
+    for (const child of children) { child.parent = this; this.children.push(child); }
+  }
+  appendChild(child: Element) { this.added++; child.parent = this; this.children.push(child); }
   removeChild(child: Element) {
     assert.equal(this.firstChild, child);
-    this.removed++; this.children.shift();
+    this.removed++; this.children.shift(); child.parent = null;
   }
-  replaceChildren(...children: Element[]) { this.replaced++; this.children = children; }
+  replaceChildren(...children: Element[]) {
+    this.replaced++;
+    for (const child of this.children) child.parent = null;
+    this.children = children;
+    for (const child of children) child.parent = this;
+  }
 }
 function fixture(prefs = new Map<string, string>()) {
   const list = new Element('ol'), status = new Element('p'), jump = new Element('button');
@@ -226,6 +246,40 @@ test('unknown role strings, forged badge objects and profile markup cannot becom
   assert.equal(list.children.length, 1);
   assert.deepEqual(list.children[0]?.children.map(el => el.tag), ['time', 'b', 'span']);
   assert.equal(list.children[0]?.children[2]?.textContent, message(1).content);
+});
+
+test('changing font size or contrast preserves the first visible message while reading old chat', () => {
+  const { document, list, jump, larger, smaller, contrast } = fixture();
+  list.clientHeight = 100;
+  renderChat(document, frame(12, Array.from({ length: 12 }, (_, i) => message(i + 1))));
+  const anchor = list.children[3]!;
+  const oldRow = list.children[4]!;
+  list.scrollTop = 115; // Midway through the fourth line; not at latest.
+  const screenTop = anchor.getBoundingClientRect().top;
+  assert.equal(screenTop, -25);
+  renderChat(document, frame(13, Array.from({ length: 13 }, (_, i) => message(i + 1))));
+  assert.equal(jump.textContent, '새 채팅 1개 · 최신으로');
+  assert.equal(jump.hidden, false);
+
+  larger.fire('click');
+  assert.equal(list.style.fontSize, '18px');
+  assert.equal(anchor.getBoundingClientRect().top, screenTop,
+    'growing text does not shift the top visible historical message');
+  assert.equal(list.children[4], oldRow, 'font change cannot rebuild received rows');
+  contrast.fire('click');
+  assert.equal(anchor.getBoundingClientRect().top, screenTop,
+    'adding high contrast borders preserves the same historical row');
+  smaller.fire('click');
+  assert.equal(anchor.getBoundingClientRect().top, screenTop,
+    'returning to smaller text preserves the reading position');
+  assert.equal(jump.hidden, false);
+  assert.equal(jump.textContent, '새 채팅 1개 · 최신으로',
+    'readability changes do not acknowledge unread chat messages');
+  jump.fire('click');
+  assert.equal(jump.hidden, true);
+  larger.fire('click');
+  assert.equal(list.scrollTop, list.scrollHeight,
+    'font adjustment follows newest content only when streamer is already at latest');
 });
 
 test('streamer can increase font, toggle contrast and retain only bounded local display preferences', () => {

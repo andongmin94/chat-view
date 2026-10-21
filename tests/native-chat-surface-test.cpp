@@ -408,6 +408,31 @@ int main()
         })())JS") == L"true", "scrolled-up native HUD displays unread text without jumping");
         expect(evaluate(core.Get(), LR"JS((() => {
             const list = document.getElementById('messages');
+            const unread = document.getElementById('jump-latest');
+            list.scrollTop = 90;
+            if (list.scrollHeight - list.scrollTop - list.clientHeight < 80) return false;
+            const anchor = [...list.children].find(row =>
+                row.getBoundingClientRect().bottom > list.getBoundingClientRect().top);
+            if (!anchor || anchor === list.firstElementChild) return false;
+            const initial = anchor.getBoundingClientRect().top;
+            const marker = unread.textContent;
+            const font = list.style.fontSize;
+            const larger = document.getElementById('chat-font-larger');
+            const smaller = document.getElementById('chat-font-smaller');
+            const contrast = document.getElementById('chat-contrast');
+            larger.click();
+            if (Math.abs(anchor.getBoundingClientRect().top - initial) > 2) return false;
+            contrast.click();
+            if (Math.abs(anchor.getBoundingClientRect().top - initial) > 2) return false;
+            smaller.click();
+            return Math.abs(anchor.getBoundingClientRect().top - initial) <= 2 &&
+                list.style.fontSize === font && list.contains(anchor) &&
+                !unread.hidden && unread.textContent === marker &&
+                list.scrollHeight - list.scrollTop - list.clientHeight >= 80;
+        })())JS") == L"true",
+            "real private WebView2 anchors historical text through typography/contrast changes while unread remains");
+        expect(evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
             const latest = document.getElementById('jump-latest');
             latest.click();
             return latest.hidden && list.scrollHeight - list.scrollTop - list.clientHeight < 80;

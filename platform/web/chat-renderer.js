@@ -51,16 +51,31 @@ function attachReadability(document, list) {
       storage?.setItem('chatview.high-contrast', highContrast ? '1' : '0');
     } catch { /* Keep current on-screen adjustment when storage is unavailable. */ }
   };
-  smaller.addEventListener('click', () => {
-    fontSize = sizes[Math.max(0, sizes.indexOf(fontSize) - 1)];
+  // Enlarging text changes the height of every older row. Keep the same
+  // visible message at the same screen position while the streamer reads
+  // history; if they were already at the newest message, stay at the bottom.
+  // CSS/readability is local UI only: never rebuild or re-request chat.
+  const adjust = change => {
+    const atLatest = nearBottom(list);
+    const listTop = list.getBoundingClientRect().top;
+    const anchor = atLatest ? null : [...list.children].find(row =>
+      row.getBoundingClientRect().bottom > listTop);
+    const oldTop = anchor ? anchor.getBoundingClientRect().top : 0;
+    change();
     apply(); save();
+    if (atLatest) list.scrollTop = list.scrollHeight;
+    else if (anchor) list.scrollTop += anchor.getBoundingClientRect().top - oldTop;
+  };
+  smaller.addEventListener('click', () => {
+    if (fontSize > sizes[0])
+      adjust(() => { fontSize = sizes[sizes.indexOf(fontSize) - 1]; });
   });
   larger.addEventListener('click', () => {
-    fontSize = sizes[Math.min(sizes.length - 1, sizes.indexOf(fontSize) + 1)];
-    apply(); save();
+    if (fontSize < sizes.at(-1))
+      adjust(() => { fontSize = sizes[sizes.indexOf(fontSize) + 1]; });
   });
   contrast.addEventListener('click', () => {
-    highContrast = !highContrast; apply(); save();
+    adjust(() => { highContrast = !highContrast; });
   });
   apply();
 }

@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 컴패니언 첫 보호 채팅 연결창을 WebView2 준비와 분리
+## 현재 흐름: HUD 편집을 닫으면 게임·작업창에 키보드 포커스 돌려주기
+
+시작 원격 `OBS` HEAD `7aadf65d5dc3d539982e53e8c5ab834c2e0c718b`, 직전 [Windows #473/run `39701567389`](https://github.com/andongmin94/chat-view/actions/runs/39701567389) **completed/success, native CTest 51/51·실패0** 확인. G1-03의 게임 위 자체 HUD 조작에서 기존 `Ctrl+Alt+Shift+H`가 편집 모드로 들어올 때 게임/작업창의 입력 포커스를 HUD로 옮기지만, 편집을 마치고 다시 클릭 통과 상태로 잠가도 게임의 키보드 입력 포커스를 되돌리는 경로가 없어 다시 클릭해야 하는 사용성 문제를 수정한다.
+
+- **행동:** 편집 모드 진입 직전 사용자에게 실제로 전면 표시된 **게임/작업창 HWND와 PID만 메모리**에 보관한다. 다시 잠글 때 HUD 또는 소유 자식 문서가 **여전히 전면에 있을 때만** 현재 살아 있고 표시되는 원래 창으로 Win32 포커스를 한 번 복귀 요청한다. 사용자가 편집 중 다른 앱으로 전환했다면 포커스를 훔치지 않고 현재 창을 유지한다. 대상 창이 파괴·최소화·PID 변경된 경우에도 복귀 요청을 하지 않는다. 사용자 창 제목/키/프로세스 식별값은 파일·서버·로그로 전송하지 않는다.
+- **안전/구현:** 기존 `HudWindow::set_edit_mode`의 조작 허용·보호된 HUD `WDA_EXCLUDEFROMCAPTURE` 검증, `WS_EX_TRANSPARENT|WS_EX_NOACTIVATE`, `HTTRANSPARENT`, 이동·크기/DPI 저장, 읽는 채팅·WebView2 nonce/ACK와 경계는 유지한다. Win32 `SetForegroundWindow`가 운영체제 포커스 정책상 거절되는 경우 강제로 우회하지 않는다. 캡처 위험/잠금·전원 일시중단·종료에서는 저장한 임시 복귀 후보를 폐기하며 영상 출력이나 OBS 존재 여부는 변경하지 않는다.
+- **회귀:** 실제 보호 `HudWindow`와 컴패니언 게임 영상/채팅을 함께 실행하는 `companion-video-protection-test.cpp`에서 서로 다른 실 Win32 최상위 제어창 두 개를 사용한다. 기존 `WM_HOTKEY`로 잠금→편집→잠금을 조작하여 원래 전면창 키보드 포커스 복귀와 실제 잠긴 HUD의 `WM_NCHITTEST=HTTRANSPARENT`, `WM_MOUSEACTIVATE=MA_NOACTIVATE` 및 클릭 통과 스타일을 검사한다. 편집 중 사용자가 다른 창을 전면에 둔 경우에는 새 포커스를 건드리지 않고 캡처 제외도 유지하는지 확인한다. 기존 합성 WGC/검정·채팅/로그아웃과 Windows native routine을 함께 실행한다.
+- **범위:** 이는 실제 Windows 창 포커스/마우스 안전의 개발 통합 테스트이며 **실제 특정 게임/전체화면·안티치트 환경**에서 포커스가 항상 돌아온다는 보장이 아니다. G1-03 실게임 체감, D1 첫 표시 간헐 실패, D2/D4/D6/D7, 물리 HDMI/캡처카드 HUD 제외, 실계정 치지직·실방송 광고/HP·배포 5회/자원 qualification은 계속 미완료다. 체크리스트 **10/21(47.6%)** 유지. 다음은 게임 HUD 편집 후 실제 입력과 G1-03의 접근성/가독성 검증에서 재현되는 결함을 우선한다.
+
+## 직전 완료 흐름: 컴패니언 첫 보호 채팅 연결창을 WebView2 준비와 분리
 
 시작 `OBS` HEAD `5e6f7587e2da4afdd2a4e766a74cac26269cf06b`. [Windows #472](https://github.com/andongmin94/chat-view/actions/runs/39625610592) **completed/success, CTest 51/51·실패0·271.88초**(실제 `companion-launch` 2.44초, `native-display-client` 57.75초); [CHZZK #139](https://github.com/andongmin94/chat-view/actions/runs/39625611542) **completed/success, 5/5**. 이전 [Windows #470](https://github.com/andongmin94/chat-view/actions/runs/39570971115)의 `companion-launch`는 보호된 연결창 미표시로 실패했으며, 성공한 한 번의 후속 routine만으로 D1을 종결하지 않는다.
 

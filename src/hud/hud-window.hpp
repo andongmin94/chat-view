@@ -109,6 +109,10 @@ private:
     bool recording_ = false;
     bool capture_risk_ = false;
     bool edit_mode_ = false;
+    // Foreground game/work window before explicit HUD editing; checked again
+    // before restoring focus, never treated as ownership of another process.
+    HWND edit_return_window_ = nullptr;
+    DWORD edit_return_process_ = 0U;
     bool edit_hotkey_registered_ = false;
     bool session_notifications_registered_ = false;
     bool webview_ready_ = false;

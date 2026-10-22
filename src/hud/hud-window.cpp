@@ -223,6 +223,8 @@ bool HudWindow::create(HINSTANCE instance, HANDLE ready_event)
 void HudWindow::destroy() noexcept
 {
     shutting_down_ = true;
+    edit_return_window_ = nullptr;
+    edit_return_process_ = 0U;
     if (window_ != nullptr) {
         KillTimer(window_, kStatusTimerId);
         KillTimer(window_, kNavigationRetryTimerId);
@@ -759,13 +761,50 @@ bool HudWindow::set_edit_mode(bool editing)
             if (!allowed()) {
                 return false;
             }
+        } else {
+            // Entering edit explicitly may activate this WebView2 HUD and
+            // interrupt keyboard/game input. Remember only the currently
+            // foreground, visible top-level target, never a prior HUD child.
+            edit_return_window_ = nullptr;
+            edit_return_process_ = 0U;
+            const HWND foreground = GetForegroundWindow();
+            if (foreground && foreground != window_ &&
+                GetAncestor(foreground, GA_ROOT) != window_ &&
+                IsWindowVisible(foreground)) {
+                DWORD process = 0U;
+                if (GetWindowThreadProcessId(foreground, &process) && process != 0U) {
+                    edit_return_window_ = foreground;
+                    edit_return_process_ = process;
+                }
+            }
         }
         edit_mode_ = editing;
         apply_window_mode();
         if (!allowed()) {
+            edit_return_window_ = nullptr;
+            edit_return_process_ = 0U;
             return false;
         }
         update_host_state();
+        if (!editing) {
+            // Re-locking must hand keyboard focus back only when the HUD still
+            // owns the foreground. Never steal focus from a window the user
+            // deliberately switched to while editing, or a recycled HWND.
+            const HWND foreground = GetForegroundWindow();
+            const HWND previous = edit_return_window_;
+            const DWORD previous_process = edit_return_process_;
+            edit_return_window_ = nullptr;
+            edit_return_process_ = 0U;
+            DWORD process = 0U;
+            if (foreground &&
+                (foreground == window_ ||
+                 GetAncestor(foreground, GA_ROOT) == window_) &&
+                previous && IsWindowVisible(previous) && !IsIconic(previous) &&
+                GetWindowThreadProcessId(previous, &process) &&
+                process == previous_process) {
+                (void)SetForegroundWindow(previous);
+            }
+        }
     }
 
     if (editing) {
@@ -1113,6 +1152,8 @@ void HudWindow::pause_for_system_lifecycle(
         capture_and_persist_bounds();
         edit_mode_ = false;
     }
+    edit_return_window_ = nullptr;
+    edit_return_process_ = 0U;
 
     set_page_health(
         HudPageState::SystemPaused, page_provider_, detail);
@@ -1207,6 +1248,8 @@ void HudWindow::complete_system_resume() noexcept
     }
 
     edit_mode_ = false;
+    edit_return_window_ = nullptr;
+    edit_return_process_ = 0U;
     apply_window_mode();
     if (capture_exclusion_failed_) {
         return;
@@ -1425,6 +1468,8 @@ bool HudWindow::apply_capture_policy() noexcept
         if (edit_mode_) {
             capture_and_persist_bounds();
             edit_mode_ = false;
+            edit_return_window_ = nullptr;
+            edit_return_process_ = 0U;
             apply_window_mode();
             update_host_state();
         }

@@ -207,6 +207,54 @@ void exercise(const wchar_t *source_path)
         "video settings has readable actual exclusion before first use");
     expect(Chat::idle(chat) && !Video::output(video), "panel navigation alone creates no login or capture");
 
+    // Ctrl+Alt+Shift+H is the shipping HUD edit/unlock shortcut. Real Win32
+    // activation must return to the window the streamer was using when they
+    // re-lock click-through, without touching unrelated video or consent.
+    const auto is_foreground = [](HWND target) {
+        const HWND current = GetForegroundWindow();
+        return current && (current == target || GetAncestor(current, GA_ROOT) == target);
+    };
+    const auto activate = [&](HWND target) {
+        expect(SetForegroundWindow(target) != FALSE, "activate synthetic game/work window");
+        await([&] { return is_foreground(target); }, "actual foreground window changes", 2000);
+    };
+    const auto toggle_hud = [&] {
+        SendMessageW(hud_window, WM_HOTKEY, 1U,
+            MAKELPARAM(MOD_CONTROL | MOD_ALT | MOD_SHIFT, 'H'));
+    };
+    activate(dialog); // Existing protected companion controls stand in for the game.
+    toggle_hud();
+    await([&] { return is_foreground(hud_window); },
+        "editable HUD accepts focus from the previous work window", 2000);
+    expect((GetWindowLongPtrW(hud_window, GWL_EXSTYLE) &
+            (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE)) == 0,
+        "edit mode accepts pointer and keyboard interaction");
+    toggle_hud();
+    await([&] { return is_foreground(dialog); },
+        "re-lock returns actual keyboard focus to the prior window", 2000);
+    expect((GetWindowLongPtrW(hud_window, GWL_EXSTYLE) &
+            (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE)) ==
+            (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE) &&
+        SendMessageW(hud_window, WM_NCHITTEST, 0, MAKELPARAM(160, 150)) == HTTRANSPARENT &&
+        SendMessageW(hud_window, WM_MOUSEACTIVATE, 0, 0) == MA_NOACTIVATE,
+        "locked HUD cannot take game mouse activation or intercept click-through");
+
+    // If they deliberately switch windows while editing, a later lock must
+    // leave their newly selected foreground alone instead of stealing focus.
+    activate(dialog);
+    toggle_hud();
+    await([&] { return is_foreground(hud_window); },
+        "second editable HUD activation", 2000);
+    activate(controls);
+    toggle_hud();
+    expect(is_foreground(controls) &&
+        (GetWindowLongPtrW(hud_window, GWL_EXSTYLE) & WS_EX_NOACTIVATE) != 0,
+        "re-lock does not overwrite a user-initiated foreground switch");
+    DWORD protected_hud = WDA_NONE;
+    expect(GetWindowDisplayAffinity(hud_window, &protected_hud) &&
+        protected_hud == WDA_EXCLUDEFROMCAPTURE,
+        "restoring keyboard focus does not weaken HUD capture exclusion");
+
     Video::pattern(video, game);
     const HWND output = Video::output(video), cover = Video::cover(video);
     const auto identifier = Video::check(video).identifier();

@@ -126,6 +126,7 @@ int main()
         chatview::NativeChatSurface surface;
         expect(!surface.open(host), "uninitialized host rejected");
         expect(!surface.publish(kMessage), "pre-handshake publish rejected");
+        expect(!surface.jump_to_latest(), "locked latest shortcut refuses an unowned document");
         expect(host.initialize(window), "initialize production host");
         await([&] { return host.ready(); }, "WebView2 startup");
         expect(surface.open(host), "open embedded own chat");
@@ -141,6 +142,7 @@ int main()
         ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(surface);
         const std::wstring first_url = source(core.Get());
         expect(first_url.starts_with(L"https://chatview.invalid/"), "host-owned memory document");
+        expect(!surface.jump_to_latest(), "preapproved empty native document has no chat to navigate");
         // Capture only the synthetic document's own nonce in this test. No
         // provider tokens or private chat text are logged or persisted.
         const std::wstring first_nonce_json = evaluate(core.Get(),
@@ -462,12 +464,20 @@ int main()
                 list.scrollHeight - list.scrollTop - list.clientHeight >= 80;
         })())JS") == L"true",
             "real private WebView2 anchors historical text through typography/contrast changes while unread remains");
+        const auto frames_before_latest = surface.rendered_frames();
         expect(evaluate(core.Get(), LR"JS((() => {
+            const latest = document.getElementById('jump-latest');
+            return !latest.hidden && latest.getAttribute('aria-keyshortcuts') === 'Control+Alt+Shift+J' &&
+                getComputedStyle(latest, '::after').content.includes('Ctrl+Alt+Shift+J');
+        })())JS") == L"true", "native unread hint advertises the global latest shortcut");
+        expect(surface.jump_to_latest(), "approved own WebView2 accepts the fixed latest-chat command");
+        await([&] { return evaluate(core.Get(), LR"JS((() => {
             const list = document.getElementById('messages');
             const latest = document.getElementById('jump-latest');
-            latest.click();
             return latest.hidden && list.scrollHeight - list.scrollTop - list.clientHeight < 80;
-        })())JS") == L"true", "explicit latest action returns to the newest native chat row");
+        })())JS") == L"true"; }, "native latest shortcut scrolls and clears unread without unlocked pointer input");
+        expect(surface.rendered_frames() == frames_before_latest && surface.rendered_messages() == 9U,
+            "jump command does not create an ACK, provider message, or false chat receipt");
         // Exercise the 100-row rollover on the real WebView2 scroll container.
         // The user must keep reading the same surviving row whether the
         // browser applies scroll anchoring itself or not.
@@ -503,6 +513,7 @@ int main()
                "revoke clears the unread UI and private text");
         await([&] { return surface.rendered_frames() == 8U &&
                             surface.rendered_messages() == 0U; }, "revoked native HUD clears private text");
+        expect(!surface.jump_to_latest(), "revoked local document cannot act on private chat navigation");
         expect(evaluate(core.Get(), LR"JS(
             document.getElementById('jump-latest').hidden &&
             document.querySelectorAll('#messages li').length === 0

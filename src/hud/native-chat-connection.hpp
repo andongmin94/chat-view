@@ -67,6 +67,7 @@ private:
     bool opening_login_ = false;
     bool closed_ = false;
     bool hotkey_ = false;
+    bool jump_latest_hotkey_ = false;
     bool active_ = false;
     bool ready_ = false;
     bool awaiting_login_ = false;

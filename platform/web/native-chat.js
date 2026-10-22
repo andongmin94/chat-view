@@ -47,6 +47,13 @@ export function connectNativeChat(document, bridge, render, nonce, clock = globa
     // WebView2 documents source === chrome.webview, not DOM isTrusted.
     // This receiver runs only in the immutable, nonce-bound native document.
     if (closed || event.source !== bridge) return;
+    // A fixed, local-only HUD shortcut scrolls the existing own document.
+    // It is neither a server frame nor an authorization, liveness or ACK.
+    if (event.data?.type === 'chat-jump-latest') {
+      if (lastUpdate !== null && document.getElementById('messages')?.children.length)
+        document.getElementById('jump-latest')?.click();
+      return;
+    }
     // Host chrome has its own message type and does not count as chat liveness.
     if (!event.data || event.data.type !== 'chat-snapshot') return;
     let frameId = '';

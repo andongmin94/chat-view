@@ -24,6 +24,9 @@ public:
     // that exact frame's nonce-bound WebView2 render ACK. No JSON is interpolated
     // into executable script or document markup.
     [[nodiscard]] bool publish(const std::wstring &envelope) noexcept;
+    // UI-only command to this ready own WebView2 document. It sends no chat,
+    // URL, credential or server message, and generates no render ACK.
+    [[nodiscard]] bool jump_to_latest() noexcept;
     void close() noexcept;
     [[nodiscard]] unsigned long long rendered_frames() const noexcept;
     [[nodiscard]] unsigned int rendered_messages() const noexcept;

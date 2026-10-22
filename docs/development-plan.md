@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: HUD 편집을 닫으면 게임·작업창에 키보드 포커스 돌려주기
+## 현재 흐름: 잠긴 개인 채팅 HUD에서 게임 포커스를 유지하며 최신 채팅 복귀
+
+시작 원격 `OBS` HEAD `36f3a7cc3b23ae664fa77bb2e4a29674934fb6d6`, 직전 [Windows development #474/run `39703812142`](https://github.com/andongmin94/chat-view/actions/runs/39703812142) **completed/success, CTest 51/51·실패0·총310.14초**와 `main` 불변 확인. **G1-03 사용성 결함:** 자체 HUD의 100개 채팅 창을 위로 스크롤해 읽을 때 새 메시지의 `새 채팅 N개 · 최신으로` 버튼은 나타나지만, 게임 중 잠긴 HUD는 `WS_EX_TRANSPARENT` 클릭 통과 상태라 실제 버튼을 누르려면 `Ctrl+Alt+Shift+H`로 편집을 풀어 게임 포커스를 옮겨야 했다.
+
+- **사용자 행동:** 게임/작업을 보며 채팅을 위로 읽다가 `Ctrl+Alt+Shift+J`를 누르면 HUD가 **잠금·클릭 통과 상태를 유지한 채** 현재 승인된 자체 치지직 채팅만 최신 줄로 스크롤하고 로컬 unread 힌트를 비운다. 송출 PC OBS 실행 역할과 **OBS 없는 게임 PC companion**에서 같은 조작이다. Windows에서 해당 글로벌 단축키 등록을 허용한 경우에 동작하며, 충돌하면 기존 편집→버튼 클릭을 유지한다. 버튼의 native-only 보조 표기와 `README.md`에 사용법을 보여준다.
+- **구현·권한 경계:** 이미 사용 중인 `NativeChatConnection` UI-thread `WM_HOTKEY` 처리와 `NativeChatSurface` 소유 WebView2의 `PostWebMessageAsJson`에 **고정된 `chat-jump-latest` 로컬 표시 명령 1개**만 추가한다. 실제 처음 보이는 텍스트의 `nonce/frameId` ACK를 받은 `Receiving` 상태에 한해 보낸다. `platform/web/native-chat.js`는 기존 native bridge에서 출처가 일치하는 메시지만 처리하여 로컬 최신 복귀 버튼 동작을 재사용한다. 편집/포커스·WebView2 navigation/nonce·수신 서버·대기 메시지/ACK/heartbeat·계정·방송/광고/HP는 건드리지 않는다. 예전 문서·로그아웃·중단·권한 철회·아직 첫 메시지 없는 HUD의 명령은 무시한다. 페이지나 자격정보를 임의 실행하는 새 메커니즘은 없다.
+- **검증:** 공유 Node native-bridge 테스트는 무승인·타 출처·정상 subscribed/unread·15초 watchdog에서 고정 명령이 최신 스크롤과 로컬 unread만 바꾸고 새 render ACK/권한/heartbeat를 만들지 않는지 확인한다. 실제 Windows `native-chat-surface`는 9개 채팅을 스크롤한 뒤 **잠금 상태에서도 외부 포커스 없이** 고정 명령으로 최신 복귀, unread 해제, 실제 DOM 텍스트, 렌더 ACK 카운트 불변을 검사한다. `native-display-client`는 UI thread 단축키 등록, 로그인 승인 전 무효·승인 후 동일 계정/역할 및 브라우저 로그인 횟수 불변을 검사한다. CHZZK contract 및 Windows routine의 해당 기능 SHA 결과를 개별 확인한다.
+- **미완료/다음:** 이는 개발용 synthetic provider·WebView2/Win32의 단일 통합 시험이며 실제 게임의 단축키 충돌/포커스·장시간 채팅 및 등록 치지직 앱 사용·물리 SDR HDMI/캡처카드에서의 개인 HUD 제외를 입증하지 않는다. **G1-03**, D1/D2/D4/D6/D7, G3-04/G4-06, 광고 실노출/HP/정산·배포 5회/자원 qualification은 그대로 미완료, 체크리스트 **10/21(47.6%)** 유지. 다음에는 실제 게임 모드의 단축키 충돌/접근성과 첫 네이티브 수신·문서 표시 반복 실패(D1)를 우선한다.
+
+## 직전 완료 흐름: HUD 편집을 닫으면 게임·작업창에 키보드 포커스 돌려주기
 
 시작 원격 `OBS` HEAD `7aadf65d5dc3d539982e53e8c5ab834c2e0c718b`, 직전 [Windows #473/run `39701567389`](https://github.com/andongmin94/chat-view/actions/runs/39701567389) **completed/success, native CTest 51/51·실패0** 확인. G1-03의 게임 위 자체 HUD 조작에서 기존 `Ctrl+Alt+Shift+H`가 편집 모드로 들어올 때 게임/작업창의 입력 포커스를 HUD로 옮기지만, 편집을 마치고 다시 클릭 통과 상태로 잠가도 게임의 키보드 입력 포커스를 되돌리는 경로가 없어 다시 클릭해야 하는 사용성 문제를 수정한다.
 

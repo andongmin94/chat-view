@@ -13,6 +13,7 @@ main{box-sizing:border-box;display:flex;flex-direction:column;height:100%;paddin
 #messages{list-style:none;overflow:auto;margin:0;padding:0;flex:1}
 #jump-latest{align-self:center;flex:none;padding:7px 16px;border:1px solid rgba(145,241,213,.7);border-radius:999px;background:rgba(28,92,74,.94);color:#fff;font:13px 'Segoe UI',sans-serif;cursor:pointer}
 #jump-latest:focus-visible{outline:2px solid #a6f5d8;outline-offset:2px}
+#jump-latest::after{content:" · Ctrl+Alt+Shift+J";font-size:11px;opacity:.8}
 #jump-latest[hidden]{display:none}
 .chat-readability{display:flex;align-items:center;gap:6px;flex:none;flex-wrap:wrap}
 .chat-readability span{font-size:11px;color:#eee}
@@ -29,7 +30,7 @@ time{font-size:12px;color:#bbb}b{unicode-bidi:plaintext}.content{white-space:pre
 .chat-role.streaming_channel_manager{background:rgba(35,80,111,.97)}
 .chat-role.streaming_chat_manager{background:rgba(76,54,112,.97)}
 #messages.chat-high-contrast .chat-role,#messages.chat-high-contrast .chat-verified{background:#000;color:#fff;border-color:#fff}
-</style></head><body><main><p id="status" role="status"></p><div class="chat-readability" role="group" aria-label="채팅 글자 크기와 대비"><span>읽기 설정</span><button id="chat-font-smaller" type="button" aria-label="글자 작게">A−</button><button id="chat-font-larger" type="button" aria-label="글자 크게">A+</button><button id="chat-contrast" type="button" aria-pressed="false">강한 대비</button></div><ol id="messages" aria-label="채팅"></ol><button id="jump-latest" type="button" hidden>최신 채팅</button></main>
+</style></head><body><main><p id="status" role="status"></p><div class="chat-readability" role="group" aria-label="채팅 글자 크기와 대비"><span>읽기 설정</span><button id="chat-font-smaller" type="button" aria-label="글자 작게">A−</button><button id="chat-font-larger" type="button" aria-label="글자 크게">A+</button><button id="chat-contrast" type="button" aria-pressed="false">강한 대비</button></div><ol id="messages" aria-label="채팅"></ol><button id="jump-latest" type="button" aria-keyshortcuts="Control+Alt+Shift+J" title="잠긴 HUD에서도 Ctrl+Alt+Shift+J" hidden>최신 채팅</button></main>
 <script type="module" nonce="@CHATVIEW_NONCE@">
 @CHATVIEW_RENDERER@
 @CHATVIEW_NATIVE_BRIDGE@

@@ -24,6 +24,7 @@ struct NativeChatConnectionTestAccess {
     static HWND host(NativeChatConnection &c) { return c.host_; }
     static NativeChatSurface &surface(NativeChatConnection &c) { return c.surface_; }
     static bool active(NativeChatConnection &c) { return c.active_; }
+    static bool jump_hotkey_registered(NativeChatConnection &c) { return c.jump_latest_hotkey_; }
     static bool cancel_waiting(NativeChatConnection &c) { return c.login_cancel_waiting_; }
     static bool force_new_login(NativeChatConnection &c) { return c.force_new_login_; }
     static const std::wstring &previous_code(NativeChatConnection &c) { return c.previous_login_code_; }
@@ -237,6 +238,15 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
         chatview::NativeChatSurfaceTestAccess::core(surface) != nullptr &&
         surface.rendered_frames() == 0U && surface.rendered_messages() == 0U,
         "a prewarmed own document has no authorized chat or first-text ACK before browser consent");
+    MSG latest_shortcut{};
+    latest_shortcut.message = WM_HOTKEY;
+    latest_shortcut.wParam = 0x434a; // Ctrl+Alt+Shift+J: native latest chat.
+    expect(chatview::NativeChatConnectionTestAccess::jump_hotkey_registered(connection),
+        "one global latest-chat shortcut is registered on the native HUD owner thread");
+    expect(connection.dispatch(latest_shortcut) &&
+        surface.rendered_frames() == 0U && surface.rendered_messages() == 0U &&
+        client.login_pending() && browser_probe.calls == 1U,
+        "latest shortcut cannot turn preconsent WebView2 into chat or create an extra browser request");
     expect(control_text(dialog, 117) == L"브라우저 승인 페이지 다시 열기", "explicit reopen action is labelled");
     RECT button_bounds{}, previous_bounds{}, display_bounds{}, dialog_bounds{};
     expect(GetWindowRect(GetDlgItem(dialog, 117), &button_bounds) &&
@@ -351,6 +361,13 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
         state->gaming_connections == (gaming ? 1U : 0U) && state->streaming_connections == (gaming ? 0U : 1U),
         "native controls receive authorized role and same-session display counts");
     expect(control_text(dialog, 110) == chatview::connection_summary(*state), "panel displays actual accepted session metadata");
+    const auto frames_before_shortcut = surface.rendered_frames();
+    const auto calls_before_shortcut = browser_probe.calls;
+    expect(connection.dispatch(latest_shortcut) &&
+        surface.rendered_frames() == frames_before_shortcut &&
+        browser_probe.calls == calls_before_shortcut &&
+        chatview::NativeChatConnectionTestAccess::connection(connection)->membership == state->membership,
+        "approved latest shortcut is local-only: same authenticated role, frames and browser consent");
     expect(control_text(dialog, 110).find(L"영상 제외 미검증") != std::wstring::npos, "role connection is not capture qualification");
     expect_video_scope(dialog);
     Microsoft::WRL::ComPtr<ICoreWebView2> core = chatview::NativeChatSurfaceTestAccess::core(surface);

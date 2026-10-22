@@ -220,6 +220,16 @@ bool NativeChatSurface::publish(const std::wstring &envelope) noexcept
     } catch (...) { return false; }
 }
 
+bool NativeChatSurface::jump_to_latest() noexcept
+{
+    // Never post to external, retired, unapproved or empty chat documents.
+    // This UI-only command is not a chat frame and does not change issued,
+    // acknowledged, rejected, or liveness counters.
+    return ready() && rendered_messages() != 0U &&
+           SUCCEEDED(webview_->PostWebMessageAsJson(
+               LR"JSON({"type":"chat-jump-latest"})JSON"));
+}
+
 void NativeChatSurface::close() noexcept
 {
     const auto host = state_ ? state_->host.lock() : nullptr;

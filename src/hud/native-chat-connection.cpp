@@ -10,6 +10,7 @@
 namespace chatview {
 namespace {
 constexpr int kConnectHotkey = 0x4348;
+constexpr int kJumpLatestHotkey = 0x434a;
 // When a verified first subscribed frame is waiting but its owned WebView2
 // document has never become ready, permit one fresh local document with the
 // remaining half of the *existing* first-display budget. No extra consent,
@@ -62,6 +63,13 @@ NativeChatConnection::NativeChatConnection(HudWindow &hud, DisplayRole role, Bro
                           reinterpret_cast<DWORD_PTR>(this))) host_ = hud_.window_;
     hotkey_ = RegisterHotKey(nullptr, kConnectHotkey, MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'C') != FALSE;
     if (!hotkey_) OutputDebugStringW(L"[ChatView HUD] Native chat connection hotkey unavailable\n");
+    // A locked click-through HUD cannot accept the on-screen "latest" button
+    // without unlocking and taking focus from the game. This local shortcut
+    // scrolls only the current approved own chat document.
+    jump_latest_hotkey_ = RegisterHotKey(nullptr, kJumpLatestHotkey,
+        MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT, 'J') != FALSE;
+    if (!jump_latest_hotkey_)
+        OutputDebugStringW(L"[ChatView HUD] Native latest-chat hotkey unavailable\n");
 }
 NativeChatConnection::~NativeChatConnection() { close(); }
 NativeChatStatus NativeChatConnection::local_status() const noexcept
@@ -108,7 +116,16 @@ LRESULT CALLBACK NativeChatConnection::host_procedure(HWND window, UINT message,
 }
 bool NativeChatConnection::dispatch(MSG &message) noexcept
 {
-    if (!message.hwnd && message.message == WM_HOTKEY && message.wParam == kConnectHotkey) { open_dialog(); return true; }
+    if (!message.hwnd && message.message == WM_HOTKEY) {
+        if (message.wParam == kConnectHotkey) { open_dialog(); return true; }
+        if (message.wParam == kJumpLatestHotkey) {
+            if (!closed_ && jump_latest_hotkey_ &&
+                local_status() == NativeChatStatus::Receiving &&
+                first_text_rendered_ && !clearing_interrupted_chat_ &&
+                !awaiting_frame_) (void)surface_.jump_to_latest();
+            return true;
+        }
+    }
     return dialog_ && IsWindowVisible(dialog_) && IsDialogMessageW(dialog_, &message);
 }
 void NativeChatConnection::notice(const wchar_t *value) noexcept { if (dialog_) SetDlgItemTextW(dialog_, kNotice, value); }
@@ -865,6 +882,7 @@ void NativeChatConnection::close() noexcept
     connection_state_.reset();
     pending_.clear(); active_ = false; awaiting_login_ = false; surface_.close();
     if (hotkey_) { UnregisterHotKey(nullptr, kConnectHotkey); hotkey_ = false; }
+    if (jump_latest_hotkey_) { UnregisterHotKey(nullptr, kJumpLatestHotkey); jump_latest_hotkey_ = false; }
     if (dialog_) { DestroyWindow(dialog_); dialog_ = nullptr; }
 }
 }

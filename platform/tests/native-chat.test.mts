@@ -14,6 +14,7 @@ class Element {
   private readonly listeners = new Map<string, () => void>();
   addEventListener(name: string, fn: () => void) { this.listeners.set(name, fn); }
   fire(name: string) { this.listeners.get(name)?.(); }
+  click() { this.fire('click'); }
   set innerHTML(_value: string) { throw new Error('HTML injection'); }
   append(...children: Element[]) { this.children.push(...children); }
   replaceChildren(...children: Element[]) { this.children = children; }
@@ -46,6 +47,31 @@ test('native delivery requires the bound bridge, not the undocumented DOM trust 
   f.emit(envelope, false);
   assert.equal(f.list.children.length, 1);
   assert.equal(f.sent.at(-1), 'chat-rendered:test-nonce:1:1'); f.close();
+});
+
+test('locked HUD latest shortcut scrolls local chat without new frame, authentication or liveness', () => {
+  const f = fixture();
+  f.emit({ type: 'chat-jump-latest' });
+  assert.equal(f.list.children.length, 0, 'no private feed before approval');
+  assert.deepEqual(f.sent, ['chat-ready:test-nonce']);
+  f.emit(envelope);
+  f.list.scrollHeight = 500; f.list.clientHeight = 100; f.list.scrollTop = 0;
+  f.emit({ ...envelope, frameId: '2', snapshot: {
+    state: 'subscribed', received: 2, messages: [{ ...message, content: 'new message' }],
+  } });
+  assert.equal(f.jump.hidden, false, 'the reader is looking at old chat with unread text');
+  const before = f.sent.length;
+  f.emit({ type: 'chat-jump-latest' }, true, {});
+  assert.equal(f.list.scrollTop, 0, 'a foreign bridge cannot issue local navigation');
+  f.emit({ type: 'chat-jump-latest' });
+  assert.equal(f.list.scrollTop, f.list.scrollHeight, 'the native command scrolls to current latest row');
+  assert.equal(f.jump.hidden, true, 'jump consumes the unread counter');
+  assert.equal(f.sent.length, before, 'scrolling adds no WebView2 frame acknowledgement');
+  f.tick(15001);
+  assert.equal(f.list.children.length, 0, 'keyboard navigation cannot extend the liveness deadline');
+  f.emit({ type: 'chat-jump-latest' });
+  assert.equal(f.sent.length, before, 'expired feed cannot invent a frame or reauthorize itself');
+  f.close();
 });
 
 test('per-delivery ACK carries only the exact native frame ID; malformed IDs cannot authorize a render', () => {

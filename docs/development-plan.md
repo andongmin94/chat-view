@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 연결 중지 시 아직 로딩 중인 개인 채팅 문서도 확실히 비우기
+## 현재 흐름: 첫 개인 채팅을 모듈 대기 없이 WebView2 파싱 중 준비
+
+시작 `OBS` HEAD `69bbd458698bdc0cf10d3472fbd40b231f8f8dd0`. [Windows #477](https://github.com/andongmin94/chat-view/actions/runs/39713535171) **CTest 49/51, 실패2**: `native-chat-switch`의 첫 빈 subscribed 렌더 대기 및 `native-output`의 느린 출력 HTTP 중 채팅 ACK 부족. 둘 모두 D1 첫 네이티브 표시 지연이 관찰되는 경계이고 단일 공통 원인은 아직 증명되지 않았다.
+
+- **사용자 흐름:** 새로운 치지직 승인 또는 기존 역할로 복귀할 때, 첫 소유 채팅 DOM·nonce `chat-ready`가 실행되기 위해 불필요한 ES 모듈 평가를 기다리지 않도록 한다. 내장 문서는 원격 JS·모듈 import가 전혀 없으므로 고정 `script`를 HTML 본문 말미에서 파서 순서대로 실행해 첫 수신 텍스트의 준비 경로를 단순화한다. 초기 인증/보호/채널 미승인 상태를 임의로 수신 성공 처리하지 않는다.
+- **구현:** `cmake/native-chat.cmake`에서 **네이티브 문서에 포함할 세 공유 JS 함수의 `export function`만** 일반 선언으로 변환한다. `native-chat-document.hpp.in`에서 `type=module`을 없애 단일 nonce 범위 인라인 스크립트를 사용한다. 브라우저 미리보기는 동일 원본 ESM JS를 그대로 사용한다. 공식 승인·원래 소유 URL/NavigationId·CSP·nonce `chat-ready`·개별 frameId ACK·Stop/철회 시 비움·15초 첫 표시 예산은 유지한다.
+- **실제 검증:** 기존 `native-chat-surface` Windows WebView2 테스트가 생성된 DOM의 **nonce가 유지된 파서 실행 스크립트 1개와 남은 export/import 구문 0개**를 검사하고, 빈 구독→실제 첫 Unicode 문자/ACK·새 문서/구 nonce 거부·외부 페이지·queued Stop 시 빈 DOM까지 확인한다. `native-chat-switch`, `native-output`, `native-logout`, gaming companion과 다른 Windows routine도 동일 기능 SHA에서 검증한다. 이전 #477 실패를 다른 커밋 성공으로 대체하지 않는다.
+- **한계·다음:** 이 변경은 비동기 모듈 평가 한 단계를 없앤 단순화이며 #477 두 실패의 원인이 module 방식이었다는 증거는 아니다. 실제 반복 5회·자원/배포, 실계정 CHZZK·원컴/투컴 물리 HDMI·게임 안티치트·실측 광고/HP와 D1/D2/D4/D6/D7은 미완료다. 체크리스트 **10/21(47.6%)** 유지. 다음은 첫 소유 DOM 시작/첫 프레임 ACK의 반복 실패를 좁히고 권한·표시 복귀를 안전하게 유지하는 작업이다.
+
+## 직전 완료 흐름: 연결 중지 시 아직 로딩 중인 개인 채팅 문서도 확실히 비우기
 
 시작 원격 `OBS` HEAD `bd56f0193138ff95baa4468ae69272843fce0927`. [CHZZK contract #140](https://github.com/andongmin94/chat-view/actions/runs/39709739997) **385/385 × 4·Chromium 29/29** 및 [Windows development #475](https://github.com/andongmin94/chat-view/actions/runs/39709739990) **native CTest 51/51** 성공 확인. D1의 첫 채팅 문서 전환을 점검하다 개인 채팅 **정리 경합**을 확인했다.
 

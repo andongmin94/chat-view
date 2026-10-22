@@ -147,12 +147,19 @@ int main()
         // Capture only the synthetic document's own nonce in this test. No
         // provider tokens or private chat text are logged or persisted.
         const std::wstring first_nonce_json = evaluate(core.Get(),
-            L"document.querySelector('script[type=module]')?.nonce");
+            L"document.querySelector('script[nonce]:not([type])')?.nonce");
         expect(first_nonce_json.size() == 34U && first_nonce_json.front() == L'"' &&
             first_nonce_json.back() == L'"', "first document has one 32-byte-hex nonce");
         const std::wstring old_nonce = first_nonce_json.substr(1U, 32U);
         expect(old_nonce.find_first_not_of(L"0123456789abcdef") == std::wstring::npos,
             "first private nonce is lowercase hexadecimal");
+        expect(evaluate(core.Get(), LR"JS((() => {
+            const script = document.querySelector('script[nonce]:not([type])');
+            return script && document.querySelectorAll('script[type=module]').length === 0 &&
+                !script.textContent.includes('export function ') &&
+                !script.textContent.includes('import ');
+        })())JS") == L"true",
+            "first native document uses one nonce-bound parser-executed script without imports or ESM exports");
         // The combined host bootstrap must still install the existing
         // closed-shadow overlay on the real first WebView2 document.
         await([&] { return evaluate(core.Get(), LR"JS(
@@ -255,7 +262,7 @@ int main()
             "fresh owned document replaces the old navigation ID as well as its nonce");
         expect(source(core.Get()) != first_url, "reopen gets distinct document identity");
         const std::wstring fresh_nonce_json = evaluate(core.Get(),
-            L"document.querySelector('script[type=module]')?.nonce");
+            L"document.querySelector('script[nonce]:not([type])')?.nonce");
         expect(fresh_nonce_json.size() == 34U &&
             fresh_nonce_json.substr(1U, 32U) != old_nonce,
             "reopened private document has a different nonce");

@@ -5,6 +5,16 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/platform/web/native-chat.js")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/platform/web/chat-renderer.js" CHATVIEW_RENDERER)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/platform/web/native-chat.js" CHATVIEW_NATIVE_BRIDGE)
+# The own, fixed HTML has no module imports. Convert its shared ESM exports
+# into declarations so one parser-executed nonce script can send chat-ready
+# during the first document parse instead of waiting for module evaluation.
+# Browser preview sources remain standard ESM; only the embedded copies differ.
+string(REPLACE "export function renderChat" "function renderChat"
+    CHATVIEW_RENDERER "${CHATVIEW_RENDERER}")
+string(REPLACE "export function nativeChatSnapshot" "function nativeChatSnapshot"
+    CHATVIEW_NATIVE_BRIDGE "${CHATVIEW_NATIVE_BRIDGE}")
+string(REPLACE "export function connectNativeChat" "function connectNativeChat"
+    CHATVIEW_NATIVE_BRIDGE "${CHATVIEW_NATIVE_BRIDGE}")
 set(CHATVIEW_NONCE "__CHATVIEW_NATIVE_NONCE__")
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(

@@ -31,7 +31,7 @@ time{font-size:12px;color:#bbb}b{unicode-bidi:plaintext}.content{white-space:pre
 .chat-role.streaming_chat_manager{background:rgba(76,54,112,.97)}
 #messages.chat-high-contrast .chat-role,#messages.chat-high-contrast .chat-verified{background:#000;color:#fff;border-color:#fff}
 </style></head><body><main><p id="status" role="status"></p><div class="chat-readability" role="group" aria-label="채팅 글자 크기와 대비"><span>읽기 설정</span><button id="chat-font-smaller" type="button" aria-label="글자 작게">A−</button><button id="chat-font-larger" type="button" aria-label="글자 크게">A+</button><button id="chat-contrast" type="button" aria-pressed="false">강한 대비</button></div><ol id="messages" aria-label="채팅"></ol><button id="jump-latest" type="button" aria-keyshortcuts="Control+Alt+Shift+J" title="잠긴 HUD에서도 Ctrl+Alt+Shift+J" hidden>최신 채팅</button></main>
-<script type="module" nonce="@CHATVIEW_NONCE@">
+<script nonce="@CHATVIEW_NONCE@">
 @CHATVIEW_RENDERER@
 @CHATVIEW_NATIVE_BRIDGE@
 const disconnectNativeChat = connectNativeChat(document, window.chrome.webview, renderChat, '@CHATVIEW_NONCE@');

@@ -13,6 +13,7 @@
 namespace chatview {
 struct WebViewHostTestAccess {
     static UINT64 navigation(const WebViewHost &host) { return host.current_navigation_id_; }
+    static const std::wstring &local_document(const WebViewHost &host) { return host.local_document_url_; }
 };
 struct NativeChatSurfaceTestAccess {
     static ICoreWebView2 *core(NativeChatSurface &surface) { return surface.webview_.Get(); }
@@ -520,13 +521,42 @@ int main()
         )JS") == L"true", "revocation clears unread hint and all previous native chat rows");
         expect(host.navigate(L"https://www.youtube.com/live_chat?is_popout=1&v=abcdefghijk"), "existing external navigation policy remains usable");
         expect(!surface.publish(kMessage), "external page cannot receive chat");
-        surface.close(); host.close(); core.Reset();
+        surface.close();
+        expect(chatview::WebViewHostTestAccess::local_document(host).empty(),
+            "stopping private chat does not replace a deliberately selected external page");
+        host.close(); core.Reset();
         expect(!surface.publish(kMessage), "closed host cannot receive chat");
         expect(host.initialize(window), "host can be recreated");
         await([&] { return host.ready(); }, "recreated host ready");
         expect(surface.open(host), "surface attaches to recreated host");
         await([&] { return surface.ready(); }, "recreated surface ready");
-        host.close(); expect(!surface.ready(), "host destruction invalidates surface"); surface.close();
+        core = chatview::NativeChatSurfaceTestAccess::core(surface);
+        expect(surface.publish(kMessage), "render private chat before immediate Stop/replacement");
+        await([&] { return surface.rendered_frames() == 1U &&
+                            surface.rendered_messages() == 1U; },
+            "actual private text reached owned DOM before its next navigation");
+        const std::wstring original_source = source(core.Get());
+        expect(surface.open(host), "queue a fresh owned document over the displayed private text");
+        const std::wstring queued_source = chatview::WebViewHostTestAccess::local_document(host);
+        expect(!queued_source.empty() && queued_source != original_source,
+            "new pending own URL replaces the selected document without granting an ACK");
+        // No message pump between selection and Stop. WebView2 can still
+        // display the earlier private chat while the next nonce URL is queued.
+        surface.close();
+        const std::wstring cleared_source = chatview::WebViewHostTestAccess::local_document(host);
+        expect(!cleared_source.empty() && cleared_source != queued_source &&
+                   cleared_source != original_source,
+            "Stop supersedes even an uncommitted own navigation with a fresh blank document");
+        await([&] { return source(core.Get()) == cleared_source; },
+            "blank document replaces the previous private chat after queued Stop");
+        expect(evaluate(core.Get(), LR"JS(
+            document.querySelector('#messages') === null &&
+            document.body.textContent.trim() === '' &&
+            document.querySelectorAll('script[src],img').length === 0
+        )JS") == L"true", "retired native private chat rows are absent from actual blank WebView2 DOM");
+        expect(!surface.ready() && !surface.publish(kMessage) && !surface.jump_to_latest(),
+            "stopped chat cannot reuse the retired source or local keyboard navigation");
+        host.close(); expect(!surface.ready(), "host destruction invalidates surface"); surface.close(); core.Reset();
         std::cout << "Native own-chat DOM, memory navigation isolation, setup and teardown passed\n";
     } catch (const std::exception &error) {
         std::cerr << "Native chat test failed: " << error.what() << '\n'; code = 1;

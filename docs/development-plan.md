@@ -4,7 +4,16 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 잠긴 개인 채팅 HUD에서 게임 포커스를 유지하며 최신 채팅 복귀
+## 현재 흐름: 연결 중지 시 아직 로딩 중인 개인 채팅 문서도 확실히 비우기
+
+시작 원격 `OBS` HEAD `bd56f0193138ff95baa4468ae69272843fce0927`. [CHZZK contract #140](https://github.com/andongmin94/chat-view/actions/runs/39709739997) **385/385 × 4·Chromium 29/29** 및 [Windows development #475](https://github.com/andongmin94/chat-view/actions/runs/39709739990) **native CTest 51/51** 성공 확인. D1의 첫 채팅 문서 전환을 점검하다 개인 채팅 **정리 경합**을 확인했다.
+
+- **재현된 코드 결함:** 기존 `NativeChatSurface::close()`는 소유한 새 WebView2 문서가 유효하더라도, 화면의 `get_Source()`가 그 새 URL과 **이미 일치해야만** 고정된 빈 문서로 이동시켰다. 채팅 메시지를 보여 주는 이전 문서 A에서 새 개인 문서 C로 전환하는 중, C 탐색이 시작되기 전에 Stop/로그아웃/철회가 오면 화면의 Source는 A이고 소유 URL은 C라서 빈 문서 탐색이 생략된다. 이전 문서의 개인 메시지가 로딩 지연 동안 남거나 취소한 새 개인 문서가 나중에 뜰 수 있다.
+- **수정:** 현재 `WebViewHost`가 여전히 해당 ChatView 자체 문서를 선택해 소유 중이면, visible Source/handshake가 아직 바뀌지 않았어도 **새 고정 blank CSP-only 소유 URL로 탐색을 교체**한다. 이전/대기 중인 문서는 첫 메시지 ACK나 권한을 회복할 수 없다. 사용자가 의도적으로 **외부 채팅 페이지를 선택한 경우에는 blank로 덮어쓰지 않는다.** 종료 경계의 조건만 변경하며 서버 승인·네트워크·OBS/영상·계정·브라우저 세션/토큰을 건드리지 않는다.
+- **회귀/검증:** 실제 `native-chat-surface` WebView2 통합 테스트에서 첫 private 메시지와 렌더 ACK 확인 → 새 고유 URL 탐색만 연속 예약(이벤트 펌프 없음) → 즉시 Stop → 현재 소유 URL이 별도 blank로 다시 갱신됨 → 실제 WebView2 DOM에 이전 채팅 행이 남지 않고 더는 게시/단축키 조작할 수 없음을 확인한다. 이미 명시적으로 외부 URL로 선택한 경우는 그대로 보존한다. 기능 SHA의 Windows 네이티브 CTest 전부로 동일 경계를 검증한다.
+- **미완료:** blank 요청 역시 WebView2 비동기 탐색이므로 Windows/GPU가 영구 중단된 상황에 즉시 픽셀이 사라졌다는 보장은 아니다. 단일 합성 CI로 D1 초기 첫 표시 반복 안정성, G1-03 실게임 조작감, G3-04 물리 투컴 HUD 제외, G4-06 실계정 CHZZK, D2/D4/D6/D7, 광고/HP/정산·배포 5회/자원 qualification을 해결했다고 하지 않는다. 체크리스트 **10/21(47.6%)** 유지. 다음은 WebView2 첫 승인·재승인 표시의 반복 실패(D1)를 줄이는 명확한 사용자 경로다.
+
+## 직전 완료 흐름: 잠긴 개인 채팅 HUD에서 게임 포커스를 유지하며 최신 채팅 복귀
 
 시작 원격 `OBS` HEAD `36f3a7cc3b23ae664fa77bb2e4a29674934fb6d6`, 직전 [Windows development #474/run `39703812142`](https://github.com/andongmin94/chat-view/actions/runs/39703812142) **completed/success, CTest 51/51·실패0·총310.14초**와 `main` 불변 확인. **G1-03 사용성 결함:** 자체 HUD의 100개 채팅 창을 위로 스크롤해 읽을 때 새 메시지의 `새 채팅 N개 · 최신으로` 버튼은 나타나지만, 게임 중 잠긴 HUD는 `WS_EX_TRANSPARENT` 클릭 통과 상태라 실제 버튼을 누르려면 `Ctrl+Alt+Shift+H`로 편집을 풀어 게임 포커스를 옮겨야 했다.
 

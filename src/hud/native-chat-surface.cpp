@@ -233,8 +233,14 @@ bool NativeChatSurface::jump_to_latest() noexcept
 void NativeChatSurface::close() noexcept
 {
     const auto host = state_ ? state_->host.lock() : nullptr;
-    const bool clear_document = state_ && state_->attached() && webview_ &&
-                                matching_source(webview_.Get(), state_->document_url);
+    // A new own navigation may still be pending while WebView2 displays
+    // the previous document's private chat. Clearing only when the visible
+    // source matches this newest URL leaves the old text visible after Stop.
+    // If this receiver still owns the selected local page, supersede ALL
+    // pending own navigations with the fixed blank page, even if its nonce
+    // handshake or source change has not completed yet. A selected external
+    // page fails attached() and remains untouched.
+    const bool clear_document = state_ && state_->attached() && webview_;
     if (state_) state_->invalidate();
     if (webview_) {
         if (navigation_token_.value) webview_->remove_NavigationStarting(navigation_token_);

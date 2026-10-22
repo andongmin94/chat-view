@@ -136,18 +136,23 @@ void run(const std::wstring &origin, const std::wstring &auxiliary, const std::s
         click(dialog, 104);
         await([&] { return browser_opened; }, "browser login request", connection);
         if (mode == "render-ack-lost") {
-            // Approval and the real owned nonce handshake complete before
-            // native tick publishes its first verified chat frame. Remove only
-            // this document's production ACK listener: the DOM can render,
-            // but the native host cannot acknowledge that rendered frame.
-            await([&] {
-                return !chatview::NativeChatConnectionTestAccess::login_pending(connection) &&
-                    chatview::NativeChatConnectionTestAccess::surface(connection).ready();
-            }, "approved provider and prewarmed document before first ACK loss",
-                connection, 15000U, false);
+            // Isolate the actual first-frame ACK failure from browser consent:
+            // the server will not grant the synthetic approval until this
+            // nonce-bound document is ready and its ACK listener is removed.
+            // Keep one 15-second combined preparation + collection budget.
+            const ULONGLONG ready_and_approval_deadline = GetTickCount64() + 15000U;
             auto &surface = chatview::NativeChatConnectionTestAccess::surface(connection);
+            await([&] { return surface.ready(); },
+                "prewarmed own WebView2 nonce handshake before approval", connection, 15000U, false);
             expect(chatview::NativeChatSurfaceTestAccess::suppress_ack_for_current_document(surface),
                 "simulate missing first frame ACK on actual ready WebView2 document");
+            std::cout << "ack-suppressed\n" << std::flush;
+            const ULONGLONG collected_at = GetTickCount64();
+            expect(collected_at < ready_and_approval_deadline,
+                "approval and prewarm still use the original bounded startup budget");
+            await([&] { return !chatview::NativeChatConnectionTestAccess::login_pending(connection); },
+                "approved provider collected after ACK listener suppression", connection,
+                ready_and_approval_deadline - collected_at, false);
             await([&] {
                 return chatview::NativeChatConnectionTestAccess::awaiting_renderer(connection);
             }, "verified first subscribed frame reaches a document whose ACK is lost", connection);
@@ -187,6 +192,8 @@ void run(const std::wstring &origin, const std::wstring &auxiliary, const std::s
                 return chatview::NativeChatConnectionTestAccess::has_metadata(connection) &&
                     chatview::NativeChatConnectionTestAccess::has_queued_frame(connection);
             }, "first authenticated server frame retained with failed owned document", connection);
+            expect(chatview::NativeChatConnectionTestAccess::local_document_retried(connection),
+                "verified first frame immediately reopens the discarded own document once");
             const auto original_deadline = chatview::NativeChatConnectionTestAccess::display_deadline(connection);
             await([&] {
                 return chatview::NativeChatConnectionTestAccess::local_document_retried(connection);

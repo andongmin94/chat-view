@@ -776,9 +776,11 @@ void NativeChatConnection::tick() noexcept
         // A verified subscription and first native display frame already
         // exist, but the owned document has not completed its URL/nonce
         // handshake. Preserve the exact server approval and queued frame.
-        // Recreate only this local document once, before the original 15 s
-        // deadline. A failed fresh navigation still ends via the existing
-        // explicit same-approval return, never silent reauthorization.
+        // A definitively discarded document can be replaced immediately;
+        // only an otherwise pending navigation waits for the halfway point.
+        // Both share ONE recovery attempt and the ORIGINAL 15 s deadline.
+        // A failed fresh navigation still requires explicit same-approval
+        // return, never silent reauthorization.
         if (!ready_ && !first_document_recovery_attempted_ &&
             !awaiting_login_ && !login_cancel_waiting_ && !reconnecting_ &&
             pending_subscribed_ && !pending_.empty() &&
@@ -787,7 +789,8 @@ void NativeChatConnection::tick() noexcept
             !hud_.webview_.external_page_selected() &&
             !hud_.capture_risk_ && hud_.capture_exclusion_intact() &&
             now < loading_deadline_ &&
-            loading_deadline_ - now <= kFirstDocumentRecoveryLeadMs) {
+            (surface_.discarded() ||
+             loading_deadline_ - now <= kFirstDocumentRecoveryLeadMs)) {
             first_document_recovery_attempted_ = true;
             if (!surface_.open(hud_.webview_)) {
                 end(L"채팅 화면을 다시 준비하지 못했습니다. 기존 승인으로 명시적으로 복귀할 수 있습니다.");

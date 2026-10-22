@@ -55,20 +55,31 @@ for (const mode of ['memory', 'remembered', 'stopped', 'retry', 'render-ack-lost
     const exited = once(child, 'exit');
     child.stdin!.write(`${f.origin}\n${stored?.lease.sessionToken ?? other.lease.sessionToken}\n`);
     if (mode !== 'cancel') child.stdin!.end();
-    let output = '', errors = '', failure: unknown;
+    let output = '', errors = '', failure: unknown, browserOpened = false, ackSuppressed = false;
     let browserTask: Promise<void> | undefined;
+    const approve = () => {
+      const request = pending;
+      assert(request && !browserTask, 'exactly one active synthetic browser grant');
+      browserTask = (async () => {
+        if (mode === 'pending') return; // No provider or role consent in this case.
+        await f.authenticate('alice', request);
+        assert.equal((await f.post(`/login/${request.id}/approve`)).status, 200);
+        f.chats.get('alice')!.publish('로그아웃 검증 😀');
+      })();
+      void browserTask.catch(error => { failure = error; child?.kill(); });
+    };
     child.stdout!.setEncoding('utf8');
     child.stdout!.on('data', (chunk: string) => {
       output = (output + chunk).slice(-4096);
-      if (!browserTask && /(?:^|\n)browser-opened\r?\n/u.test(output)) {
-        browserTask = (async () => {
-          assert(pending);
-          if (mode === 'pending') return; // No provider or role consent in this case.
-          await f.authenticate('alice', pending);
-          assert.equal((await f.post(`/login/${pending.id}/approve`)).status, 200);
-          f.chats.get('alice')!.publish('로그아웃 검증 😀');
-        })();
-        void browserTask.catch(error => { failure = error; child?.kill(); });
+      if (!browserOpened && /(?:^|\n)browser-opened\r?\n/u.test(output)) {
+        browserOpened = true;
+        // The missing-ACK fixture must suppress the REAL WebView2 listener
+        // before server approval can deliver the first subscribed text.
+        if (mode !== 'render-ack-lost') approve();
+      }
+      if (!ackSuppressed && /(?:^|\n)ack-suppressed\r?\n/u.test(output)) {
+        assert(mode === 'render-ack-lost' && browserOpened && !browserTask);
+        ackSuppressed = true; approve();
       }
       if (!retrySeen && /(?:^|\n)retry-ready\r?\n/u.test(output)) retrySeen = true;
     });
@@ -80,6 +91,8 @@ for (const mode of ['memory', 'remembered', 'stopped', 'retry', 'render-ack-lost
       if (failure) throw failure;
       assert.equal(code, 0, `${mode}: ${errors}`);
     } finally { clearTimeout(deadline); }
+    if (mode === 'render-ack-lost')
+      assert(ackSuppressed && browserOpened, 'actual nonce-ready document lost its ACK before one grant');
     assert.equal(loginStarts, mode === 'stored-only' ? 0 : 1, 'logout never opens another approval');
     assert.equal(signouts, mode === 'pending' ? 0 : mode === 'retry' ? 2 : 1);
     assert.equal(retrySeen, mode === 'retry' || mode === 'storage-failure');

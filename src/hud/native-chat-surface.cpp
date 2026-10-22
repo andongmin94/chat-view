@@ -196,6 +196,13 @@ bool NativeChatSurface::ready() const noexcept
            matching_source(webview_.Get(), state_->document_url);
 }
 
+bool NativeChatSurface::discarded() const noexcept
+{
+    // A pending (but valid) asynchronous navigation is deliberately NOT
+    // discarded: reopening it would introduce needless navigation churn.
+    return !state_ || !state_->active;
+}
+
 bool NativeChatSurface::publish(const std::wstring &envelope) noexcept
 {
     if (!ready() || envelope.empty() || envelope.size() > kMaxEnvelopeCharacters ||

@@ -19,6 +19,10 @@ public:
     NativeChatSurface &operator=(const NativeChatSurface &) = delete;
     [[nodiscard]] bool open(WebViewHost &host) noexcept;
     [[nodiscard]] bool ready() const noexcept;
+    // The selected local document has been closed or its own navigation /
+    // process failed. The owner may spend its existing one local recovery
+    // attempt without waiting for the midpoint of the first-display budget.
+    [[nodiscard]] bool discarded() const noexcept;
     // Receives the versioned chat-snapshot envelope without server metadata.
     // Adds a document-local monotonically increasing frameId and accepts only
     // that exact frame's nonce-bound WebView2 render ACK. No JSON is interpolated

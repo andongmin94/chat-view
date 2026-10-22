@@ -126,17 +126,21 @@ int main()
         chatview::WebViewHost host;
         chatview::NativeChatSurface surface;
         expect(!surface.open(host), "uninitialized host rejected");
+        expect(surface.discarded(), "an absent private document is explicitly unavailable");
         expect(!surface.publish(kMessage), "pre-handshake publish rejected");
         expect(!surface.jump_to_latest(), "locked latest shortcut refuses an unowned document");
         expect(host.initialize(window), "initialize production host");
         await([&] { return host.ready(); }, "WebView2 startup");
         expect(surface.open(host), "open embedded own chat");
+        expect(!surface.discarded(),
+            "a new own navigation is pending, not a reason to restart its 15-second budget");
         // Reproduce missing navigation-completion notifications on REAL WebView2,
         // with no DOMContentLoaded dependency. Only the owned document's
         // exact source, navigation ID and nonce message establish readiness.
         expect(chatview::NativeChatSurfaceTestAccess::omit_completed_for_current_document(surface),
             "omit first native NavigationCompleted notification");
         await([&] { return surface.ready(); }, "owned document nonce handshake without load events");
+        expect(!surface.discarded(), "owned nonce-ready private document remains valid");
         const UINT64 first_navigation = chatview::WebViewHostTestAccess::navigation(host);
         expect(host.is_current_navigation(first_navigation),
             "owned first document is bound to a nonzero WebView2 navigation ID");
@@ -254,6 +258,7 @@ int main()
         expect(evaluate(core.Get(), L"globalThis.setupCanary === undefined") == L"true" &&
             source(core.Get()) == reloaded_setup, "recovered setup remains idempotent");
         surface.close(); surface.close();
+        expect(surface.discarded(), "closing the private document discards its exact owner");
         expect(surface.open(host), "new own document after close");
         await([&] { return surface.ready(); }, "fresh document handshake");
         const UINT64 fresh_navigation = chatview::WebViewHostTestAccess::navigation(host);

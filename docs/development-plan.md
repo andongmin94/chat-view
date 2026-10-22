@@ -4,7 +4,15 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 첫 개인 채팅을 모듈 대기 없이 WebView2 파싱 중 준비
+## 현재 흐름: 실패가 확정된 첫 자체 문서만 승인 첫 프레임에서 즉시 복구
+
+시작 `OBS` HEAD `1434f66a367073f214be2c4a25dbd3f30d8acded`. [Windows development #478/run `39716160137`](https://github.com/andongmin94/chat-view/actions/runs/39716160137) **completed/failure, Windows CTest 50/51·실패1·총296.84초**. #477에서 실패한 `native-chat-switch`의 빈 subscribed 첫 표시(이번 **41.36초 통과**)와 `native-output`의 느린 OBS 보고 중 독립 채팅(**16.41초 통과**) 및 자체 문서 `native-chat-surface`(**4.49초 통과**)는 이 기능 SHA에서 성공했다. 다른 `native-logout`의 **render-ack-lost** 시나리오가 실제 ACK 유실을 주입하기 **이전**, 서버 승인 완료와 소유 WebView2 사전 준비를 함께 기다리는 15초 구간에서 실패했다(42.96초). 성공한 시험만으로 D1 종결은 불가하다.
+
+- **제품 개선:** 이미 준비된 자신의 첫 개인 문서가 명시적으로 `close()` 되었거나 WebView2의 실제 own navigation/renderer 실패로 **폐기 상태**라면, 검증된 구독의 첫 프레임이 도착하는 즉시 **기존 1회 소유 문서 재준비**를 사용한다. 단순히 로딩 중이라 `ready()`가 아직 false인 문서는 폐기 상태와 구별해 정상 비동기 탐색을 유지한다. 폐기되지 않은 로딩 중 문서만 기존과 동일하게 **원래 15초 첫 표시 예산의 절반을 지난 시점**에서 재준비한다. 실제 서버 승인, 같은 역할·세션·검증된 첫 스냅샷과 원래 마감, Stop/로그아웃/권한 철회·외부 페이지·캡처 보호는 유지하며 새 로그인, 추가 복구 횟수나 시간 한도를 허용하지 않는다.
+- **회귀·시험 분리:** `NativeChatSurface::discarded()`로 없는/무효화된 owner와 단순 pending/nonce-ready를 구별한다. 기존 `native-logout retry` 시험은 첫 승인된 프레임을 보관하고 즉시 한 번 복구하는지 검증한다. `render-ack-lost`는 **사전 private 문서의 nonce 준비를 확인한 뒤** 그 문서의 실제 WebMessageReceived ACK 수신기를 제거하고 `ack-suppressed` 신호를 보낸 다음에만 합성 서버가 실제 브라우저 승인·첫 채팅을 전달하도록 바꾼다. 승인·사전 준비 전체 **기존 15초 검증 예산**은 유지하고, 새 문서의 실제 first ACK·기존 역할/승인·로그아웃까지 여전히 검사한다. 별도 실제 `native-chat-surface` WebView2는 상태 absent/pending/ready/close의 폐기 구별을 검증하며 Windows 전체 CTest와 변경된 플랫폼 타입/서비스 계약 CI를 확인한다.
+- **미완료/다음:** #478 테스트 단계 실패는 실제 제품이 같은 원인으로 실패했음을 증명하지 않는다. 첫 WebView2 문서 준비의 간헐 문제 D1은 계속 미해결이고, CHZZK 등록 앱/실계정·실게임/물리 HDMI/캡처카드·D2/D4/D6/D7·5회 반복/자원/설치/패키지 qualification·실측 광고/HP/정산은 별도 미완료다. 체크리스트 **10/21(47.6%)** 유지. 다음 사용자 흐름은 연결 승인→첫 로컬 문자→소켓/업스트림 재연결→첫 텍스트 복귀를 반복 안정성 범위에서 검증하고, 재현되는 결함만 수정한다.
+
+## 직전 완료 흐름: 첫 개인 채팅을 모듈 대기 없이 WebView2 파싱 중 준비
 
 시작 `OBS` HEAD `69bbd458698bdc0cf10d3472fbd40b231f8f8dd0`. [Windows #477](https://github.com/andongmin94/chat-view/actions/runs/39713535171) **CTest 49/51, 실패2**: `native-chat-switch`의 첫 빈 subscribed 렌더 대기 및 `native-output`의 느린 출력 HTTP 중 채팅 ACK 부족. 둘 모두 D1 첫 네이티브 표시 지연이 관찰되는 경계이고 단일 공통 원인은 아직 증명되지 않았다.
 

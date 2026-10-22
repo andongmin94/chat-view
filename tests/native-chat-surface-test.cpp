@@ -573,6 +573,35 @@ int main()
         }, "retired private chat is absent from the actual new blank WebView2 DOM");
         expect(!surface.ready() && !surface.publish(kMessage) && !surface.jump_to_latest(),
             "stopped chat cannot reuse the retired source or local keyboard navigation");
+
+        // A same-URL reload is outside this receiver's one NavigationId.
+        // It discards the receiver even though the host STILL owns that exact
+        // private URL. Stop must replace its potentially visible old chat,
+        // never skip cleanup merely because the receiver is invalidated.
+        expect(surface.open(host), "create live private document before unexpected reload");
+        await([&] { return surface.ready(); }, "reloaded-test document handshake");
+        expect(surface.publish(kMessage), "real private message before unexpected reload");
+        await([&] { return surface.rendered_frames() == 1U &&
+                            surface.rendered_messages() == 1U; },
+            "private text acknowledged before unexpected own document reload");
+        const std::wstring invalidated_url = chatview::WebViewHostTestAccess::local_document(host);
+        expect(SUCCEEDED(core->Reload()), "inject a real second navigation of the same own URL");
+        await([&] { return surface.discarded(); },
+            "second own NavigationStarting retires first nonce and its render authority");
+        expect(!surface.ready() && !surface.publish(kMessage),
+            "a discarded receiver cannot post new private chat after unexpected reload");
+        surface.close();
+        const std::wstring invalidated_blank = chatview::WebViewHostTestAccess::local_document(host);
+        expect(!invalidated_blank.empty() && invalidated_blank != invalidated_url,
+            "Stop blanks an invalidated but still selected private document");
+        await([&] {
+            return source(core.Get()) == invalidated_blank &&
+                evaluate(core.Get(), LR"JS(
+                    document.querySelector('#messages') === null &&
+                    document.body.textContent.trim() === '' &&
+                    document.querySelectorAll('script[src],img').length === 0
+                )JS") == L"true";
+        }, "invalidated owner has no old private rows in actual blank WebView2 DOM");
         host.close(); expect(!surface.ready(), "host destruction invalidates surface"); surface.close(); core.Reset();
         std::cout << "Native own-chat DOM, memory navigation isolation, setup and teardown passed\n";
     } catch (const std::exception &error) {

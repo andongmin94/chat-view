@@ -60,14 +60,19 @@ struct NativeChatSurface::State {
     unsigned long long rejected = 0U;
     unsigned int messages = 0U;
 
-    bool attached() const noexcept
+    // Being the currently selected native URL determines who must clear
+    // potentially visible old pixels. Receiving authority is separate:
+    // a failed navigation/process can invalidate the receiver while the host
+    // is still showing the same formerly owned page.
+    bool selected() const noexcept
     {
         const auto current = host.lock();
-        return active && current && current->owner && current->owner->ready_ &&
+        return current && current->owner && current->owner->ready_ &&
                current->owner->webview_.Get() == identity &&
                current->owner->current_url_.empty() && !document_url.empty() &&
                current->owner->local_document_url_ == document_url;
     }
+    bool attached() const noexcept { return active && selected(); }
     void invalidate() noexcept
     {
         active = false; handshake = false; messages = 0U;
@@ -245,9 +250,11 @@ void NativeChatSurface::close() noexcept
     // source matches this newest URL leaves the old text visible after Stop.
     // If this receiver still owns the selected local page, supersede ALL
     // pending own navigations with the fixed blank page, even if its nonce
-    // handshake or source change has not completed yet. A selected external
-    // page fails attached() and remains untouched.
-    const bool clear_document = state_ && state_->attached() && webview_;
+    // handshake or source change has not completed yet. A failed receiver
+    // may have active=false but still own VISIBLE private pixels; selected()
+    // retains blanking responsibility without authorizing another message.
+    // A deliberately selected external page fails selected() and is untouched.
+    const bool clear_document = state_ && state_->selected() && webview_;
     if (state_) state_->invalidate();
     if (webview_) {
         if (navigation_token_.value) webview_->remove_NavigationStarting(navigation_token_);

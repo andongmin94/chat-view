@@ -9,7 +9,7 @@ import { DisplayGateway } from '../server/chat/display-gateway.mts';
 import { fixture } from '../tests/fixtures/service.mts';
 
 const executable = process.argv[2]; assert(executable, 'native logout executable required');
-for (const mode of ['memory', 'remembered', 'stopped', 'retry', 'render-ack-lost', 'unrelated', 'pending', 'storage-failure', 'stored-only', 'cancel']) {
+for (const mode of ['memory', 'remembered', 'stopped', 'retry', 'render-ack-lost', 'render-document-lost', 'unrelated', 'pending', 'storage-failure', 'stored-only', 'cancel']) {
   const f = await fixture({ createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot) });
   let child: ReturnType<typeof spawn> | undefined;
   let held: ServerResponse | undefined;
@@ -75,10 +75,11 @@ for (const mode of ['memory', 'remembered', 'stopped', 'retry', 'render-ack-lost
         browserOpened = true;
         // The missing-ACK fixture must suppress the REAL WebView2 listener
         // before server approval can deliver the first subscribed text.
-        if (mode !== 'render-ack-lost') approve();
+        if (mode !== 'render-ack-lost' && mode !== 'render-document-lost') approve();
       }
       if (!ackSuppressed && /(?:^|\n)ack-suppressed\r?\n/u.test(output)) {
-        assert(mode === 'render-ack-lost' && browserOpened && !browserTask);
+        assert((mode === 'render-ack-lost' || mode === 'render-document-lost') &&
+          browserOpened && !browserTask);
         ackSuppressed = true; approve();
       }
       if (!retrySeen && /(?:^|\n)retry-ready\r?\n/u.test(output)) retrySeen = true;
@@ -91,7 +92,7 @@ for (const mode of ['memory', 'remembered', 'stopped', 'retry', 'render-ack-lost
       if (failure) throw failure;
       assert.equal(code, 0, `${mode}: ${errors}`);
     } finally { clearTimeout(deadline); }
-    if (mode === 'render-ack-lost')
+    if (mode === 'render-ack-lost' || mode === 'render-document-lost')
       assert(ackSuppressed && browserOpened, 'actual nonce-ready document lost its ACK before one grant');
     assert.equal(loginStarts, mode === 'stored-only' ? 0 : 1, 'logout never opens another approval');
     assert.equal(signouts, mode === 'pending' ? 0 : mode === 'retry' ? 2 : 1);

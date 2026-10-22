@@ -758,10 +758,6 @@ void NativeChatConnection::tick() noexcept
             hud_.cancel_navigation_retry(); hud_.page_connection_recovery_.reset(); hud_.page_health_watchdog_.disarm();
             return;
         }
-        if (ready_ && !surface_.ready()) {
-            end(L"채팅 표시 문서가 변경되어 출력을 중지했습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.", true);
-            return;
-        }
         if (surface_.rejected_frames() != 0) {
             // A rejected first renderer frame must not destroy the existing
             // server approval or silently open a new login/browser flow.
@@ -818,21 +814,25 @@ void NativeChatConnection::tick() noexcept
                 after_clear_.clear(); after_clear_subscribed_ = false;
             }
         }
-        // A document can be ready and have accepted a verified first frame,
-        // yet lose its frame-specific rendered ACK. One locally recreated
-        // nonce-bound document may render the retained latest subscribed text
-        // before the SAME original 15-second render deadline. This is not a
-        // new server subscription, credential, or extra 15-second retry.
+        // A first validated frame may lose its render ACK while the document
+        // still reports ready, OR its own WebView2 receiver can be discarded
+        // before that ACK arrives. Preserve the retained in-flight frame and
+        // open exactly one new nonce document under the original deadline.
+        // An already-discarded receiver can use that retry immediately;
+        // otherwise the existing halfway limit applies. A foreign selected
+        // page or a prior acknowledged first text still fails closed.
         if (awaiting_frame_ && !first_document_recovery_attempted_ &&
             !first_text_rendered_ && in_flight_subscribed_ && !in_flight_.empty() &&
             !clearing_interrupted_chat_ && (pending_.empty() || pending_subscribed_) &&
             !awaiting_login_ && !login_cancel_waiting_ && !reconnecting_ &&
             connection_state_.has_value() && client_.running() &&
-            hud_.webview_ready_ && surface_.ready() &&
+            hud_.webview_ready_ &&
+            (surface_.ready() || (ready_ && surface_.discarded())) &&
             !hud_.webview_.external_page_selected() &&
             !hud_.capture_risk_ && hud_.capture_exclusion_intact() &&
             now < render_deadline_ &&
-            render_deadline_ - now <= kFirstDocumentRecoveryLeadMs) {
+            (surface_.discarded() ||
+             render_deadline_ - now <= kFirstDocumentRecoveryLeadMs)) {
             first_document_recovery_attempted_ = true;
             if (pending_.empty()) pending_ = std::move(in_flight_);
             in_flight_.clear();
@@ -846,6 +846,14 @@ void NativeChatConnection::tick() noexcept
                 return;
             }
             notice(L"현재 승인과 첫 채팅을 유지하고, 응답 없는 표시 문서만 한 번 다시 준비합니다.");
+        }
+        if (ready_ && !surface_.ready()) {
+            // A missing first-text ACK from a discarded own document was
+            // eligible for the bounded retry above. Every other document
+            // change (including explicit external selection) still retires
+            // the old private delivery without renewing its authority.
+            end(L"채팅 표시 문서가 변경되어 출력을 중지했습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.", true);
+            return;
         }
         if (awaiting_frame_ && GetTickCount64() >= render_deadline_) {
             end(L"채팅 화면 응답이 중단됐습니다. 기존 승인이 유효하면 종료 후 '현재 승인으로 자체 채팅 복귀'를 선택하세요.");

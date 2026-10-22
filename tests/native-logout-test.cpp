@@ -135,7 +135,7 @@ void run(const std::wstring &origin, const std::wstring &auxiliary, const std::s
         SendDlgItemMessageW(dialog, 107, BM_SETCHECK, remembered ? BST_CHECKED : BST_UNCHECKED, 0);
         click(dialog, 104);
         await([&] { return browser_opened; }, "browser login request", connection);
-        if (mode == "render-ack-lost") {
+        if (mode == "render-ack-lost" || mode == "render-document-lost") {
             // Isolate the actual first-frame ACK failure from browser consent:
             // the server will not grant the synthetic approval until this
             // nonce-bound document is ready and its ACK listener is removed.
@@ -165,6 +165,15 @@ void run(const std::wstring &origin, const std::wstring &auxiliary, const std::s
             core = chatview::NativeChatSurfaceTestAccess::core(surface);
             expect(!empty_dom(core.Get(), connection),
                 "a missing native ACK may occur after the original private DOM has displayed text");
+            if (mode == "render-document-lost") {
+                // The first verified text is already on the private page,
+                // but the WebView2 owner dies before its exact frame ACK.
+                // The old code ended the whole display immediately and
+                // discarded the renewable approval instead of replaying.
+                surface.close();
+                expect(surface.discarded() && !surface.ready(),
+                    "actual owner is discarded while its first text ACK is pending");
+            }
             await([&] {
                 return chatview::NativeChatConnectionTestAccess::local_document_retried(connection);
             }, "one local first-render ACK recovery before the original deadline", connection);
@@ -212,7 +221,7 @@ void run(const std::wstring &origin, const std::wstring &auxiliary, const std::s
                 throw; // Keep the original first-render condition and 15-second deadline.
             }
             core = chatview::NativeChatSurfaceTestAccess::core(surface);
-            if (mode == "render-ack-lost") {
+            if (mode == "render-ack-lost" || mode == "render-document-lost") {
                 await([&] {
                     return chatview::NativeChatConnectionTestAccess::first_text_rendered(connection);
                 }, "fresh nonce-bound first text ACK after local recovery", connection);

@@ -127,6 +127,10 @@ void NativeChatConnection::show_display_status() noexcept
     if (!client_.login_pending()) login_url_.clear();
     if (!dialog_) return;
     const auto status = local_status();
+    // The protected gaming connection panel may open before WebView2 has
+    // bootstrapped. It is useful immediately, but native login needs an owned
+    // document and may start only after actual HUD readiness.
+    EnableWindow(GetDlgItem(dialog_, kConnect), hud_.webview_ready_);
     EnableWindow(GetDlgItem(dialog_, kManage), can_open_management(status));
     // The request can expire or finish without changing the cached UI status.
     EnableWindow(GetDlgItem(dialog_, kReopenLogin), can_reopen_login(status));

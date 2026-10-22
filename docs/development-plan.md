@@ -1,10 +1,19 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-21 (Asia/Seoul). **이 문서가 유일한 현재 작업 목록이다.** 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다. 완료된 조사·중복 기록은 Git 이력에 남긴다.
+갱신: 2026-10-22 (Asia/Seoul). **이 문서가 유일한 현재 작업 목록이다.** 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다. 완료된 조사·중복 기록은 Git 이력에 남긴다.
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 빠른 WebSocket 복귀 중 중단 상태가 사라지지 않도록 보존
+## 현재 흐름: 컴패니언 첫 보호 채팅 연결창을 WebView2 준비와 분리
+
+시작 `OBS` HEAD `5e6f7587e2da4afdd2a4e766a74cac26269cf06b`. [Windows #472](https://github.com/andongmin94/chat-view/actions/runs/39625610592) **completed/success, CTest 51/51·실패0·271.88초**(실제 `companion-launch` 2.44초, `native-display-client` 57.75초); [CHZZK #139](https://github.com/andongmin94/chat-view/actions/runs/39625611542) **completed/success, 5/5**. 이전 [Windows #470](https://github.com/andongmin94/chat-view/actions/runs/39570971115)의 `companion-launch`는 보호된 연결창 미표시로 실패했으며, 성공한 한 번의 후속 routine만으로 D1을 종결하지 않는다.
+
+- **사용자 경험/결함:** 기존 `src/hud/main.cpp`의 게임 PC `--companion` 시작 경로는 WebView2 준비 이벤트를 기다린 후 **단 한 번** `chat.open_dialog()`를 호출하고 반환값을 확인하지 않았다. 이 일회성 호출이 보호 확인/Win32 창 표시 문제로 실패하면, 채팅 연결창 없이 컴패니언이 계속 실행될 수 있다. 이제 명시적 개발 모드 경고에 동의하고 이미 `WDA_EXCLUDEFROMCAPTURE`로 보호된 HUD를 만들면 **WebView2 비동기 부팅 이전에 보호된 기존 채팅 제어창부터 연다.** 로그인은 실제 WebView2 준비까지 비활성화되고, 연결창 자체는 같은 역할·한 프로세스·같은 HWND로 유지된다.
+- **실행 보호:** 사용자에게 보이는 첫 보호 연결창 열기가 실패해도 유한한 **5초/100ms 간격**으로 동일한 `open_dialog()`만 다시 시도한다. 실패한 보호 정책을 수정/우회하거나 암호·계정·권한을 자동 생성하지 않는다. 제한시간 내에도 보호된 연결창을 확인할 수 없으면 별도 **종료 코드 15**로 실행을 종료하여 비어 있는 컴패니언이 계속 남지 않게 한다. HUD WebView2 준비 이벤트는 별도로 기존 화면·캡처 보안 준비를 마치며, 새 초기화 파이프라인·스레드·플랫폼 의존성을 추가하지 않는다.
+- **변경/검사:** `src/hud/main.cpp`, `src/hud/native-chat-connection.cpp`; 실제 게임 역할의 `native-display-client`가 WebView2 메시지를 펌프하기 **전** 기존 등록 상태 조회가 Unavailable이고 초기 보호 창이 열리며 캡처 제외가 확인되는지, 로그인 버튼이 막혀 있는지, WebView2 준비 뒤 **같은 HWND**로 로그인 버튼이 활성화되고 첫 승인/메시지/철회가 통과하는지 검사한다. 실제 shipping `--companion` 테스트도 첫 연결창의 `WDA_EXCLUDEFROMCAPTURE`, 게임 역할 및 영상/채팅 왕복을 그대로 검증한다. Windows 개발 CTest 전체를 관련 기능 SHA로 실행한다.
+- **한계/다음:** 이 변경은 보호 창 일회성 열기 실패의 구체적인 경로를 개선하지만 D1의 모든 초기 WebView2 문서/첫 텍스트 간헐 실패를 설명·종결하지 않는다. 실제 게임 포커스/입력·실계정 CHZZK·물리 게임 PC→수신 PC HDMI/캡처카드 및 배포 5회 반복·D2/D4/D6/D7은 별도 미검증으로 유지한다. 체크리스트 **10/21 (47.6%)** 그대로. 다음은 실제 첫 문서/텍스트가 간헐로 누락되는 추가 재현 사례의 원인을 좁히고 G1-03 게임 위 HUD 가독성·입력 체감을 확인한다.
+
+## 직전 완료 흐름: 빠른 WebSocket 복귀 중 중단 상태가 사라지지 않도록 보존
 
 실제 시작 `OBS` HEAD `80a4c8e5e6f715fa4dda2bb61208883239638ac0` 확인. 기존 CHZZK 표시 연결이 끊겼다가 갱신된 WebSocket이 1초 내외의 재시도 뒤 복구될 때, Windows HUD 소유 스레드가 아직 전환 상태를 확인하지 않았으면 `DisplayClient`의 단일 최신 프레임 메일박스에서 `Reconnecting`이 새로운 `Receiving`에 덮어써지는 경합이 있다.
 

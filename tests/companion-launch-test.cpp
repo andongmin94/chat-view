@@ -133,6 +133,10 @@ int wmain(int argc, wchar_t **argv)
         Child child(argv[1]);
         choose(await_window(child, kConsentTitle), IDYES);
         const HWND panel = await_window(child, kPanelTitle);
+        DWORD initial_panel_affinity = WDA_NONE;
+        expect(GetWindowDisplayAffinity(panel, &initial_panel_affinity) &&
+            initial_panel_affinity == WDA_EXCLUDEFROMCAPTURE,
+            "first visible companion login panel is protected before any browser consent");
         expect(GetDlgItem(panel, 101) && GetDlgItem(panel, 107) && GetDlgItem(panel, 104) &&
             GetDlgItem(panel, 116), "gaming chat panel exposes existing authentication and companion video setup");
         expect(GetDlgItem(panel, 102) == nullptr, "no manual credential field in connection panel");

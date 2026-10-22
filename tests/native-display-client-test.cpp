@@ -159,6 +159,26 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
         std::cout << "browser-opened\n" << std::flush;
         return !std::exchange(browser_probe.fail_next, false);
     });
+    HWND early_panel = nullptr;
+    if (mode == "gateway-gaming") {
+        // A real gaming HUD cannot postpone its protected login controls
+        // until the asynchronous WebView2 bootstrap finishes. No events were
+        // pumped, so the host is deliberately still unavailable.
+        const HWND early_host = chatview::NativeChatConnectionTestAccess::host(connection);
+        const UINT query_before_ready = RegisterWindowMessageW(chatview::kQueryNativeChatMessageName);
+        expect(early_host && query_before_ready &&
+            SendMessageW(early_host, query_before_ready, 0, 0) ==
+                static_cast<LRESULT>(chatview::NativeChatStatus::Unavailable),
+            "real gaming host is not WebView2-ready before first message pump");
+        expect(connection.open_dialog(), "gaming connection panel opens before WebView2 readiness");
+        early_panel = chatview::NativeChatConnectionTestAccess::dialog(connection);
+        DWORD affinity = WDA_NONE;
+        expect(early_panel && IsWindowVisible(early_panel) &&
+            GetWindowDisplayAffinity(early_panel, &affinity) &&
+            affinity == WDA_EXCLUDEFROMCAPTURE && browser_probe.calls == 0U &&
+            !IsWindowEnabled(GetDlgItem(early_panel, 104)),
+            "early gaming panel is protected, has no consent and disables login until HUD readiness");
+    }
     hud.show_ready();
     await([&] { return WaitForSingleObject(ready.get(), 0) == WAIT_OBJECT_0; }, "HUD startup", &connection);
     const HWND host = chatview::NativeChatConnectionTestAccess::host(connection);
@@ -178,10 +198,12 @@ void gateway_ui(const std::wstring &origin, const std::string &mode)
         return result;
     };
     expect(query() == chatview::NativeChatStatus::Idle, "read-only query does not create a login");
-    expect(open(1) == 0 && !chatview::NativeChatConnectionTestAccess::dialog(connection),
-        "native control rejects unexpected payload before opening a panel");
-    expect(open() == 1, "registered command opens the existing native panel");
+    expect(open(1) == 0 && chatview::NativeChatConnectionTestAccess::dialog(connection) == early_panel,
+        "invalid native open payload creates no panel or side effects before/after readiness");
+    expect(open() == 1, "registered command opens or reuses the native panel");
     HWND dialog = chatview::NativeChatConnectionTestAccess::dialog(connection);
+    if (early_panel) expect(dialog == early_panel && IsWindowEnabled(GetDlgItem(dialog, 104)),
+        "WebView2 readiness reuses the early protected panel and enables its login control");
     expect(dialog && open() == 1 && dialog == chatview::NativeChatConnectionTestAccess::dialog(connection),
         "repeat open reuses one panel without a duplicate connection");
     expect(query() == chatview::NativeChatStatus::Idle && !chatview::NativeChatConnectionTestAccess::active(connection),

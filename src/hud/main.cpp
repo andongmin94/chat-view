@@ -46,6 +46,9 @@ private:
 };
 
 constexpr int kCompanionQuitHotkey = 0x4351;
+constexpr int kCompanionPanelStartupFailure = 15;
+constexpr ULONGLONG kCompanionPanelOpenBudgetMs = 5000U;
+constexpr DWORD kCompanionPanelRetryMs = 100U;
 
 class CompanionQuitHotkey final {
 public:
@@ -186,7 +189,14 @@ int run(HINSTANCE instance, const chatview::HudLaunchOptions &options)
         companion ? nullptr : state_reader.parent_process(),
     };
     DWORD handle_count = wait_handles[1] != nullptr ? 2U : 1U;
+    // The protected Win32 connection controls do not need a loaded WebView2
+    // document. Show them immediately after consent and a protected HUD
+    // window are established. A one-shot attempt after WebView readiness
+    // used to silently discard a failed ShowWindow/affinity check, leaving
+    // the companion running without its connection panel.
     bool open_companion_panel = companion;
+    const ULONGLONG panel_deadline = companion
+        ? GetTickCount64() + kCompanionPanelOpenBudgetMs : 0U;
 
     int exit_code = 0;
     bool running = true;
@@ -195,13 +205,29 @@ int run(HINSTANCE instance, const chatview::HudLaunchOptions &options)
             break;
         }
 
+        if (open_companion_panel) {
+            if (chat.open_dialog()) {
+                open_companion_panel = false;
+            } else if (GetTickCount64() >= panel_deadline) {
+                // Never silently claim that startup completed with no
+                // protected login controls. Do not bypass capture affinity,
+                // start a browser consent or replace the native HUD.
+                OutputDebugStringW(
+                    L"[ChatView companion] Protected connection panel unavailable; stopping startup\n");
+                exit_code = kCompanionPanelStartupFailure;
+                break;
+            }
+        }
         if (!companion) chat.observe_outputs(state_reader.read_outputs());
         chat.tick();
         video.tick();
+        DWORD wait_timeout = std::min(chat.wait_timeout(), video.wait_timeout());
+        if (open_companion_panel)
+            wait_timeout = std::min(wait_timeout, kCompanionPanelRetryMs);
         const DWORD wait_result = MsgWaitForMultipleObjectsEx(
             handle_count,
             wait_handles,
-            std::min(chat.wait_timeout(), video.wait_timeout()),
+            wait_timeout,
             QS_ALLINPUT,
             MWMO_ALERTABLE | MWMO_INPUTAVAILABLE);
         if (wait_result == WAIT_FAILED) {
@@ -213,11 +239,11 @@ int run(HINSTANCE instance, const chatview::HudLaunchOptions &options)
             continue;
         }
 
-        if (open_companion_panel && wait_result == WAIT_OBJECT_0) {
-            open_companion_panel = false;
+        if (companion && handle_count == 1U && wait_result == WAIT_OBJECT_0) {
+            // WebView2 readiness still initializes/shows the private HUD, but
+            // it no longer controls whether the protected Win32 panel opens.
             handle_count = 0U;
             wait_handles[0] = nullptr;
-            chat.open_dialog();
             continue;
         }
 

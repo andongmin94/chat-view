@@ -547,13 +547,18 @@ int main()
         expect(!cleared_source.empty() && cleared_source != queued_source &&
                    cleared_source != original_source,
             "Stop supersedes even an uncommitted own navigation with a fresh blank document");
-        await([&] { return source(core.Get()) == cleared_source; },
-            "blank document replaces the previous private chat after queued Stop");
-        expect(evaluate(core.Get(), LR"JS(
-            document.querySelector('#messages') === null &&
-            document.body.textContent.trim() === '' &&
-            document.querySelectorAll('script[src],img').length === 0
-        )JS") == L"true", "retired native private chat rows are absent from actual blank WebView2 DOM");
+        // WebView2 can update get_Source at NavigationStarting while the
+        // previous document's DOM is still rendered. Await the actual blank
+        // document and its empty DOM, not merely the new URL; never accept a
+        // source-only "clear" acknowledgement as privacy evidence.
+        await([&] {
+            return source(core.Get()) == cleared_source &&
+                evaluate(core.Get(), LR"JS(
+                    document.querySelector('#messages') === null &&
+                    document.body.textContent.trim() === '' &&
+                    document.querySelectorAll('script[src],img').length === 0
+                )JS") == L"true";
+        }, "retired private chat is absent from the actual new blank WebView2 DOM");
         expect(!surface.ready() && !surface.publish(kMessage) && !surface.jump_to_latest(),
             "stopped chat cannot reuse the retired source or local keyboard navigation");
         host.close(); expect(!surface.ready(), "host destruction invalidates surface"); surface.close(); core.Reset();

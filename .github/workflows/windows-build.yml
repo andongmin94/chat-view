@@ -258,13 +258,22 @@ jobs:
           cmake --install build/windows-x64 `
             --config RelWithDebInfo
 
-      - name: Report native resource evidence
+      - name: Report native test evidence
         if: always()
         shell: pwsh
         run: |
           $log = 'build/windows-x64/Testing/Temporary/LastTest.log'
           if (Test-Path -LiteralPath $log) {
-            Select-String -LiteralPath $log -Pattern '^HUD resource ' |
+            # Passing CTests retain these records only in LastTest.log.
+            # Export fixed phases and numeric fields, never arbitrary test output.
+            $nativeEvidencePatterns = @(
+              '^HUD resource '
+              '^native-output phase=(?:hang-start|hang-end) elapsed_ms=[0-9]+ sender_worker=[01] receiver_worker=[01] active=[01] surface_ready=[01] baseline_frames=[0-9]+ rendered_frames=[0-9]+ rendered_rows=[0-9]+ rejected=[0-9]+ membership_present=[01] first_text_rendered=[01] output_fresh=[01]$'
+              '^native-output-fixture phase=(?:hang-start|hang-end|child-exit) elapsed_ms=[0-9]+ report_attempts=[0-9]+ blocked_during_hang=[0-9]+ pending_reports=[0-9]+ chat_publishes=[0-9]+ hang_chat_publishes=[0-9]+$'
+              '^native-chat-switch phase=(?:empty-subscribed|first-text|other-wait) event=(?:start|success|timeout|failure) elapsed_ms=[0-9]+ worker=[01] active=[01] surface_ready=[01] rendered_frames=[0-9]+ rendered_rows=[0-9]+ rejected=[0-9]+ membership_present=[01] first_text_rendered=[01]$'
+              '^native-chat-switch-fixture mode=(?:memory|early-retry|remembered|unrelated|revoked|mismatch|logout-failure) phase=(?:approved|empty-ready|first-published|child-exit) elapsed_ms=[0-9]+ approved=[01] empty_seen=[01] first_publications=[0-9]+ login_starts=[0-9]+ refreshes=[0-9]+ signouts=[0-9]+$'
+            )
+            Select-String -LiteralPath $log -Pattern $nativeEvidencePatterns |
               ForEach-Object { Write-Host $_.Line }
           }
 

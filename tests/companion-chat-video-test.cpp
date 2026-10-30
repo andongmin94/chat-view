@@ -25,6 +25,8 @@ struct NativeChatConnectionTestAccess {
     static bool retry_pending(NativeChatConnection &c) { return c.retry_first_display_pending_; }
     static void first_display_evidence(NativeChatConnection &c) {
         // Failure-only bounded phase flags: no URL, verifier, token or chat.
+        const auto now = GetTickCount64();
+        const auto loading_remaining = c.loading_deadline_ > now ? c.loading_deadline_ - now : 0U;
         std::cerr << "Companion first chat phase: active=" << c.active_
             << " worker=" << c.client_.running() << " awaiting_login=" << c.awaiting_login_
             << " surface_ready=" << c.surface_.ready()
@@ -32,7 +34,13 @@ struct NativeChatConnectionTestAccess {
             << " rejected=" << c.surface_.rejected_frames()
             << " metadata=" << c.connection_state_.has_value()
             << " pending_frame=" << !c.pending_.empty()
-            << " awaiting_render=" << (c.awaiting_frame_ != 0U) << '\n';
+            << " awaiting_render=" << (c.awaiting_frame_ != 0U)
+            << " native_ready=" << c.ready_
+            << " surface_discarded=" << c.surface_.discarded()
+            << " pending_subscribed=" << c.pending_subscribed_
+            << " recovery_attempted=" << c.first_document_recovery_attempted_
+            << " reconnecting=" << c.reconnecting_
+            << " loading_remaining_ms=" << loading_remaining << '\n';
     }
 };
 struct NativeChatSurfaceTestAccess {

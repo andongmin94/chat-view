@@ -22,7 +22,17 @@
 - **느린 출력 보고:** `native-output`은 원래 4초 구간 앞뒤의 readiness·baseline/current ACK·worker·output freshness를 기록한다. 기존 `attempts > 0`은 hang 이전 요청만으로 통과할 수 있었으므로, hang 분기에서 실제로 보류된 요청의 누적 횟수가 양수인지 검사한다. 응답이 이미 닫혀 pending 수가 0이어도 보류 이력은 남고, hang 중 합성 publish 횟수는 별도로 센다. 초기 ACK를 기다리는 새 warmup은 추가하지 않았다.
 - **진단 경계:** 고정된 phase/event 이름과 숫자·불리언만 사용한다. 본문·키 입력·자격정보·URL·세션 식별자는 새로 기록하지 않는다. 두 Node wrapper는 child의 `close`까지 기다려 마지막 stderr를 수집하며, 성공 시에도 전체 형식이 일치한 native 진단만 전달한다. 기존 fixture 45초/80초 제한은 유지하고 실패는 다시 던진다.
 - **이번 실행:** Linux Node **v24.22.1**에서 수정된 두 `.mts` 구문 검사 통과. 실제 output wrapper 소스를 실행하되 child/service/socket/timer를 대체한 합성 대조 **6/6**: hang 이전 요청만 있을 때 원본은 잘못 통과하고 수정본은 거부; 보류된 응답이 resume 전에 닫힌 경우와 hang 이전 요청이 없는 경우는 통과. 이 결과는 WinHTTP/WebView2나 실제 HTTP 실행이 아니다. HUD 원본 blob/첨부 SHA256를 확인했고 HUD와 D1 패치는 어느 순서로도 적용 검사를 통과했다.
-- **남은 제한/다음:** 현재 OBS Actions 목록은 0건이며 과거 #479 실행 조회는 404여서 원시 로그를 재확보하지 못했다. Windows 빌드·CTest/WebView2, 전체 플랫폼 typecheck/suite, 실계정·물리 투컴은 이번에 실행하지 않았다. 과거 #477/#479와 단일 #481 통과의 기존 해석, D1/D2/D4/D6/D7 및 **10/21(47.6%)**는 유지한다. 다음은 가능한 Windows 환경에서 이 두 테스트의 phase/ACK/보류 요청 관측을 한 번 확보해 멈춘 단계를 좁히는 것이다. 그 전에는 제품 대기·재시도 정책을 바꾸지 않는다.
+- **당시 제한/다음(후속 CI는 아래 결과 참조):** 인계 수신 당시 OBS Actions 목록은 0건이며 과거 #479 실행 조회는 404여서 원시 로그를 재확보하지 못했다. 그 시점에는 Windows 빌드·CTest/WebView2, 전체 플랫폼 typecheck/suite, 실계정·물리 투컴을 새로 실행하지 않았다. 과거 #477/#479와 단일 #481 통과의 기존 해석, D1/D2/D4/D6/D7 및 **10/21(47.6%)**는 유지한다. 다음은 가능한 Windows 환경에서 이 두 테스트의 phase/ACK/보류 요청 관측을 한 번 확보해 멈춘 단계를 좁히는 것이다. 그 전에는 제품 대기·재시도 정책을 바꾸지 않는다.
+
+### 2026-10-30 Windows #482 결과와 진단 수집 누락 수정
+
+기능 SHA `36cbe5cf0c9a2176186329fe5c2e375e111a2f92`의 [Windows #482/run `40977932032`](https://github.com/andongmin94/chat-view/actions/runs/40977932032)는 **completed/failure, CTest 49/51·실패2·284.63초**로 종료했다. Windows 빌드는 통과했고 `native-chat-switch` **17.40초**, `native-output` **16.59초**는 통과했다. 실패는 `companion-chat-video-redraw` **22.56초** 및 `companion-chat-redraw-revoked-black` **17.97초**다. 둘 모두 redraw/권한 철회 시나리오에 들어가기 전 공통 **subscribed empty own DOM** 대기에서 멈췄다.
+
+- **실제 원시 관측:** 두 실패 모두 `active=1 worker=1 awaiting_login=0 surface_ready=0 frames=0 rows=0 rejected=0 metadata=1 pending_frame=1 awaiting_render=0`. 승인 metadata와 대기 frame은 있으나 **현재 surface**가 준비되지 않았다는 위치를 확인한다. frame의 subscribed 여부, 탐색/nonce 실패 단계와 기존 복구 사용 여부는 이 기록만으로 알 수 없다. surface 재생성은 counters를 초기화하므로 이전 문서가 한 번도 진행하지 않았다고 단정하지 않는다. 초기 검사 15초에는 브라우저 승인도 포함되며 45초 부모 kill이나 병렬 CTest 실패가 아니다.
+- **진단 추가 효과와 누락:** 통과한 두 테스트의 조건상 빈 ACK→첫 텍스트, 4초 hang 중 ACK 최소 2개 증가와 실제 보류 요청 양수는 검증됐지만, 정확한 실측 count/timing 행은 공개 작업 로그에 **0개**다. CTest `--output-on-failure`와 `LastTest.log`의 `^HUD resource ` 전용 추출 때문에 성공 로그가 공개되지 않았다. 이를 실제 관측값 0으로 해석하지 않는다.
+- **최소 수정:** 기존 `always()` 후처리가 네 가지 고정 native/fixture 진단 형식을 완전한 행 정규식으로 추가 추출한다. 숫자·불리언·고정 단계명 이외의 본문/키/URL/추가 필드는 통과시키지 않으며 기존 resource 출력은 유지한다. 기존 컴패니언 실패 dump에는 `native_ready`, `surface_discarded`, `pending_subscribed`, `recovery_attempted`, `reconnecting`, 0 이상으로 제한한 `loading_remaining_ms`만 보강한다. 제품 코드·검사 조건·대기 예산·재시도 정책을 변경하지 않는다.
+- **검증/경계:** 출력 필터의 허용/거부 회귀와 변경 diff를 로컬 검증하고, 이 변경에 한해 Windows 검증을 한 번 시행한다. 같은 #482를 무작정 재실행하지 않는다. 후속 Windows 성공도 #482 실패나 D1의 간헐성을 지우지 않는다. HUD resize는 계속 별도 미반영이다.
+- **독립 CI 유지:** [CHZZK #143](https://github.com/andongmin94/chat-view/actions/runs/40977932025)의 Ubuntu/Windows × Node22/24 각각 385/385·strict/audit 통과와 Playwright의 ubuntu26.04-x64 Chromium 설치 실패/브라우저 검사 미실행을 그대로 구분한다. 이를 반복검사하거나 이번 수정에 runner/의존성 변경을 섞지 않는다. 배포·실계정·물리 투컴과 D1/D2/D4/D6/D7 및 **10/21(47.6%)**는 미완료다.
 
 ## 직전 완료 흐름: 첫 개인 채팅을 모듈 대기 없이 WebView2 파싱 중 준비
 

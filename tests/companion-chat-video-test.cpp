@@ -23,6 +23,11 @@ struct NativeChatConnectionTestAccess {
     static auto &client(NativeChatConnection &c) { return c.client_; }
     static bool first_text(NativeChatConnection &c) { return c.first_text_rendered_; }
     static bool retry_pending(NativeChatConnection &c) { return c.retry_first_display_pending_; }
+    static bool active(NativeChatConnection &c) { return c.active_; }
+    static bool awaiting_render(NativeChatConnection &c) { return c.awaiting_frame_ != 0U; }
+    static ULONGLONG first_display_deadline(NativeChatConnection &c) {
+        return c.awaiting_frame_ ? c.render_deadline_ : c.loading_deadline_;
+    }
     static void first_display_evidence(NativeChatConnection &c) {
         // Failure-only bounded phase flags: no URL, verifier, token or chat.
         const auto now = GetTickCount64();
@@ -502,6 +507,42 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
     try {
         flow.wait([&] { return Chat::surface(chat).rendered_frames() >= 1 && Chat::membership(chat).has_value(); },
             "subscribed empty own DOM");
+    } catch (const std::runtime_error &failure) {
+        const bool observe = mode == L"redraw" &&
+            std::string_view(failure.what()) == "subscribed empty own DOM";
+        if (observe) std::cerr << "Companion first chat observation: original-failure\n";
+        Chat::first_display_evidence(chat);
+        if (observe) {
+            try {
+                bool observing_ack = Chat::awaiting_render(chat);
+                auto deadline = Chat::first_display_deadline(chat);
+                const auto empty_received = [&] {
+                    return Chat::surface(chat).rendered_frames() >= 1 && Chat::membership(chat).has_value();
+                };
+                // The test has already failed. Only pump the existing product
+                // deadlines; a late ACK must never resume the redraw scenario.
+                while (Chat::active(chat) && !empty_received() && GetTickCount64() < deadline) {
+                    flow.pulse();
+                    if (!observing_ack && Chat::awaiting_render(chat)) {
+                        // Capture the first product ACK deadline once. Recovery
+                        // or later frames cannot keep extending this observation.
+                        observing_ack = true;
+                        deadline = Chat::first_display_deadline(chat);
+                        std::cerr << "Companion first chat observation: ack-wait\n";
+                        Chat::first_display_evidence(chat);
+                    }
+                    Sleep(10);
+                }
+                std::cerr << "Companion first chat observation: "
+                    << (empty_received() ? "late-empty-ack" : !Chat::active(chat)
+                        ? "connection-ended" : "existing-deadline-reached") << '\n';
+                Chat::first_display_evidence(chat);
+            } catch (...) {
+                std::cerr << "Companion first chat observation: observation-error\n";
+                Chat::first_display_evidence(chat);
+            }
+        }
+        throw; // Always rethrow the original 15-second failure, including after a late ACK.
     } catch (...) {
         Chat::first_display_evidence(chat);
         throw; // Preserve the original readiness condition and 15-second bound.

@@ -80,7 +80,7 @@ try {
     }
   };
   child = spawn(executable, [source, mode!], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: false });
-  const exited = once(child, 'exit'); child.stdin!.write(`${f.origin}\n${other.lease.sessionToken}\n`);
+  const exited = once(child, 'close'); child.stdin!.write(`${f.origin}\n${other.lease.sessionToken}\n`);
   let errors = '', phase = 0;
   child.stderr!.on('data', chunk => { errors = (errors + String(chunk)).slice(-4096); });
   const phases = earlyFirst

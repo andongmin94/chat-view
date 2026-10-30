@@ -52,8 +52,17 @@ for (const mode of ['memory', 'early-retry', 'remembered', 'unrelated', 'revoked
       await handle(request, response);
     };
     child = spawn(executable, [mode, configExecutable], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: false });
-    const exited = once(child, 'exit'); child.stdin!.write(`${f.origin}\n${other.lease.sessionToken}\n`);
-    let buffer = '', errors = '', failure: unknown, externalSeen = false, firstPublished = false, returnedSeen = false;
+    // Final phase evidence may arrive after exit but before stdio closes.
+    const exited = once(child, 'close'); child.stdin!.write(`${f.origin}\n${other.lease.sessionToken}\n`);
+    let buffer = '', errors = '', failure: unknown, externalSeen = false, emptySeen = false, returnedSeen = false;
+    let approved = false, firstPublications = 0;
+    const started = performance.now();
+    const observe = (phase: 'approved' | 'empty-ready' | 'first-published' | 'child-exit') => {
+      // Fixed mode/phase names and counts; never print account pages or credentials.
+      console.error(`native-chat-switch-fixture mode=${mode} phase=${phase} elapsed_ms=${Math.floor(performance.now() - started)}` +
+        ` approved=${Number(approved)} empty_seen=${Number(emptySeen)} first_publications=${firstPublications}` +
+        ` login_starts=${loginStarts} refreshes=${refreshes} signouts=${signouts}`);
+    };
     // Real owner management HTTP uses the observer's existing browser cookie.
     // It cannot consume native credentials or cause a new login/lease.
     const account = async (streamingOnline: number) => {
@@ -78,7 +87,7 @@ for (const mode of ['memory', 'early-retry', 'remembered', 'unrelated', 'revoked
         await new Promise<void>(resolve => setTimeout(resolve, 25));
       }
     };
-    let browserTask: Promise<void> | undefined;
+    let browserTask: Promise<void> | undefined, firstTextTask: Promise<void> | undefined;
     child.stdout!.setEncoding('utf8');
     child.stdout!.on('data', (chunk: string) => {
       buffer = (buffer + chunk).slice(-4096);
@@ -86,16 +95,18 @@ for (const mode of ['memory', 'early-retry', 'remembered', 'unrelated', 'revoked
         browserTask = (async () => {
           assert(pending); await f.authenticate('alice', pending);
           assert.equal((await f.post(`/login/${pending.id}/approve`)).status, 200);
+          approved = true; observe('approved');
           // Wait for the native HUD to render the subscribed empty state.
         })();
         void browserTask.catch(error => { failure = error; child?.kill(); });
       }
-      if (!firstPublished && /(?:^|\n)chat-empty-ready\r?\n/u.test(buffer)) {
-        firstPublished = true;
-        void (async () => {
+      if (!emptySeen && /(?:^|\n)chat-empty-ready\r?\n/u.test(buffer)) {
+        emptySeen = true; observe('empty-ready');
+        firstTextTask = (async () => {
           await account(1); // Native own renderer is online on the same session.
           assert(f.chats.get('alice'), 'synthetic upstream subscribed before first text');
           f.chats.get('alice')!.publish('Native return fixture');
+          firstPublications++; observe('first-published');
         })().catch(error => { failure = error; child?.kill(); });
       }
       if (!externalSeen && /(?:^|\n)external-ready\r?\n/u.test(buffer)) {
@@ -119,11 +130,18 @@ for (const mode of ['memory', 'early-retry', 'remembered', 'unrelated', 'revoked
     child.stderr!.on('data', chunk => { errors = (errors + String(chunk)).slice(-4096); });
     const deadline = setTimeout(() => child?.kill(), 45000);
     try {
-      const [code] = await exited; await browserTask;
+      const [code] = await exited; await browserTask; await firstTextTask;
       if (failure) throw failure;
       assert.equal(code, 0, `${mode}: ${errors}`);
-    } finally { clearTimeout(deadline); }
-    assert(firstPublished, 'initial text follows the empty subscribed DOM acknowledgement');
+    } finally {
+      observe('child-exit');
+      for (const line of errors.split(/\r?\n/u)) {
+        if (/^native-chat-switch phase=(?:empty-subscribed|first-text|other-wait) event=(?:start|success|timeout|failure) elapsed_ms=\d+ worker=[01] active=[01] surface_ready=[01] rendered_frames=\d+ rendered_rows=\d+ rejected=\d+ membership_present=[01] first_text_rendered=[01]$/u.test(line)) console.error(line);
+      }
+      clearTimeout(deadline);
+    }
+    assert(emptySeen, 'initial text follows the empty subscribed DOM acknowledgement');
+    assert.equal(firstPublications, 1, 'first text was actually published after the empty DOM marker');
     assert(externalSeen);
     assert.equal(returnedSeen, !['revoked', 'mismatch'].includes(mode),
       'browser and native account agree on the first explicitly restored streaming peer');

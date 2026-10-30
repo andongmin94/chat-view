@@ -46,6 +46,22 @@ unsigned management_attempts = 0, management_opened = 0;
 bool fail_management = false;
 constexpr wchar_t kExternal[] = L"https://www.youtube.com/live_chat?is_popout=1&v=chatview123";
 void expect(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
+void phase_snapshot(chatview::NativeChatConnection &chat, const char *phase,
+                    const char *event, ULONGLONG began)
+{
+    // Fixed test phases and bounded counters only: never log private content,
+    // document identities, connection identifiers or credentials.
+    const auto &surface = Access::surface(chat);
+    std::cerr << "native-chat-switch phase=" << phase << " event=" << event
+        << " elapsed_ms=" << GetTickCount64() - began
+        << " worker=" << Access::client(chat).running()
+        << " active=" << Access::active(chat) << " surface_ready=" << surface.ready()
+        << " rendered_frames=" << surface.rendered_frames()
+        << " rendered_rows=" << surface.rendered_messages()
+        << " rejected=" << surface.rejected_frames()
+        << " membership_present=" << Access::membership(chat).has_value()
+        << " first_text_rendered=" << Access::first_text_rendered(chat) << '\n';
+}
 void pump(chatview::NativeChatConnection &chat)
 {
     if (center) center->pulse();
@@ -58,13 +74,25 @@ void pump(chatview::NativeChatConnection &chat)
     chat.tick();
 }
 void await(chatview::NativeChatConnection &chat, const std::function<bool()> &done,
-           const char *message, ULONGLONG duration = 15000U)
+           const char *message, ULONGLONG duration = 15000U, const char *phase = nullptr)
 {
-    const auto deadline = GetTickCount64() + duration;
-    while (!done()) {
-        expect(GetTickCount64() < deadline, message); pump(chat);
-        MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    const auto began = GetTickCount64(), deadline = began + duration;
+    if (phase) phase_snapshot(chat, phase, "start", began);
+    bool timed_out = false;
+    try {
+        while (!done()) {
+            if (GetTickCount64() >= deadline) {
+                timed_out = true;
+                throw std::runtime_error(message);
+            }
+            pump(chat);
+            MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+    } catch (...) {
+        phase_snapshot(chat, phase ? phase : "other-wait", timed_out ? "timeout" : "failure", began);
+        throw;
     }
+    if (phase) phase_snapshot(chat, phase, "success", began);
 }
 std::wstring text(HWND dialog, int id)
 {
@@ -298,7 +326,7 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
     await(chat, [&] {
         return Access::client(chat).running() && Access::membership(chat).has_value() &&
             Access::surface(chat).rendered_frames() >= 1U && Access::surface(chat).rendered_messages() == 0U;
-    }, "empty subscribed chat renders before first text");
+    }, "empty subscribed chat renders before first text", 15000U, "empty-subscribed");
     expect(!Access::first_text_rendered(chat), "empty subscription does not acknowledge the first text");
     expect_status(chat, Status::Receiving);
     if (mode == "early-retry") {
@@ -382,19 +410,8 @@ void run(const std::wstring &origin, const std::wstring &other, const std::strin
         expect_status(chat, Status::Receiving);
     }
     std::cout << "chat-empty-ready\n" << std::flush;
-    try {
-        await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; }, "initial private chat renders");
-    } catch (...) {
-        // Bounded phase evidence only: no chat, URLs, session IDs or tokens.
-        const auto &surface = Access::surface(chat);
-        std::cerr << "Initial private chat phase: worker=" << Access::client(chat).running()
-            << " active=" << Access::active(chat) << " surface_ready=" << surface.ready()
-            << " rendered_frames=" << surface.rendered_frames()
-            << " rendered_rows=" << surface.rendered_messages()
-            << " rejected=" << surface.rejected_frames()
-            << " membership_present=" << Access::membership(chat).has_value() << '\n';
-        throw;
-    }
+    await(chat, [&] { return Access::surface(chat).rendered_messages() == 1U; },
+        "initial private chat renders", 15000U, "first-text");
     expect_status(chat, Status::Receiving);
     expect(text(dialog, 110).find(L"서버 채팅 연결: 게임 0 / 송출 1") != std::wstring::npos,
         "native panel shows the same actual server socket counts as the creator account page");

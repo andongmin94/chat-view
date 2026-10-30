@@ -7,6 +7,7 @@
 #include "hud/shared-state-reader.hpp"
 #include "common/win32-handle.hpp"
 #include <Windows.h>
+#include <cstdint>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -18,12 +19,36 @@ struct NativeChatConnectionTestAccess {
     { c.begin(origin, token, true, DisplayAuthentication::Saved); }
     static void disable_auto(NativeChatConnection &c) { c.auto_connect_pending_ = false; }
     static HWND dialog(NativeChatConnection &c) { c.open_dialog(); return c.dialog_; }
+    static bool active(NativeChatConnection &c) { return c.active_; }
+    static DisplayClient &client(NativeChatConnection &c) { return c.client_; }
+    static bool first_text_rendered(NativeChatConnection &c) { return c.first_text_rendered_; }
     static const std::optional<DisplayConnectionState> &state(NativeChatConnection &c) { return c.connection_state_; }
     static NativeChatSurface &surface(NativeChatConnection &c) { return c.surface_; }
 };
 }
 namespace {
 void expect(bool value, const char *label) { if (!value) throw std::runtime_error(label); }
+void phase_snapshot(chatview::NativeChatConnection &gaming, chatview::DisplayClient &sender,
+                    const char *phase, ULONGLONG began, std::uint64_t previous_frames)
+{
+    using Access = chatview::NativeChatConnectionTestAccess;
+    const auto now = GetTickCount64();
+    const auto &surface = Access::surface(gaming);
+    const auto &state = Access::state(gaming);
+    // Observe the existing reproducer without waiting for an initial ACK or
+    // changing its fault window. No private content, identities or keys.
+    std::cerr << "native-output phase=" << phase << " elapsed_ms=" << now - began
+        << " sender_worker=" << sender.running()
+        << " receiver_worker=" << Access::client(gaming).running()
+        << " active=" << Access::active(gaming) << " surface_ready=" << surface.ready()
+        << " baseline_frames=" << previous_frames
+        << " rendered_frames=" << surface.rendered_frames()
+        << " rendered_rows=" << surface.rendered_messages()
+        << " rejected=" << surface.rejected_frames()
+        << " membership_present=" << state.has_value()
+        << " first_text_rendered=" << Access::first_text_rendered(gaming)
+        << " output_fresh=" << (state && state->output.expires_tick > now) << '\n';
+}
 std::wstring read_input()
 {
     std::string line; std::getline(std::cin, line);
@@ -119,7 +144,9 @@ void exercise()
     command("hang"); stream = true;
     auto &surface = chatview::NativeChatConnectionTestAccess::surface(gaming);
     const auto previous_frames = surface.rendered_frames(), began = GetTickCount64();
+    phase_snapshot(gaming, sender, "hang-start", began, previous_frames);
     wait([&] { return GetTickCount64() - began >= 4000U; }, "report timeout exercise", 6000U);
+    phase_snapshot(gaming, sender, "hang-end", began, previous_frames);
     expect(surface.rendered_frames() >= previous_frames + 2U, "slow output HTTP does not block private chat");
     chatview::DisplayUpdate sender_frame;
     expect(sender.take(sender_frame) && sender_frame.status == chatview::DisplayStatus::Receiving,

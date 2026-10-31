@@ -4,7 +4,15 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 작업: HUD 크기 변경 시 최신 채팅 추적과 읽던 위치 유지 (로컬 검증 완료·원격 미반영)
+## 현재 작업: D1 첫 표시 간헐 실패의 로컬 재현 (재현되지 않음)
+
+2026-11-01 `OBS` 로컬 HEAD `ceb0badc1a641154f3ec302f2bebce2691ec2245`, 미커밋 변경 없음에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일했다. 기존 CMake 대상의 소스·링크 구성을 그대로 사용해 MSVC **14.51 `/W4 /WX`**로 companion chat/video와 합성 source 실행 파일만 직접 빌드했다. Node **26.13.0**, WebView2 **156.0.4314.50**의 실제 WinHTTP/WebView2/HUD/WGC와 기존 Node driver를 사용했다.
+
+- **실행 결과:** 과거 #482/#483 실패 대상 `companion-chat-video redraw`를 최초 1회와 간헐 재현 목적의 추가 3회, 합계 **4/4 통과**했다. 과거 #482의 다른 실패 대상 `redraw-revoked-black` **1/1**, 승인 응답 이전에 첫 텍스트가 존재하는 `early-first` **1/1**도 통과했다. 로컬 실패 **0건**, 과거 실패 **재현 0건**이며 D1 해결/신뢰성 완료의 증거로 계산하지 않는다. 모든 실행은 기존 driver와 예산을 유지한 직접 실행이며 전체 CTest 실행이 아니다.
+- **좁혀진 경계와 한계:** 기존 #483 로그의 `pending_subscribed=1, pending_frame=1, awaiting_render=0, native_ready=0, surface_ready=0, surface_discarded=0, recovery_attempted=1`은 현재 소유 문서가 아직 ready가 아니어서 첫 프레임을 게시하지 못한 단계다. ACK 유실로 확정할 수 없고, 탐색 시작·nonce handshake·현재 source 중 무엇이 지연됐는지는 기존 기록으로 구분되지 않는다. 로컬에서는 최초 빈 DOM 대기를 모두 통과했으므로 실패 후 원래 제품 deadline 관측 분기도 실행되지 않았다. 제품 deadline을 남긴 시험 실패가 이후 늦은 ACK로 끝났을지 또는 제품 마감까지 실패했을지는 여전히 미확정이다.
+- **변경·종료:** 관측된 로컬 결함이 없어 제품·테스트·timeout·retry를 수정하지 않았다. 재현 결과만 이 현재 상태 기록에 보존한다. 전체 51개·385개, Actions·push·배포·설치/패키징·qualification은 실행하지 않았다. 다음에 같은 실패가 재현되면 기존 실패 후 deadline 관측 결과부터 확보하고, 소유 문서의 탐색/nonce/source 경계를 구분한다. D1과 기존 미완료 항목은 유지한다.
+
+## 직전 완료 작업: HUD 크기 변경 시 최신 채팅 추적과 읽던 위치 유지 (로컬 검증 완료·원격 미반영)
 
 2026-11-01 로컬 Windows 세션에서 `OBS` HEAD `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`을 클론해 깨끗한 상태를 확인했다. 첨부 `chatview-hud-resize.patch`의 원래 기준 `d1fd6c66308c4a95cb8aca5d5ebbcbcdc8baf501` 이후 D1 진단 변경을 보존하며 적용했다. push·새 Actions 실행·배포는 하지 않는다.
 

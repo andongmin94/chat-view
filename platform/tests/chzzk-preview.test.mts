@@ -134,13 +134,19 @@ test('token expiry closes chat and requires reauthorization', async t => {
 test('renderer uses text nodes for malicious strings and clears on disconnect', () => {
   class Element {
     textContent = ''; dir = ''; className = ''; children: Element[] = [];
-    scrollHeight = 0; scrollTop = 0; clientHeight = 0;
+    scrollHeight = 0; scrollTop = 0; clientHeight = 0; clientWidth = 480;
+    getBoundingClientRect() { return { top: 0, bottom: this.clientHeight }; }
+    addEventListener(_name: string, _listener: () => void) {}
     set innerHTML(_value: string) { throw new Error('HTML injection'); }
     append(...elements: Element[]) { this.children.push(...elements); }
     replaceChildren(...elements: Element[]) { this.children = elements; }
   }
   const status = new Element(); const list = new Element();
-  const document = { getElementById: (id: string) =>
+  class ResizeObserver {
+    constructor(_callback: () => void) {}
+    observe(target: Element) { assert.equal(target, list); }
+  }
+  const document = { defaultView: { ResizeObserver }, getElementById: (id: string) =>
     id === 'status' ? status : id === 'messages' ? list : null,
     createElement: () => new Element() };
   renderChat(document, { state: 'subscribed', received: 1, messages: [{ nickname: '<script>', content: '<img onerror=evil()>', messageTime: 1700000000000 }] });

@@ -1,10 +1,20 @@
 # ChatView 작업 목표 체크리스트
 
-갱신: 2026-10-22 (Asia/Seoul). **이 문서가 유일한 현재 작업 목록이다.** 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다. 완료된 조사·중복 기록은 Git 이력에 남긴다.
+갱신: 2026-11-01 (Asia/Seoul). **이 문서가 유일한 현재 작업 목록이다.** 목표는 [PRODUCT.md](../PRODUCT.md), 운영은 [development-workflow.md](development-workflow.md), 책임은 [architecture.md](architecture.md), 영상 계약은 [window-video-output.md](window-video-output.md)를 따른다. 완료된 조사·중복 기록은 Git 이력에 남긴다.
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 흐름: 첫 채팅 렌더 ACK 대기 중 문서 폐기 시 같은 승인으로 복구
+## 현재 작업: HUD 크기 변경 시 최신 채팅 추적과 읽던 위치 유지 (로컬 검증 완료·원격 미반영)
+
+2026-11-01 로컬 Windows 세션에서 `OBS` HEAD `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`을 클론해 깨끗한 상태를 확인했다. 첨부 `chatview-hud-resize.patch`의 원래 기준 `d1fd6c66308c4a95cb8aca5d5ebbcbcdc8baf501` 이후 D1 진단 변경을 보존하며 적용했다. push·새 Actions 실행·배포는 하지 않는다.
+
+- **행동:** 높이 800→400 축소와 폭 변경에서도 최신 추적 의도를 유지하고, 과거 채팅을 읽으면 같은 DOM 행의 상대 위치를 보정한다. 문서별 ResizeObserver 하나가 수신·scroll보다 늦게 실행되는 경우도 처리한다. 글자 크기·대비·최신 이동은 저장 위치를 갱신하며, 기존 DOM 재사용·100개 상한·철회 시 비움·15초 수신 제한·네이티브 ACK 계약은 유지한다.
+- **이번 Node 검사:** renderer/native bridge **45/45 통과**, TypeScript **통과**. 기존 preview의 직접 renderer 검사에서 mock의 ResizeObserver API 누락으로 실패를 관측해 fixture만 보완했고, 해당 보안/본문 검사는 기대값 변경 없이 **1/1 통과**했다.
+- **이번 Windows 검사:** 기존 `native-chat-surface` 소스와 생성 문서를 MSVC **14.51 `/W4 /WX`**로 직접 빌드하고 실행해 **exit 0 통과**했다. 설치된 WebView2 **156.0.4314.50**·실제 DirectComposition 호스트 HWND **560×800→560×400**, 폭 **560→280→560**에서 최신 gap **≤2px**, 실제 줄바꿈 후 과거 기준 행 offset **≤2px**, unread **1개**·기존 DOM 행 유지와 resize ACK 증가 **0**을 확인했다. 첫 실행은 기존 fixture가 축소와 과거 이동을 같은 script에서 처리해 unread assertion에 실패했다. 축소 반영 뒤 별도 scroll을 수행하도록 순서만 수정했고 기대값·timeout·retry는 유지했다. 이는 직접 네이티브 실행이며 구성된 CTest나 전체 Windows suite 실행이 아니다.
+- **과거 첨부 증거:** Linux Chromium **144.0.7559.96**의 수정 시나리오 **10/10**, 원본 결함 재현 대조 **1건**(높이 축소 gap **400px→0px**, 과거 기준 행 이동 **0px**), 원본 renderer 대조 **39/45·신규 resize 6개 실패**는 이전 세션 결과이며 이번에 반복하지 않았다.
+- **한계·종료:** 인계된 기준 SHA의 Windows #484 **51/51·229.60초**는 이전 #482 **49/51**, #483 **50/51** 실패나 D1 간헐성을 지우지 않으며, #484에서 실패 후 deadline 관측 분기는 실행되지 않았다. 전체 51개·플랫폼 385개·실계정·게임/OBS·물리 투컴·설치/패키징·배포 qualification은 이번에 실행하지 않는다. D1/D2/D4/D6/D7 및 **10/21(47.6%)**는 유지한다. HUD 관련 검증 결과와 로컬 변경을 보존한 뒤 이 작업을 종료하며, 원격 반영은 추가 사용자 지시 전 하지 않는다.
+
+## 직전 구현 흐름: 첫 채팅 렌더 ACK 대기 중 문서 폐기 시 같은 승인으로 복구
 
 시작 `OBS` HEAD `3037e1261223a81a2d8e5e5dc7238dff9be20396`. [Windows #479/run `39722744210`](https://github.com/andongmin94/chat-view/actions/runs/39722744210)은 **CTest 48/51, 실패3·총267.12초**: `native-chat-switch remembered` 첫 빈 채팅 표시, `native-output` 느린 HTTP 중 채팅 응답, `public-ad-browser` 독립 Chromium 실행의 시간 초과. 반면 실제 `native-logout`의 첫 렌더 ACK 유실 회복은 통과했다. [CHZZK #141](https://github.com/andongmin94/chat-view/actions/runs/39722744199)은 **5/5, 네 Node 조합 각 385/385·Chromium 29/29** 성공. D1 원인은 여전히 미확정이며 두 실패의 공통 원인이라고 단정하지 않는다.
 

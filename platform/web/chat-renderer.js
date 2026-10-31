@@ -20,7 +20,7 @@ function updateJump(view) {
   if (view.unread) view.jump.textContent =
     `새 채팅 ${view.unread > 99 ? '99+' : view.unread}개 · 최신으로`;
 }
-function attachReadability(document, list) {
+function attachReadability(document, list, view) {
   const smaller = document.getElementById('chat-font-smaller');
   const larger = document.getElementById('chat-font-larger');
   const contrast = document.getElementById('chat-contrast');
@@ -56,6 +56,7 @@ function attachReadability(document, list) {
   // history; if they were already at the newest message, stay at the bottom.
   // CSS/readability is local UI only: never rebuild or re-request chat.
   const adjust = change => {
+    view.restoreViewport();
     const atLatest = nearBottom(list);
     const listTop = list.getBoundingClientRect().top;
     const anchor = atLatest ? null : [...list.children].find(row =>
@@ -65,6 +66,7 @@ function attachReadability(document, list) {
     apply(); save();
     if (atLatest) list.scrollTop = list.scrollHeight;
     else if (anchor) list.scrollTop += anchor.getBoundingClientRect().top - oldTop;
+    view.rememberViewport();
   };
   smaller.addEventListener('click', () => {
     if (fontSize > sizes[0])
@@ -82,20 +84,55 @@ function attachReadability(document, list) {
 function viewFor(document, list) {
   let view = lastRendered.get(list);
   if (view) return view;
-  view = { snapshot: null, unread: 0, jump: document.getElementById('jump-latest') };
+  // Save reading intent BEFORE layout changes. Checking nearBottom only after
+  // a HUD shrink mistakes live-follow for a deliberate scroll into history.
+  // A retained row also anchors width-driven wrapping without fighting the
+  // browser's own scroll anchoring. This state never leaves this document.
+  let viewport = null;
+  const rememberViewport = () => {
+    const top = list.getBoundingClientRect().top;
+    const atLatest = nearBottom(list);
+    const anchor = atLatest ? null : [...list.children].find(row =>
+      row.getBoundingClientRect().bottom > top);
+    viewport = {
+      width: list.clientWidth, height: list.clientHeight, atLatest, anchor,
+      offset: anchor ? anchor.getBoundingClientRect().top - top : 0,
+    };
+  };
+  const restoreViewport = () => {
+    if (!viewport || !list.clientWidth || !list.clientHeight ||
+        (viewport.width === list.clientWidth && viewport.height === list.clientHeight)) return false;
+    if (viewport.atLatest) list.scrollTop = list.scrollHeight;
+    else if (viewport.anchor && [...list.children].includes(viewport.anchor)) {
+      list.scrollTop += viewport.anchor.getBoundingClientRect().top -
+        list.getBoundingClientRect().top - viewport.offset;
+    }
+    rememberViewport();
+    return true;
+  };
+  view = { snapshot: null, unread: 0, jump: document.getElementById('jump-latest'),
+    rememberViewport, restoreViewport };
   lastRendered.set(list, view);
-  attachReadability(document, list);
+  attachReadability(document, list, view);
+  // One observer per owned document/list, not per delivery. A render or scroll
+  // may run before its callback, so both reconcile a pending resize as well.
+  const observer = new document.defaultView.ResizeObserver(restoreViewport);
+  observer.observe(list);
   if (view.jump) {
     view.jump.addEventListener('click', () => {
+      restoreViewport();
       list.scrollTop = list.scrollHeight;
       view.unread = 0;
       updateJump(view);
-    });
-    list.addEventListener('scroll', () => {
-      if (nearBottom(list)) { view.unread = 0; updateJump(view); }
+      rememberViewport();
     });
     updateJump(view);
   }
+  list.addEventListener('scroll', () => {
+    if (restoreViewport()) return; // Layout/clamping is not a new read action.
+    if (nearBottom(list)) { view.unread = 0; updateJump(view); }
+    rememberViewport();
+  });
   return view;
 }
 const sameMessage = (a, b) => a.nickname === b.nickname &&
@@ -149,6 +186,7 @@ export function renderChat(document, snapshot) {
       }))
     : [];
   const view = viewFor(document, list);
+  view.restoreViewport();
   const previous = view.snapshot;
   if (previous && previous.state === snapshot.state &&
       previous.received === snapshot.received &&
@@ -196,4 +234,5 @@ export function renderChat(document, snapshot) {
   if (wasNearBottom) list.scrollTop = list.scrollHeight;
   view.snapshot = { state: snapshot.state, received: snapshot.received, messages };
   updateJump(view);
+  view.rememberViewport();
 }

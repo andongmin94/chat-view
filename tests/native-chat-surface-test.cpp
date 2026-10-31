@@ -417,7 +417,7 @@ int main()
         // Streamer UX: when reading older text, new provider messages should
         // add a bounded unread hint without stealing the scroll position.
         // This is the real immutable WebView2 renderer, not a browser mock.
-        const auto history = [](int count, int first = 1) {
+        const auto history = [](int count, int first = 1, bool wrapped = false) {
             std::wstring json = LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"subscribed","received":)JSON";
             json += std::to_wstring(first + count - 1);
             json += LR"JSON(,"messages":[)JSON";
@@ -425,6 +425,7 @@ int main()
                 if (i) json += L",";
                 json += LR"JSON({"nickname":"검증 사용자","content":"채팅 )JSON";
                 json += std::to_wstring(first + i);
+                if (wrapped) json += L" 너비가 바뀌면 여러 줄로 표시되는 합성 채팅 메시지입니다. 읽던 행의 위치를 확인합니다.";
                 json += LR"JSON(","messageTime":)JSON";
                 json += std::to_wstring(1700000000000LL + first + i - 1);
                 json += L"}";
@@ -439,10 +440,19 @@ int main()
             const list = document.getElementById('messages');
             list.style.flex = '0 0 100px';
             list.style.height = '100px';
-            list.scrollTop = 0;
             return list.scrollHeight - list.clientHeight > 80 &&
                 document.getElementById('jump-latest').hidden;
         })())JS") == L"true", "existing messages are scrollable without a false unread hint");
+        await([&] { return evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            return list.clientHeight === 100 && list.scrollHeight - list.scrollTop - list.clientHeight <= 2;
+        })())JS") == L"true"; }, "finish viewport resize before the reader scrolls into history");
+        expect(evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            list.scrollTop = 0;
+            list.dispatchEvent(new Event('scroll'));
+            return list.scrollTop === 0 && list.scrollHeight - list.clientHeight > 80;
+        })())JS") == L"true", "reader deliberately scrolls after native layout settles");
         expect(surface.publish(history(9)), "deliver one genuinely new chat while reading history");
         await([&] { return surface.rendered_frames() == 5U &&
                             surface.rendered_messages() == 9U; }, "new native text and exact ACK");
@@ -522,9 +532,78 @@ int main()
                 list.lastElementChild.querySelector('.content').textContent === '채팅 101' &&
                 Math.abs(anchor.getBoundingClientRect().top - globalThis.rolloverTop) <= 2;
         })())JS") == L"true", "real WebView2 rolling chat retains the same visible row and unread hint");
+        // Resize the actual HWND and production composition controller. No new
+        // delivery is needed to follow latest or retain a historical row.
+        const auto resize_hud = [&](int width, int height) {
+            expect(SetWindowPos(window, nullptr, 0, 0, width, height,
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) != FALSE, "resize native HUD window");
+            host.resize();
+        };
+        resize_hud(560, 800);
+        expect(evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            list.style.removeProperty('flex');
+            list.style.removeProperty('height');
+            return true;
+        })())JS") == L"true", "restore production flexible chat viewport");
+        expect(surface.publish(history(100, 2, true)), "render wrapping text for native HUD resize");
+        await([&] { return surface.rendered_frames() == 8U; }, "wrapping native history acknowledged");
+        expect(surface.jump_to_latest(), "follow latest before native HUD resize");
+        await([&] { return evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            if (list.clientHeight < 600 || list.scrollHeight - list.scrollTop - list.clientHeight > 2)
+                return false;
+            globalThis.resizeRows = [...list.children];
+            globalThis.resizeHeight = list.clientHeight;
+            return document.getElementById('jump-latest').hidden;
+        })())JS") == L"true"; }, "latest visible in tall native HUD");
+        const auto frames_before_resize = surface.rendered_frames();
+        resize_hud(560, 400);
+        await([&] { return evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            return globalThis.resizeHeight - list.clientHeight === 400 &&
+                list.scrollHeight - list.scrollTop - list.clientHeight <= 2 &&
+                document.getElementById('jump-latest').hidden &&
+                [...list.children].every((row, i) => row === globalThis.resizeRows[i]);
+        })())JS") == L"true"; }, "800-to-400 native HUD shrink follows latest without rebuilding rows");
+        resize_hud(280, 400);
+        await([&] { return evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            return list.clientWidth < 280 && list.scrollHeight - list.scrollTop - list.clientHeight <= 2 &&
+                document.getElementById('jump-latest').hidden;
+        })())JS") == L"true"; }, "native width reflow keeps latest visible");
+        expect(surface.rendered_frames() == frames_before_resize,
+            "height and width resize send no native frame acknowledgement");
+        expect(evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            list.scrollTop = list.children[12].offsetTop - list.children[0].offsetTop + 5;
+            list.dispatchEvent(new Event('scroll'));
+            globalThis.resizeAnchor = [...list.children].find(row =>
+                row.getBoundingClientRect().bottom > list.getBoundingClientRect().top);
+            globalThis.resizeOffset = globalThis.resizeAnchor.getBoundingClientRect().top -
+                list.getBoundingClientRect().top;
+            globalThis.resizeRowHeight = globalThis.resizeAnchor.getBoundingClientRect().height;
+            return list.scrollHeight - list.scrollTop - list.clientHeight > 80;
+        })())JS") == L"true", "read historical row in narrow native HUD");
+        expect(surface.publish(history(100, 3, true)), "deliver new text while reading resized history");
+        await([&] { return surface.rendered_frames() == 9U; }, "new historical delivery acknowledged once");
+        resize_hud(560, 400);
+        await([&] { return evaluate(core.Get(), LR"JS((() => {
+            const list = document.getElementById('messages');
+            const anchor = globalThis.resizeAnchor;
+            const hint = document.getElementById('jump-latest');
+            return list.clientWidth > 400 && list.contains(anchor) &&
+                anchor.getBoundingClientRect().height < globalThis.resizeRowHeight &&
+                Math.abs(anchor.getBoundingClientRect().top - list.getBoundingClientRect().top -
+                    globalThis.resizeOffset) <= 2 && !hint.hidden &&
+                hint.textContent.includes('새 채팅 1개') &&
+                [...list.children].slice(0, -1).every((row, i) => row === globalThis.resizeRows[i + 1]);
+        })())JS") == L"true"; }, "native width reflow preserves historical row, offset, unread and DOM identity");
+        expect(surface.rendered_frames() == 9U && surface.rendered_messages() == 100U,
+            "historical resize adds no ACK or message");
         expect(surface.publish(LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"revoked","received":101,"messages":[]}})JSON"),
                "revoke clears the unread UI and private text");
-        await([&] { return surface.rendered_frames() == 8U &&
+        await([&] { return surface.rendered_frames() == 10U &&
                             surface.rendered_messages() == 0U; }, "revoked native HUD clears private text");
         expect(!surface.jump_to_latest(), "revoked local document cannot act on private chat navigation");
         expect(evaluate(core.Get(), LR"JS(

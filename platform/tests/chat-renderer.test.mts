@@ -12,6 +12,8 @@ class Element {
   dir = '';
   scrollTop = 0;
   clientHeight = 200;
+  clientWidth = 480;
+  wrappedHeight = 0;
   replaced = 0;
   added = 0;
   removed = 0;
@@ -33,7 +35,7 @@ class Element {
   fire(name: string) { this.listeners.get(name)?.(); }
   set innerHTML(_value: string) { throw new Error('HTML injection'); }
   get rowHeight() {
-    return 30 + ((Number.parseInt(this.style.fontSize || '16', 10) - 16) * 3) +
+    return 30 + this.wrappedHeight + ((Number.parseInt(this.style.fontSize || '16', 10) - 16) * 3) +
       (this.classList.contains('chat-high-contrast') ? 4 : 0);
   }
   get scrollHeight() { return this.children.length * (this.tag === 'ol' ? this.rowHeight : 30); }
@@ -69,17 +71,23 @@ function fixture(prefs = new Map<string, string>()) {
   const list = new Element('ol'), status = new Element('p'), jump = new Element('button');
   const smaller = new Element('button'), larger = new Element('button'), contrast = new Element('button');
   const controls = { 'chat-font-smaller': smaller, 'chat-font-larger': larger, 'chat-contrast': contrast };
+  const resizeCallbacks: (() => void)[] = [];
+  class ResizeObserver {
+    constructor(callback: () => void) { resizeCallbacks.push(callback); }
+    observe(target: Element) { assert.equal(target, list); }
+  }
   const document = {
     getElementById: (id: string) =>
       id === 'status' ? status : id === 'messages' ? list : id === 'jump-latest' ? jump :
       controls[id as keyof typeof controls] ?? null,
     createElement: (tag: string) => new Element(tag),
-    defaultView: { localStorage: {
+    defaultView: { ResizeObserver, localStorage: {
       getItem: (name: string) => prefs.get(name) ?? null,
       setItem: (name: string, value: string) => { prefs.set(name, value); },
     } },
   };
-  return { list, status, jump, smaller, larger, contrast, prefs, document };
+  return { list, status, jump, smaller, larger, contrast, prefs, document,
+    resizeCallbacks, resize: () => resizeCallbacks.forEach(callback => callback()) };
 }
 const message = (n: number) => ({
   nickname: 'viewer <script>', content: `채팅 ${n} 😀 <img onerror=evil()>`, messageTime: 1700000000000 + n,
@@ -347,4 +355,127 @@ test('invalid stored styling and blocked storage cannot inject CSS or affect cha
   assert.equal(smaller.disabled, true);
   renderChat(document, frame(0, [], 'revoked'));
   assert.equal(list.children.length, 0);
+});
+
+
+test('shrinking the HUD keeps live chat at the bottom before the next delivery', () => {
+  const { document, list, jump, resize, resizeCallbacks } = fixture();
+  const messages = Array.from({ length: 100 }, (_, i) => message(i + 1));
+  renderChat(document, frame(100, messages));
+  // Real browsers clamp a bottom assignment to scrollHeight - clientHeight.
+  list.scrollTop = list.scrollHeight - list.clientHeight;
+  list.fire('scroll');
+  const rows = [...list.children];
+  list.clientHeight = 80;
+  resize();
+  assert.equal(list.scrollTop, list.scrollHeight, 'resize alone follows latest, no heartbeat needed');
+  assert.equal(jump.hidden, true);
+  renderChat(document, frame(101, [...messages.slice(1), message(101)]));
+  assert.equal(jump.hidden, true, 'the next live message must not become falsely unread');
+  assert.equal(list.children[0], rows[1]);
+  assert.equal(list.replaced, 1);
+  assert.equal(resizeCallbacks.length, 1, 'one observer for this document, not one per frame');
+});
+
+test('width reflow preserves a historical row and unread count with or without browser anchoring', () => {
+  for (const browserAnchored of [false, true]) {
+    const { document, list, jump, resize } = fixture();
+    renderChat(document, frame(30, Array.from({ length: 30 }, (_, i) => message(i + 1))));
+    list.scrollTop = 305;
+    list.fire('scroll');
+    const anchor = list.children[10]!;
+    const oldTop = anchor.getBoundingClientRect().top;
+    renderChat(document, frame(31, Array.from({ length: 31 }, (_, i) => message(i + 1))));
+    list.clientWidth = 240;
+    list.wrappedHeight = 30;
+    if (browserAnchored) list.scrollTop += 300;
+    resize();
+    assert.equal(anchor.getBoundingClientRect().top, oldTop);
+    assert.equal(list.children[10], anchor);
+    assert.equal(jump.textContent, '새 채팅 1개 · 최신으로');
+    assert.equal(jump.hidden, false);
+    assert.equal(list.replaced, 1);
+  }
+});
+
+test('a heartbeat or new delivery before the resize callback preserves the old live-follow intent', () => {
+  for (const deliver of [false, true]) {
+    const { document, list, jump, resize } = fixture();
+    const messages = Array.from({ length: 30 }, (_, i) => message(i + 1));
+    renderChat(document, frame(30, messages));
+    list.scrollTop = list.scrollHeight - list.clientHeight;
+    list.fire('scroll');
+    list.clientHeight = 70;
+    renderChat(document, deliver ? frame(31, [...messages, message(31)]) : frame(30, messages));
+    assert.equal(list.scrollTop, list.scrollHeight);
+    resize();
+    assert.equal(jump.hidden, true);
+    assert.equal(list.replaced, 1);
+  }
+});
+
+test('a resize-induced scroll before observer delivery does not replace the historical anchor', () => {
+  const { document, list, resize } = fixture();
+  renderChat(document, frame(30, Array.from({ length: 30 }, (_, i) => message(i + 1))));
+  list.scrollTop = 305;
+  list.fire('scroll');
+  const anchor = list.children[10]!;
+  const oldTop = anchor.getBoundingClientRect().top;
+  list.clientWidth = 240;
+  list.wrappedHeight = 30;
+  list.fire('scroll'); // Browser layout/clamping can queue this before ResizeObserver.
+  resize();
+  assert.equal(anchor.getBoundingClientRect().top, oldTop);
+  // Subsequent user scrolling, with unchanged geometry, replaces the anchor.
+  list.scrollTop = 725;
+  list.fire('scroll');
+  const newAnchor = list.children[12]!;
+  const newTop = newAnchor.getBoundingClientRect().top;
+  list.clientWidth = 200;
+  list.wrappedHeight = 60;
+  resize();
+  assert.equal(newAnchor.getBoundingClientRect().top, newTop);
+});
+
+test('readability and latest-jump changes refresh the resize anchor without rebuilding chat', () => {
+  const { document, list, larger, jump, resize } = fixture();
+  renderChat(document, frame(30, Array.from({ length: 30 }, (_, i) => message(i + 1))));
+  list.scrollTop = 305;
+  list.fire('scroll');
+  const anchor = list.children[10]!;
+  const oldTop = anchor.getBoundingClientRect().top;
+  larger.fire('click');
+  list.clientWidth = 240;
+  list.wrappedHeight = 30;
+  resize();
+  assert.equal(anchor.getBoundingClientRect().top, oldTop);
+  jump.fire('click');
+  list.scrollTop = list.scrollHeight - list.clientHeight;
+  list.clientHeight = 70;
+  resize();
+  assert.equal(list.scrollTop, list.scrollHeight);
+  assert.equal(jump.hidden, true);
+  assert.equal(list.replaced, 1);
+});
+
+test('resize after revoke cannot restore old private rows and a new empty subscription stays empty', () => {
+  const { document, list, jump, resize } = fixture();
+  renderChat(document, frame(30, Array.from({ length: 30 }, (_, i) => message(i + 1))));
+  list.scrollTop = 305;
+  list.fire('scroll');
+  const old = list.children[10]!;
+  renderChat(document, frame(30, [], 'revoked'));
+  list.clientWidth = 240;
+  resize();
+  assert.equal(list.children.length, 0);
+  assert.equal(old.parent, null);
+  assert.equal(jump.hidden, true);
+  renderChat(document, frame(0, []));
+  list.clientHeight = 80;
+  resize();
+  assert.equal(list.children.length, 0);
+  renderChat(document, frame(1, [message(31)]));
+  assert.equal(list.children.length, 1);
+  assert.notEqual(list.children[0], old);
+  assert.equal(jump.hidden, true);
 });

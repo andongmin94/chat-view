@@ -9,7 +9,8 @@ const snapshot = { state: 'subscribed', received: 1, messages: [message] };
 const envelope = { type: 'chat-snapshot', version: 1, frameId: '1', snapshot };
 class Element {
   textContent = ''; dir = ''; className = ''; children: Element[] = [];
-  scrollHeight = 0; scrollTop = 0; clientHeight = 0;
+  scrollHeight = 0; scrollTop = 0; clientHeight = 0; clientWidth = 480;
+  getBoundingClientRect() { return { top: 0, bottom: this.clientHeight }; }
   hidden = true;
   private readonly listeners = new Map<string, () => void>();
   addEventListener(name: string, fn: () => void) { this.listeners.set(name, fn); }
@@ -21,7 +22,12 @@ class Element {
 }
 function fixture() {
   const status = new Element(); const list = new Element(); const jump = new Element();
-  const document = { getElementById: (id: string) =>
+  let resized = () => {};
+  class ResizeObserver {
+    constructor(callback: () => void) { resized = callback; }
+    observe(target: Element) { assert.equal(target, list); }
+  }
+  const document = { defaultView: { ResizeObserver }, getElementById: (id: string) =>
     id === 'status' ? status : id === 'messages' ? list : id === 'jump-latest' ? jump : null,
     createElement: () => new Element() };
   let listener: (event: any) => void = () => {};
@@ -32,7 +38,7 @@ function fixture() {
   };
   const clock = { performance: { now: () => now }, setInterval(callback: () => void) { watchdog = callback; return 1; }, clearInterval() { watchdog = () => {}; } };
   const close = connectNativeChat(document, bridge, renderChat, 'test-nonce', clock as any);
-  return { status, list, jump, sent, close, emit(data: unknown, trusted = true, source: unknown = bridge) { listener({ data, isTrusted: trusted, source }); }, tick(ms: number) { now += ms; watchdog(); } };
+  return { status, list, jump, sent, close, resize: () => resized(), emit(data: unknown, trusted = true, source: unknown = bridge) { listener({ data, isTrusted: trusted, source }); }, tick(ms: number) { now += ms; watchdog(); } };
 }
 test('native bridge displays text through the same renderer and sends counts, never private content', () => {
   const f = fixture(); assert.deepEqual(f.sent, ['chat-ready:test-nonce']); f.emit(envelope);
@@ -54,8 +60,9 @@ test('locked HUD latest shortcut scrolls local chat without new frame, authentic
   f.emit({ type: 'chat-jump-latest' });
   assert.equal(f.list.children.length, 0, 'no private feed before approval');
   assert.deepEqual(f.sent, ['chat-ready:test-nonce']);
+  f.list.scrollHeight = 500; f.list.clientHeight = 100;
   f.emit(envelope);
-  f.list.scrollHeight = 500; f.list.clientHeight = 100; f.list.scrollTop = 0;
+  f.list.scrollTop = 0; f.list.fire('scroll');
   f.emit({ ...envelope, frameId: '2', snapshot: {
     state: 'subscribed', received: 2, messages: [{ ...message, content: 'new message' }],
   } });
@@ -192,4 +199,25 @@ test('all lifecycle states clear content except subscribed', () => {
   for (const state of ['idle', 'connecting', 'subscribing', 'disconnected', 'revoked', 'unsubscribed', 'error', 'stopped']) {
     assert.deepEqual(nativeChatSnapshot({ state, received: 1, messages: [message] }).messages, []);
   }
+});
+
+
+test('HUD resize is local presentation, not a new native ACK or extension of chat liveness', () => {
+  const f = fixture();
+  f.list.scrollHeight = 500; f.list.clientHeight = 200;
+  f.emit(envelope);
+  f.list.scrollTop = 300; f.list.fire('scroll');
+  const sent = [...f.sent];
+  f.tick(14_000);
+  f.list.clientHeight = 80;
+  f.resize();
+  assert.equal(f.list.scrollTop, 500, 'follow live chat without another native delivery');
+  assert.deepEqual(f.sent, sent, 'resize does not acknowledge a frame or send private text');
+  f.tick(1001);
+  assert.equal(f.list.children.length, 0, 'the original feed deadline is not extended');
+  f.list.clientWidth = 240;
+  f.resize();
+  assert.equal(f.list.children.length, 0, 'resizing an expired feed cannot reauthorize chat');
+  assert.deepEqual(f.sent, sent);
+  f.close();
 });

@@ -4,14 +4,14 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 작업: 게임 PC 설치와 서버 시험 HP·포인트 (로컬 완료·원격 미반영)
+## 현재 작업: D1 게시 전 준비 단계 대조와 늦은 문서 응답 순서 (로컬 검증 완료·Actions 없이 반영)
 
-2026-11-01 `OBS` 기준 `398221b95a0fa0812eac34e434e52a82fbc93b60`, 원격 OBS `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`. 사용자가 미정 개발 규칙의 설계를 위임했고, 실계정 CHZZK 앱·물리 투컴/캡처카드는 아직 준비되지 않았다고 확인했다.
+2026-11-01 `OBS` HEAD `ec144f8`의 깨끗한 상태에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일했다. 사용자는 이번 조사 후 **Actions 없이 OBS push까지** 승인했으며 실계정·물리 투컴 검증은 현재 수행할 수 없다고 확인했다.
 
-- **게임 PC 흐름:** 로컬 커밋 `54575ebec36a53cc67fb30121abf4e1c8338af33`에 기존 스크립트의 `-Companion` 사용자별 설치·고정 실행·업데이트·제거를 보존했다. 기존 OBS32.2.2/manifest/WebView2/privacy gate는 유지한다. 실제 임시 설치7.88초·업데이트7.76초(필수 HUD preflight 포함), 기존 companion-launch, 활성 프로세스 거부2·비소유 폴더 보존4·manifest5·정상 종료/제거를 검증했다. DPI192 calibration·generic 파일 소유권·self-delete batch 실패와 최소 수정은 해당 커밋에 기록했다. 시스템 설치·배포가 아니다.
-- **HP·시험 보상:** [제품의 시험 정책](../PRODUCT.md)에 따라 기존 accepted report의 새 유효 추정 구간만 동일 SQLite transaction에서 creator/소재별 잔액과 포인트로 기록한다. 소수 진행·상한·중복 방지·중지/재선택/철회/재시작 보존·과거 소급 금지를 구현했다. 소재 선택/활동 화면에서 잔액·다음 진행·최근7일 포인트를 본다. HP0은 추가 시험 적립만 중단하며 배너는 자동 변경하지 않는다. 실제 광고 실측/현금/지급 필드와 기존 CSV는 미산정으로 유지한다.
-- **이번 검증:** 집중 Node **46개 각각 통과**. rollback fixture의 clock 이동 전 snapshot 비교 실패1건은 같은 시점 snapshot으로 고친 뒤 해당1개만 재검증했다. TypeScript·Python 구문·diff 검사 통과. 기존 inherited-stdio browser fixture에 명시적 trial preview만 확장해 실제 공식 API adapter의 합성 표본→열린 송출 승인→HTTP 연속 보고→**99 HP·1포인트·보상1건**을 확인했다. Chromium1000/390px에서 선택/활동 페이지·로컬 글꼴·가로 넘침을 확인하고 문구 중복/모바일 단위 줄바꿈을 수정한 해당 영역만 재확인했다. 기존 Python3.14가 사라져 `.ci` 브라우저 환경만 설치된3.15로 맞췄으며 제품 의존성은 바꾸지 않았다.
-- **D1/남은 한계:** 기존 `companion-chat-early-first`만 RelWithDebInfo·Node24.22.1·WebView2 155.0.4283.62에서 **1회4.08초 통과**. 별도 첫 텍스트 도착 순서의 결과이며 실패 readiness 분기는 미실행, D1 원인 미확정이다. 이미 통과한 UI3개/같은 D1 조합·전체51/385·Actions·push·출시 qualification은 반복하지 않았다. 실계정/실제 OBS·물리 투컴, D1/D2/D4/D6/D7 및 유료 운영·현금 지급은 미완료다.
+- **#483에서 확정된 범위:** 원시 로그는 `metadata=1 pending_frame=1 pending_subscribed=1 awaiting_render=0 frames=0 native_ready=0 surface_discarded=0 recovery_attempted=1 loading_remaining_ms=1062`다. 첫 게시/ACK 이전의 문서 준비 대기이며 제품 준비 기한이 1.062초 남아 있었다. fixture15초는 연결 버튼부터 승인/poll을 포함하고 제품 준비15초는 승인 수신부터이므로 제품 timeout 발생으로 단정하지 않는다. 당시 로그에는 navigation/nonce/source 세부값·CI DPI/해상도/GPU가 없어 정확한 정지점은 미확정이다.
+- **새 조건 1개:** 기존 `native-chat-surface`에서 실제 A DOCUMENT 요청을 deferral로 보류해 attached/navigation=1·nonce=0을 확인하고, 같은 surface의 기존 close/blank/open으로 새 URL C를 예약한 뒤 늦은 A 응답을 완료시켰다. C의 attached/navigation/nonce/source 네 조건과 실제 첫 텍스트 ACK를 엄격히 검사한다. 이는 이미 탐색이 시작된 A의 늦은 resource 완료 순서를 고정하며, old NavigationStarting 자체 지연이나 CI #483을 재현했다고 확대하지 않는다.
+- **실행 결과:** RelWithDebInfo `/W4 /WX` 빌드와 해당 CTest **1회3.28초 통과**(총3.31초), 원래 await15초·CTest90초·retry/복구 그대로다. 늦은 이전 resource 완료가 새 문서를 죽이는 후보는 미재현이다. 같은 reapproval/redraw/early-first·기존 UI/설치/플랫폼 검사·전체51/385를 반복하지 않았다. 재현된 제품 결함이 없어 제품 코드는 수정하지 않았고 회귀1개와 이 상태만 보존한다.
+- **추가 대조/반영:** CI 선행 return→early-first→revocation→reapproval→redraw는 각 프로세스의 고유 profile을 사용해 단순 profile 이월 근거가 없다. 최초 대기는 계속 UI 메시지를 pump하며 blocking pipe read는 첫 ACK 이후라 이번 최초 실패 원인으로 볼 근거가 없다. 최종 커밋의 `[skip actions]`로 기존 push/PR workflow를 건너뛰고 OBS만 일반 fast-forward push한다. 실제 원격 SHA·해당 커밋 Actions 실행0 확인은 push 후 수행하며, 인증/보안 설정·workflow·main·태그·배포는 변경하지 않는다. 기존 설치 `54575eb`, 시험 HP·포인트 `ec144f8`와 앞선 로컬 수정은 그대로 포함한다.
 
 ## 직전 완료 작업: HUD 크기 변경 시 최신 채팅 추적과 읽던 위치 유지 (로컬 검증 완료·원격 미반영)
 
@@ -622,8 +622,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-현재 사용자는 치지직 등록 앱과 실제 투컴·캡처카드가 미준비다. 준비되면 등록 앱/채널로 OAuth→역할 승인→게임 PC OBS 없는 companion과 송출 PC 자체 HUD의 첫 텍스트→장시간 수신→단절·복귀→권한 철회를 확인한다. 비밀키·제공자 토큰·개인 채팅을 저장소/검사 로그에 남기지 않는다. 공식 시청자 표본 수집은 기존대로 기본 비활성이고, 운영자의 이용 조건·권한·할당량 확인 뒤에만 활성화한다. 시험 포인트를 실제 광고 주목·현금 지급으로 환산하지 않는다.
+D1은 원인 미확정이다. 같은 환경·같은 검사를 성공할 때까지 반복하지 않는다. 새 자연 실패 또는 관측으로 정당화된 조건이 생기면 기존 navigation/nonce/source 준비 플래그와 최초 실패 후 원래 제품 deadline 관측의 `late-empty-ack` / `connection-ended` / `existing-deadline-reached`로 게시 전 지연과 ACK 대기를 구분한다. 기한·retry·기대값은 유지한다.
 
-물리 영상은 [별도 출력 계약](window-video-output.md)에 따라 같은 제목의 게임 창 식별→별도 확장 SDR 출력→수신 PC 확인→긴급 검정/재확인·재개→정상 종료를 확인하고, 로컬 HUD가 읽히면서 실제 송출 PC 녹화에는 없는지 검증한다. HDMI 복제나 HUD 숨김을 투컴 지원 완료로 대체하지 않는다.
-
-사용자용 배포 전 전체 native/반복5회·자원·공식 OBS/capture·설치·manifest/의존성 qualification이 필요하다. 현재 사용자 제한인 전체 검사 반복·Actions·push 금지를 유지하며 검증 전 배포물을 내지 않는다. main·강제 push·자동 장면 변경·게임 PC OBS·비밀값 기록은 사용하지 않는다.
+실계정 치지직·물리 투컴은 사용자 확인에 따라 현재 검증 대상에서 제외하며 지원 완료로 표시하지 않는다. 공식 시청자 표본 수집은 기본 비활성이고 시험 포인트는 실제 광고 주목·현금 지급이 아니다. 원컴/투컴 수용·유료 운영·전체 native/반복5회·자원·공식 OBS/capture·설치·manifest/의존성 qualification은 해당 지원/배포 주장 전에 여전히 필요하다. main·강제 push·자동 장면 변경·게임 PC OBS·비밀값 기록·미검증 배포는 사용하지 않는다.

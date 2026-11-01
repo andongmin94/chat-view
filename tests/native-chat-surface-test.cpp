@@ -671,6 +671,75 @@ int main()
         expect(!surface.ready() && !surface.publish(kMessage) && !surface.jump_to_latest(),
             "stopped chat cannot reuse the retired source or local keyboard navigation");
 
+        // Hold a real owned DOCUMENT response after NavigationStarting, then
+        // replace it before allowing that older resource request to complete.
+        // This fixes the event order instead of queuing more unpumped loads.
+        {
+            struct PendingDocument {
+                ComPtr<ICoreWebView2Deferral> deferral;
+                HRESULT status = E_PENDING;
+                bool observed = false;
+            };
+            const auto pending = std::make_shared<PendingDocument>();
+            EventRegistrationToken resource_token{};
+            expect(SUCCEEDED(core->add_WebResourceRequested(
+                Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+                    [pending, &host](ICoreWebView2 *, ICoreWebView2WebResourceRequestedEventArgs *args) -> HRESULT {
+                        COREWEBVIEW2_WEB_RESOURCE_CONTEXT context{};
+                        if (pending->observed || FAILED(args->get_ResourceContext(&context)) ||
+                            context != COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT) return S_OK;
+                        ComPtr<ICoreWebView2WebResourceRequest> request;
+                        if (FAILED(args->get_Request(&request)) || !request) return S_OK;
+                        LPWSTR uri = nullptr;
+                        const bool own = SUCCEEDED(request->get_Uri(&uri)) && uri &&
+                            chatview::WebViewHostTestAccess::local_document(host) == uri;
+                        CoTaskMemFree(uri);
+                        if (own) {
+                            pending->status = args->GetDeferral(&pending->deferral);
+                            pending->observed = true;
+                        }
+                        return S_OK;
+                    }).Get(), &resource_token)), "observe the first owned document resource request");
+            const char *phase = "hold-first-request";
+            try {
+                expect(surface.open(host), "open owned document A for a deferred actual response");
+                await([&] { return pending->observed; }, "owned document A reaches its actual resource request");
+                expect(SUCCEEDED(pending->status) && pending->deferral,
+                    "hold the actual owned document A resource response");
+                const auto held = chatview::NativeChatSurfaceTestAccess::readiness(surface);
+                expect(held.attached && held.navigation_started && !held.nonce_handshake,
+                    "held document A has navigation authority without a parser nonce handshake");
+                const std::wstring delayed_url = chatview::WebViewHostTestAccess::local_document(host);
+                phase = "replace-document";
+                expect(surface.open(host), "the existing close and open reserve a new owned document C");
+                expect(chatview::WebViewHostTestAccess::local_document(host) != delayed_url,
+                    "replacement document C has a fresh owned URL before A completes");
+                const HRESULT completed = pending->deferral->Complete();
+                pending->deferral.Reset();
+                expect(SUCCEEDED(completed), "complete older document A after C is reserved");
+                phase = "replacement-ready";
+                await([&] { return surface.ready(); }, "document C survives the older resource completion");
+                const auto current = chatview::NativeChatSurfaceTestAccess::readiness(surface);
+                expect(current.attached && current.navigation_started && current.nonce_handshake && current.source_matches,
+                    "replacement document C satisfies all four actual readiness conditions");
+                phase = "replacement-render";
+                expect(surface.publish(kMessage), "publish the first real frame to replacement document C");
+                await([&] { return surface.rendered_frames() == 1U && surface.rendered_messages() == 1U; },
+                    "replacement document C acknowledges its own actual first text");
+            } catch (...) {
+                const auto evidence = chatview::NativeChatSurfaceTestAccess::readiness(surface);
+                std::cerr << "Native resource overlap phase=" << phase << " attached=" << evidence.attached
+                    << " navigation_started=" << evidence.navigation_started
+                    << " nonce_handshake=" << evidence.nonce_handshake
+                    << " source_matches=" << evidence.source_matches << '\n';
+                core->remove_WebResourceRequested(resource_token);
+                if (pending->deferral) pending->deferral->Complete();
+                throw;
+            }
+            core->remove_WebResourceRequested(resource_token);
+            std::cout << "Native owned document resource overlap passed\n";
+        }
+
         // A same-URL reload is outside this receiver's one NavigationId.
         // It discards the receiver even though the host STILL owns that exact
         // private URL. Stop must replace its potentially visible old chat,

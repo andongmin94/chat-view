@@ -4,14 +4,15 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 작업: D1 게시 전 준비 단계 대조와 늦은 문서 응답 순서 (로컬 검증 완료·Actions 없이 반영)
+## 현재 작업: D1 실패 후 남은 기한의 지연 ACK/미준비 관측 (로컬 검증 완료·Actions 없이 반영)
 
-2026-11-01 `OBS` HEAD `ec144f8`의 깨끗한 상태에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일했다. 사용자는 이번 조사 후 **Actions 없이 OBS push까지** 승인했으며 실계정·물리 투컴 검증은 현재 수행할 수 없다고 확인했다.
+2026-11-01 `OBS` HEAD `ad1948bbad3f103535efd50731ce2187e67fcb9e`의 깨끗한 상태에서 시작했고 원격도 같았다. 사용자는 같은 검사 반복·timeout/retry 증가·전체 검사·Actions 없이 조사 후 OBS push를 요청했다. 실계정·물리 투컴은 현재 검증 대상이 아니다.
 
-- **#483에서 확정된 범위:** 원시 로그는 `metadata=1 pending_frame=1 pending_subscribed=1 awaiting_render=0 frames=0 native_ready=0 surface_discarded=0 recovery_attempted=1 loading_remaining_ms=1062`다. 첫 게시/ACK 이전의 문서 준비 대기이며 제품 준비 기한이 1.062초 남아 있었다. fixture15초는 연결 버튼부터 승인/poll을 포함하고 제품 준비15초는 승인 수신부터이므로 제품 timeout 발생으로 단정하지 않는다. 당시 로그에는 navigation/nonce/source 세부값·CI DPI/해상도/GPU가 없어 정확한 정지점은 미확정이다.
-- **새 조건 1개:** 기존 `native-chat-surface`에서 실제 A DOCUMENT 요청을 deferral로 보류해 attached/navigation=1·nonce=0을 확인하고, 같은 surface의 기존 close/blank/open으로 새 URL C를 예약한 뒤 늦은 A 응답을 완료시켰다. C의 attached/navigation/nonce/source 네 조건과 실제 첫 텍스트 ACK를 엄격히 검사한다. 이는 이미 탐색이 시작된 A의 늦은 resource 완료 순서를 고정하며, old NavigationStarting 자체 지연이나 CI #483을 재현했다고 확대하지 않는다.
-- **실행 결과:** RelWithDebInfo `/W4 /WX` 빌드와 해당 CTest **1회3.28초 통과**(총3.31초), 원래 await15초·CTest90초·retry/복구 그대로다. 늦은 이전 resource 완료가 새 문서를 죽이는 후보는 미재현이다. 같은 reapproval/redraw/early-first·기존 UI/설치/플랫폼 검사·전체51/385를 반복하지 않았다. 재현된 제품 결함이 없어 제품 코드는 수정하지 않았고 회귀1개와 이 상태만 보존한다.
-- **추가 대조/반영:** CI 선행 return→early-first→revocation→reapproval→redraw는 각 프로세스의 고유 profile을 사용해 단순 profile 이월 근거가 없다. 최초 대기는 계속 UI 메시지를 pump하며 blocking pipe read는 첫 ACK 이후라 이번 최초 실패 원인으로 볼 근거가 없다. 최종 커밋의 `[skip actions]`로 기존 push/PR workflow를 건너뛰고 OBS만 일반 fast-forward push한다. 실제 원격 SHA·해당 커밋 Actions 실행0 확인은 push 후 수행하며, 인증/보안 설정·workflow·main·태그·배포는 변경하지 않는다. 기존 설치 `54575eb`, 시험 HP·포인트 `ec144f8`와 앞선 로컬 수정은 그대로 포함한다.
+- **관측 분기 수정:** 기존 분기는 첫 15초 실패 후 게시가 시작되면 새 render15초를 관측 상한으로 채택했다. 실패 순간의 원래 제품 deadline을 const로 고정해 관측을 연장하지 않고, render 잔여는 별도 출력한다. ACK는 pulse 직후 추가 sleep 전에 관측 시각을 잡아 고정 기한 미만일 때만 지연 ACK로 분류한다. 원래 15초 assertion·예외 재throw·native exit1과 제품 timeout/retry는 그대로다.
+- **새 조건 2개만 실행:** 기존 C++/Node fixture의 명시적 `observe-late-ready`·`observe-never-ready` 모드에서 실제 A DOCUMENT 응답을 보류하고, 제품의 기존1회 복구가 C를 예약한 뒤 A를 완료한다. 승인3초 지연은 두 모드의 주입 입력이고 기한 증가는 아니다. 원래 첫15초 실패 시점까지 C를 보류하며, 한 모드만 그 직후 해제한다. 새 controller/서버/재시도 없이 기존 도구를 쓰며 영구 CTest/routine에는 추가하지 않았다.
+- **실측:** 응답 해제 조건은 남은 **4063ms 중157ms** 뒤 attached/navigation/nonce/source=1·빈 ACK1개를 관측했다. 계속 보류 조건은 **4063ms 도달**, C 보류·attached/navigation=1·nonce/source=0·ACK0·active1, `existing-deadline-reached`였다. 이는 해당 기한 내 미준비이지 제품 종료·영구 불능 판정이 아니다. 둘 다 원래 `subscribed empty own DOM` 실패와 child exit1을 유지하고, wrapper만 고정 진단·후속 정상 phase 없음·부모45초 강제 종료 아님·원래 기한/ACK 사실을 검증했다.
+- **검증/범위:** 실제 Windows/WebView2 155.0.4283.62·Node24.22.1·RelWithDebInfo `/W4 /WX`에서 두 조건 각각1회, 분류 회귀2개 통과. 최신 wrapper 구문·diff 검사와 독립 읽기 리뷰 통과. 경계는 `< deadline`/`< budget`으로 맞췄고 기존 지연 ACK 기록157<4063도 확인했으며 native를 재실행하지 않았다. 기존 redraw/reapproval/early-first·전체51/385·실계정/투컴·Actions·배포는 미실행이다.
+- **남은 D1/반영:** 이것은 조건을 통제한 관측 분기 검증이며 자연 간헐 실패 재현이 아니다. #483은 첫 게시 전 준비 대기·loading잔여1062ms였으나 이후 기록이 없어 어느 결과였는지 소급 확정할 수 없다. 재현된 제품 결함이 없어 제품 코드는 수정하지 않았다. 최종 커밋의 `[skip actions]`로 OBS만 일반 fast-forward push하고 실제 원격 SHA·해당 커밋 Actions0은 push 후 확인한다. workflow·main·태그·인증/보안 설정은 바꾸지 않는다.
 
 ## 직전 완료 작업: HUD 크기 변경 시 최신 채팅 추적과 읽던 위치 유지 (로컬 검증 완료·원격 미반영)
 
@@ -622,6 +623,6 @@ D3·D5는 좁은 범위에서 종료했다. #366 빌드 성공37/40·150.33초, 
 
 ## 다음 사용자 흐름
 
-D1은 원인 미확정이다. 같은 환경·같은 검사를 성공할 때까지 반복하지 않는다. 새 자연 실패 또는 관측으로 정당화된 조건이 생기면 기존 navigation/nonce/source 준비 플래그와 최초 실패 후 원래 제품 deadline 관측의 `late-empty-ack` / `connection-ended` / `existing-deadline-reached`로 게시 전 지연과 ACK 대기를 구분한다. 기한·retry·기대값은 유지한다.
+D1은 원인 미확정이다. 같은 환경·같은 검사를 반복하지 않는다. 새 자연 실패 또는 관측으로 정당화된 조건이 생기면 현재 navigation/nonce/source 플래그, loading/render 잔여와 첫 실패 순간 고정 기한의 `late-empty-ack` / `connection-ended` / `existing-deadline-reached`로 후속 상태를 확인한다. `connection-ended`는 종료 원인을 확정하지 않으며, `existing-deadline-reached`도 영구 불능을 뜻하지 않는다. 원래 실패는 늦은 ACK가 와도 실패로 보존한다.
 
-실계정 치지직·물리 투컴은 사용자 확인에 따라 현재 검증 대상에서 제외하며 지원 완료로 표시하지 않는다. 공식 시청자 표본 수집은 기본 비활성이고 시험 포인트는 실제 광고 주목·현금 지급이 아니다. 원컴/투컴 수용·유료 운영·전체 native/반복5회·자원·공식 OBS/capture·설치·manifest/의존성 qualification은 해당 지원/배포 주장 전에 여전히 필요하다. main·강제 push·자동 장면 변경·게임 PC OBS·비밀값 기록·미검증 배포는 사용하지 않는다.
+실계정 치지직·물리 투컴은 사용자 요청에 따라 현재 수행하지 않으며 지원 완료로 표시하지 않는다. 시험 포인트는 실제 광고 주목·현금 지급이 아니다. 원컴/투컴 수용·유료 운영·전체 native/반복5회·자원·공식 OBS/capture·설치·manifest/의존성 qualification은 해당 지원/배포 주장 전에 여전히 필요하다. main·강제 push·자동 장면 변경·게임 PC OBS·비밀값 기록·미검증 배포는 사용하지 않는다.

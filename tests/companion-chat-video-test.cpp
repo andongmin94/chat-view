@@ -29,6 +29,7 @@ struct NativeChatConnectionTestAccess {
     static bool retry_pending(NativeChatConnection &c) { return c.retry_first_display_pending_; }
     static bool active(NativeChatConnection &c) { return c.active_; }
     static bool awaiting_render(NativeChatConnection &c) { return c.awaiting_frame_ != 0U; }
+    static bool document_recovery_attempted(NativeChatConnection &c) { return c.first_document_recovery_attempted_; }
     static ULONGLONG first_display_deadline(NativeChatConnection &c) {
         return c.awaiting_frame_ ? c.render_deadline_ : c.loading_deadline_;
     }
@@ -36,6 +37,7 @@ struct NativeChatConnectionTestAccess {
         // Failure-only bounded phase flags: no URL, verifier, token or chat.
         const auto now = GetTickCount64();
         const auto loading_remaining = c.loading_deadline_ > now ? c.loading_deadline_ - now : 0U;
+        const auto render_remaining = c.render_deadline_ > now ? c.render_deadline_ - now : 0U;
         const auto surface = NativeChatSurfaceTestAccess::readiness(c.surface_);
         std::cerr << "Companion first chat phase: active=" << c.active_
             << " worker=" << c.client_.running() << " awaiting_login=" << c.awaiting_login_
@@ -55,7 +57,8 @@ struct NativeChatConnectionTestAccess {
             << " pending_subscribed=" << c.pending_subscribed_
             << " recovery_attempted=" << c.first_document_recovery_attempted_
             << " reconnecting=" << c.reconnecting_
-            << " loading_remaining_ms=" << loading_remaining << '\n';
+            << " loading_remaining_ms=" << loading_remaining
+            << " render_remaining_ms=" << render_remaining << '\n';
     }
 };
 struct VideoOutputPanelTestAccess {
@@ -307,6 +310,9 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
 {
     const bool revoked = mode == L"revoked" || mode == L"reapproved";
     const bool redraw = mode == L"redraw";
+    const bool observe_late = mode == L"observe-late-ready";
+    const bool observe_never = mode == L"observe-never-ready";
+    const bool observation = observe_late || observe_never;
     const bool reapprove_after_redraw = mode == L"redraw-reapproved-live" ||
         mode == L"redraw-reapproved-black";
     const bool revoke_during_redraw = reapprove_after_redraw ||
@@ -395,6 +401,53 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
         "new chat status fits inside the existing panel");
     SetDlgItemTextW(dialog, 101, origin.c_str()); SendDlgItemMessageW(dialog, 103, BM_SETCHECK, BST_CHECKED, 0);
     command(dialog, 104);
+    // Negative modes hold only actual owned DOCUMENT responses. The native
+    // one-time recovery still opens C; this fixture never opens a replacement.
+    struct DeferredDocuments {
+        struct State {
+            Microsoft::WRL::ComPtr<ICoreWebView2Deferral> held[2];
+            unsigned count = 0U;
+            unsigned released = 0U;
+            HRESULT status = S_OK;
+        };
+        Microsoft::WRL::ComPtr<ICoreWebView2> core;
+        EventRegistrationToken token{};
+        std::shared_ptr<State> state = std::make_shared<State>();
+        bool complete(unsigned index) noexcept {
+            if (!state->held[index]) return false;
+            const HRESULT result = state->held[index]->Complete();
+            state->held[index].Reset();
+            if (FAILED(result)) { state->status = result; return false; }
+            ++state->released; return true;
+        }
+        ~DeferredDocuments() {
+            if (core && token.value) core->remove_WebResourceRequested(token);
+            for (auto &held : state->held) if (held) held->Complete();
+        }
+    };
+    std::unique_ptr<DeferredDocuments> deferred;
+    if (observation) {
+        deferred = std::make_unique<DeferredDocuments>();
+        deferred->core = chatview::NativeChatSurfaceTestAccess::core(Chat::surface(chat));
+        expect(deferred->core != nullptr, "observation has the actual prewarmed WebView2");
+        const auto held = deferred->state;
+        expect(SUCCEEDED(deferred->core->add_WebResourceRequested(
+            Microsoft::WRL::Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+                [held, &chat](ICoreWebView2 *, ICoreWebView2WebResourceRequestedEventArgs *args) -> HRESULT {
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT context{};
+                    if (held->count == 2U || FAILED(args->get_ResourceContext(&context)) ||
+                        context != COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT) return S_OK;
+                    Microsoft::WRL::ComPtr<ICoreWebView2WebResourceResponse> response;
+                    int status = 0;
+                    if (FAILED(args->get_Response(&response)) || !response ||
+                        FAILED(response->get_StatusCode(&status)) || status != 200) return S_OK;
+                    const auto current = chatview::NativeChatSurfaceTestAccess::readiness(Chat::surface(chat));
+                    if (!current.attached || !current.navigation_started) return S_OK;
+                    held->status = args->GetDeferral(&held->held[held->count]);
+                    if (SUCCEEDED(held->status)) ++held->count;
+                    return S_OK;
+                }).Get(), &deferred->token)), "defer actual first and native recovery document responses");
+    }
     if (mode == L"early-first") {
         // The synthetic provider sends the first real text during browser
         // collection, BEFORE the native lease and private WebView2 document
@@ -544,38 +597,73 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
         return;
     }
     try {
-        flow.wait([&] { return Chat::surface(chat).rendered_frames() >= 1 && Chat::membership(chat).has_value(); },
+        flow.wait([&] {
+            if (deferred && Chat::document_recovery_attempted(chat) && deferred->state->held[0])
+                expect(deferred->complete(0U), "release document A after the existing recovery reserves C");
+            return Chat::surface(chat).rendered_frames() >= 1 && Chat::membership(chat).has_value();
+        },
             "subscribed empty own DOM");
+        expect(!observation, "controlled document deferrals must preserve the original empty-DOM failure");
     } catch (const std::runtime_error &failure) {
-        const bool observe = mode == L"redraw" &&
+        const auto deadline = Chat::first_display_deadline(chat);
+        const auto began = GetTickCount64();
+        const auto budget = deadline > began ? deadline - began : 0U;
+        const bool observe = (redraw || observation) &&
             std::string_view(failure.what()) == "subscribed empty own DOM";
         if (observe) std::cerr << "Companion first chat observation: original-failure\n";
         Chat::first_display_evidence(chat);
         if (observe) {
             try {
+                if (deferred) {
+                    expect(SUCCEEDED(deferred->state->status) && deferred->state->count == 2U &&
+                        deferred->state->released == 1U && deferred->state->held[1] && budget > 0U &&
+                        Chat::active(chat) && !Chat::awaiting_render(chat),
+                        "both actual documents are held and the original loading budget still remains");
+                    if (observe_late)
+                        expect(deferred->complete(1U), "release C only after the original empty-DOM failure");
+                }
                 bool observing_ack = Chat::awaiting_render(chat);
-                auto deadline = Chat::first_display_deadline(chat);
-                const auto empty_received = [&] {
-                    return Chat::surface(chat).rendered_frames() >= 1 && Chat::membership(chat).has_value();
+                bool empty_observed = false;
+                ULONGLONG empty_observed_at = 0U;
+                const auto observe_empty = [&] {
+                    if (!empty_observed && Chat::surface(chat).rendered_frames() >= 1 && Chat::membership(chat).has_value()) {
+                        empty_observed_at = GetTickCount64(); empty_observed = true;
+                    }
                 };
                 // The test has already failed. Only pump the existing product
-                // deadlines; a late ACK must never resume the redraw scenario.
-                while (Chat::active(chat) && !empty_received() && GetTickCount64() < deadline) {
+                // deadline captured at that failure. Publishing cannot extend
+                // observation into the new render budget or resume the flow.
+                observe_empty();
+                while (Chat::active(chat) && !empty_observed && GetTickCount64() < deadline) {
                     flow.pulse();
+                    observe_empty();
+                    if (empty_observed) break; // Timestamp the observed ACK before any extra sleep.
                     if (!observing_ack && Chat::awaiting_render(chat)) {
-                        // Capture the first product ACK deadline once. Recovery
-                        // or later frames cannot keep extending this observation.
                         observing_ack = true;
-                        deadline = Chat::first_display_deadline(chat);
                         std::cerr << "Companion first chat observation: ack-wait\n";
                         Chat::first_display_evidence(chat);
                     }
                     Sleep(10);
                 }
+                const auto observed_at = empty_observed ? empty_observed_at : GetTickCount64();
+                const bool late_within = empty_observed && empty_observed_at < deadline;
                 std::cerr << "Companion first chat observation: "
-                    << (empty_received() ? "late-empty-ack" : !Chat::active(chat)
+                    << (late_within ? "late-empty-ack" : !Chat::active(chat)
                         ? "connection-ended" : "existing-deadline-reached") << '\n';
                 Chat::first_display_evidence(chat);
+                if (deferred) {
+                    const auto current = chatview::NativeChatSurfaceTestAccess::readiness(Chat::surface(chat));
+                    std::cerr << "Companion first chat observation check: budget_ms=" << budget
+                        << " elapsed_ms=" << observed_at - began
+                        << " held=" << deferred->state->count << " released=" << deferred->state->released
+                        << " current_held=" << static_cast<bool>(deferred->state->held[1])
+                        << " loading_deadline_reached=" << (observed_at >= deadline)
+                        << " late_within_loading_deadline=" << late_within
+                        << " attached=" << current.attached << " navigation_started=" << current.navigation_started
+                        << " nonce_handshake=" << current.nonce_handshake << " source_matches=" << current.source_matches
+                        << " frames=" << Chat::surface(chat).rendered_frames()
+                        << " rows=" << Chat::surface(chat).rendered_messages() << " active=" << Chat::active(chat) << '\n';
+                }
             } catch (...) {
                 std::cerr << "Companion first chat observation: observation-error\n";
                 Chat::first_display_evidence(chat);
@@ -1047,7 +1135,7 @@ int wmain(int argc, wchar_t **argv)
         expect(argc == 3, "source fixture and explicit flow mode required");
         const std::wstring_view mode(argv[2]);
         expect(mode == L"early-first" || mode == L"return" || mode == L"revoked" || mode == L"reapproved" ||
-            mode == L"redraw" || mode == L"redraw-revoked-live" ||
+            mode == L"redraw" || mode == L"observe-late-ready" || mode == L"observe-never-ready" || mode == L"redraw-revoked-live" ||
             mode == L"redraw-revoked-black" || mode == L"redraw-reapproved-live" ||
             mode == L"redraw-reapproved-black", "known flow mode");
         std::string origin, auxiliary; std::getline(std::cin, origin); std::getline(std::cin, auxiliary);

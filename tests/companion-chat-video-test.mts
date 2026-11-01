@@ -8,8 +8,10 @@ import { DisplayGateway } from '../platform/server/chat/display-gateway.mts';
 import { fixture } from '../platform/tests/fixtures/service.mts';
 
 const executable = process.argv[2], source = process.argv[3], mode = process.argv[4];
-assert(executable && source && ['early-first', 'return', 'revoked', 'reapproved', 'redraw'].includes(mode ?? ''), 'native flow, source and explicit mode required');
+assert(executable && source && ['early-first', 'return', 'revoked', 'reapproved', 'redraw',
+  'observe-late-ready', 'observe-never-ready'].includes(mode ?? ''), 'native flow, source and explicit mode required');
 const earlyFirst = mode === 'early-first', reapproved = mode === 'reapproved', redraw = mode === 'redraw';
+const observation = mode === 'observe-late-ready' || mode === 'observe-never-ready';
 const revoked = mode === 'revoked' || reapproved;
 const f = await fixture({ createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot) });
 let child: ReturnType<typeof spawn> | undefined;
@@ -82,8 +84,20 @@ try {
   child = spawn(executable, [source, mode!], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: false });
   const exited = once(child, 'close'); child.stdin!.write(`${f.origin}\n${other.lease.sessionToken}\n`);
   let errors = '', phase = 0;
-  child.stderr!.on('data', chunk => { errors = (errors + String(chunk)).slice(-4096); });
-  const phases = earlyFirst
+  let observationStderr = '', observationOverflow = false;
+  child.stderr!.on('data', chunk => {
+    const value = String(chunk);
+    errors = (errors + value).slice(-4096);
+    // Negative regression modes require the complete, fixed diagnostic record.
+    // Overflow must fail, rather than silently lose the original failure.
+    if (observation && !observationOverflow) {
+      observationStderr += value;
+      if (observationStderr.length > 8192) {
+        observationOverflow = true; observationStderr = '';
+      }
+    }
+  });
+  const phases = observation ? ['browser-opened'] : earlyFirst
     ? ['browser-opened', 'early-first-visible', 'early-stopped',
       'early-returned', 'early-returned-text', 'early-final-stopped',
       'early-revoked', 'browser-opened', 'early-reapproval-pending',
@@ -103,6 +117,9 @@ try {
       if (line === 'browser-opened') {
         assert(pending);
         if (loginStarts === 1) {
+          // Input condition only: the original native 15-second wait starts
+          // before consent, leaving part of its unchanged product deadline.
+          if (observation) await new Promise<void>(resolve => setTimeout(resolve, 3000));
           await f.authenticate('alice', pending);
           assert.equal((await f.post(`/login/${pending.id}/approve`)).status, 200);
         } else assert(removed && !freshApproval &&
@@ -238,14 +255,79 @@ try {
       if (line !== 'chat-empty-ready') child!.stdin!.write('continue\n');
     }
   })();
-  void drive.catch(() => child?.kill());
-  const deadline = setTimeout(() => child?.kill(), 45000);
+  let driveFailed = false, parentDeadlineReached = false;
+  void drive.catch(() => { driveFailed = true; child?.kill(); });
+  const deadline = setTimeout(() => { parentDeadlineReached = true; child?.kill(); }, 45000);
   try {
-    const [[code]] = await Promise.all([exited, drive]);
-    assert.equal(code, 0, errors); assert.equal(phase, phases.length);
+    const [[code, signal]] = await Promise.all([exited, drive]);
+    if (observation) {
+      assert(!driveFailed && !parentDeadlineReached, 'negative observation ends without parent cancellation');
+      assert.equal(signal, null, 'original native failure exits without a termination signal');
+      assert.equal(code, 1, 'late or absent readiness must preserve the original native failure');
+      assert(!observationOverflow, 'complete negative diagnostic record stays within 8192 characters');
+      // Fixed scalar/marker assertions are below the shared close/drive wait,
+      // so neither the final stderr line nor unexpected stdout can be missed.
+    } else assert.equal(code, 0, errors);
+    assert.equal(phase, phases.length);
   } finally { clearTimeout(deadline); }
   assert(f.store.find(other.lease.sessionToken), 'another creator approval is unchanged');
-  if (earlyFirst) {
+  if (observation) {
+    assert.equal(loginStarts, 1); assert.equal(refreshes, 0); assert.equal(signouts, 0);
+    assert.equal(denials, 0); assert.equal(freshApproval, false); assert.equal(cancelled, 0);
+    assert(target && f.store.find(target)?.membership?.connectionId === connectionId,
+      'negative readiness observation neither renews nor revokes the exact browser approval');
+    const lines = observationStderr.replace(/\r\n/gu, '\n').split('\n');
+    assert.equal(lines.pop(), '', 'negative diagnostic record ends with a complete line');
+    assert(lines.length === 6 || lines.length === 8, 'only the fixed negative diagnostic sequence is accepted');
+    assert.equal(lines[0], 'Companion first chat observation: original-failure');
+    assert.equal(lines.at(-1), 'Companion chat/video: subscribed empty own DOM',
+      'the original exception is the final native diagnostic exactly once');
+    const phasePattern = /^Companion first chat phase: active=(?<active>[01]) worker=(?<worker>[01]) awaiting_login=(?<awaiting_login>[01]) surface_ready=(?<surface_ready>[01]) frames=(?<frames>\d{1,10}) rows=(?<rows>\d{1,10}) rejected=(?<rejected>\d{1,10}) metadata=(?<metadata>[01]) pending_frame=(?<pending_frame>[01]) awaiting_render=(?<awaiting_render>[01]) native_ready=(?<native_ready>[01]) surface_discarded=(?<surface_discarded>[01]) surface_attached=(?<surface_attached>[01]) navigation_started=(?<navigation_started>[01]) nonce_handshake=(?<nonce_handshake>[01]) source_matches=(?<source_matches>[01]) pending_subscribed=(?<pending_subscribed>[01]) recovery_attempted=(?<recovery_attempted>[01]) reconnecting=(?<reconnecting>[01]) loading_remaining_ms=(?<loading_remaining_ms>\d{1,10}) render_remaining_ms=(?<render_remaining_ms>\d{1,10})$/u;
+    if (lines.length === 8) assert.equal(lines[2], 'Companion first chat observation: ack-wait');
+    const evidence = [lines[1], ...(lines.length === 8 ? [lines[3]] : []), lines.at(-3)].map(line => {
+      const fields = phasePattern.exec(line!)?.groups;
+      assert(fields, 'each phase contains only the fixed, bounded readiness scalars');
+      return Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, Number(value)]));
+    });
+    const initial = evidence[0]!, final = evidence.at(-1)!;
+    assert(initial.active === 1 && initial.worker === 1 && initial.awaiting_login === 0 &&
+      initial.metadata === 1 && initial.pending_frame === 1 && initial.pending_subscribed === 1 &&
+      initial.surface_ready === 0 && initial.nonce_handshake === 0 && initial.native_ready === 0 &&
+      initial.frames === 0 && initial.rows === 0 && initial.rejected === 0 &&
+      initial.awaiting_render === 0 && initial.recovery_attempted === 1 &&
+      initial.loading_remaining_ms > 0 && initial.loading_remaining_ms <= 15000,
+    'original failure precedes the unchanged product deadline with one recovered document still unready');
+    const checkPattern = /^Companion first chat observation check: budget_ms=(?<budget_ms>\d{1,10}) elapsed_ms=(?<elapsed_ms>\d{1,10}) held=(?<held>\d{1,10}) released=(?<released>\d{1,10}) current_held=(?<current_held>[01]) loading_deadline_reached=(?<loading_deadline_reached>[01]) late_within_loading_deadline=(?<late_within_loading_deadline>[01]) attached=(?<attached>[01]) navigation_started=(?<navigation_started>[01]) nonce_handshake=(?<nonce_handshake>[01]) source_matches=(?<source_matches>[01]) frames=(?<frames>\d{1,10}) rows=(?<rows>\d{1,10}) active=(?<active>[01])$/u;
+    const checkFields = checkPattern.exec(lines.at(-2)!)?.groups;
+    assert(checkFields, 'one fixed bounded observation summary precedes the original exception');
+    const check = Object.fromEntries(Object.entries(checkFields).map(([key, value]) => [key, Number(value)]));
+    assert(check.budget_ms > 0 && check.budget_ms <= 15000 && check.elapsed_ms < 45000 &&
+      check.held === 2 && check.rows === 0 && check.frames === final.frames &&
+      check.active === final.active && check.attached === final.surface_attached &&
+      check.navigation_started === final.navigation_started && check.nonce_handshake === final.nonce_handshake &&
+      check.source_matches === final.source_matches,
+    'summary agrees with actual final surface evidence and both held document requests');
+    if (mode === 'observe-late-ready') {
+      assert.equal(lines.at(-4), 'Companion first chat observation: late-empty-ack');
+      assert(check.released === 2 && check.current_held === 0 && check.loading_deadline_reached === 0 &&
+        check.late_within_loading_deadline === 1 && check.elapsed_ms < check.budget_ms &&
+        check.attached === 1 && check.navigation_started === 1 && check.nonce_handshake === 1 &&
+        check.source_matches === 1 && check.frames >= 1 && check.active === 1 &&
+        final.surface_ready === 1 && final.metadata === 1 && final.rejected === 0,
+      'released actual document produces an empty ACK within the captured original loading deadline');
+    } else {
+      assert(lines.length === 6 && ['Companion first chat observation: connection-ended',
+        'Companion first chat observation: existing-deadline-reached'].includes(lines.at(-4)!),
+      'held document reaches a fixed terminal without entering ACK wait');
+      assert(check.released === 1 && check.current_held === 1 && check.loading_deadline_reached === 1 &&
+        check.late_within_loading_deadline === 0 && check.elapsed_ms >= check.budget_ms &&
+        check.nonce_handshake === 0 && check.frames === 0 && final.surface_ready === 0 &&
+        final.awaiting_render === 0 && final.loading_remaining_ms === 0,
+      'held current document reaches its original preparation deadline without a handshake or ACK');
+    }
+    console.log(`companion first chat observation ${mode}: child_exit=1 original_failure_preserved=1`);
+    for (const line of lines) console.log(line); // Only the validated fixed diagnostics above.
+  } else if (earlyFirst) {
     assert(removed && freshApproval && oldTarget !== target &&
       oldConnection !== connectionId && !f.store.find(oldTarget) && !f.store.find(target),
       'old grant denied, new gaming grant explicitly approved and then logged out');

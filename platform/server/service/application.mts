@@ -522,7 +522,7 @@ ${this.#form(b, '/account/cancel', '취소')}
         this.#page(response, '시험 캠페인 · 공개 배너', this.#accountNotice(b) + campaignsPage(
           status, b.csrf, this.#origin, { selectionState, previewReady, viewToken,
             streamingConnected: account.presence.streamingConnections > 0,
-            output: account.output })); return;
+            output: account.output, trial: this.#creators.activity.trials(b.owner) })); return;
       }
       if (request.method === 'GET' && url.pathname === '/healthz') { response.writeHead(204); response.end(); return; }
       if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/account')) {
@@ -697,7 +697,8 @@ ${testCreativePreview(target)}
 실제 송출 여부는 서버의 최신 활동 보고만으로 확인할 수 없습니다.
 OBS 화면이나 녹화 중에도 소재가 즉시 교체될 수 있으므로
 송출 PC의 장면을 먼저 확인하세요.</p>
-<p>이것은 지급 없는 시험 배너이며 시청자 광고 실측·HP·수익을 기록하지 않습니다.</p>
+<p>이것은 지급 없는 시험 배너입니다. 채널 시청자 시간 추정으로 시험 HP·현금 가치 없는 포인트만 기록하며,
+시청자 광고 실측이나 현금 수익은 기록하지 않습니다. 소재를 바꿔도 각 소재의 시험 잔액은 초기화되지 않습니다.</p>
 <form method="post" action="/campaigns/${target.id}/confirm">
 <input type="hidden" name="csrf" value="${b.csrf}"><input type="hidden" name="view" value="${newView}">
 <button>위 시험 소재로 교체 확인</button></form>

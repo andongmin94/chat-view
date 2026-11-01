@@ -4,17 +4,26 @@
 import assert from 'node:assert/strict';
 import { once, on } from 'node:events';
 import { createInterface } from 'node:readline';
+import { setTimeout as pause } from 'node:timers/promises';
 import { WebSocket } from 'ws';
 import { fixture } from '../tests/fixtures/service.mts';
 import { LOGIN_POLL_MS } from '../server/chat/browser-login.mts';
 import { BroadcastOutput } from '../server/chat/broadcast-output.mts';
 import { DisplayGateway } from '../server/chat/display-gateway.mts';
 import { TEST_CAMPAIGN } from '../server/ads/campaigns.mts';
+import { ChzzkApi } from '../server/chzzk/api.mts';
 
 const realNow = Date.now.bind(Date);
 let offset = 0, outputNow = 1000;
 Date.now = () => realNow() + offset; // Expire browser state, not native/provider grants.
-const f = await fixture({ now: realNow,
+const trialPreview = process.argv.includes('--trial-preview');
+const audienceApi = trialPreview ? new ChzzkApi({ clientId: 'synthetic-browser', clientSecret: 'synthetic-only' }, async url => {
+  assert.equal(new URL(url).pathname, '/open/v1/lives');
+  return Response.json({ code: 200, content: { data: [
+    { channelId: 'alice', liveId: 123, concurrentUserCount: 60 },
+  ], page: {} } });
+}) : undefined;
+const f = await fixture({ now: realNow, audienceApi,
   createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot, new BroadcastOutput(() => outputNow)) });
 let peer: WebSocket | undefined;
 const collectionPeers: WebSocket[] = [];
@@ -100,6 +109,24 @@ try {
     if (command.op === 'expire-browser') { offset += 3_600_001; reply({ ok: true }); continue; }
     if (command.op === 'expire-confirmation') { offset += 300_001; reply({ ok: true }); continue; }
     if (command.op === 'metadata') { reply({ metadata }); continue; }
+    if (command.op === 'trial-points-seed') {
+      assert(trialPreview && reportSequence === 0 && peer?.readyState === WebSocket.OPEN);
+      const report = async () => {
+        outputNow += 1100;
+        const response = await f.request('/broadcast/output', { method: 'POST', headers: {
+          Authorization: `ChatView-Output ${outputToken}`, 'Content-Type': 'application/json',
+        }, body: JSON.stringify({ sequence: ++reportSequence, streaming: true, recording: false, sampleAgeMs: 0 }) });
+        assert.equal(response.status, 200);
+      };
+      // First report starts the synthetic official adapter. A new sampled
+      // boundary precedes one real consecutive interval; no direct SQL seeding.
+      await report(); await f.creators.audience.refresh();
+      await report(); await pause(1100); await report();
+      const trial = f.creators.activity.trials('alice').find(row => row.campaignId === TEST_CAMPAIGN.id)!;
+      const records = f.creators.activity.trialRewards('alice');
+      assert.equal(trial.remainingHp, 99); assert.equal(trial.points, 1); assert.equal(records.length, 1);
+      reply({ ok: true, hp: trial.remainingHp, points: trial.points, records: records.length }); continue;
+    }
     // A preexisting Alice sender and selected test banner must outlive a
     // revoked/reapproved gaming peer. Browser forms, not fixture commands,
     // perform every role revocation and user consent action.

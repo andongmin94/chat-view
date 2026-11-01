@@ -12,7 +12,7 @@ import { ProviderGrants } from '../../server/service/provider-grants.mts';
 import type { ConnectionRole } from '../../server/chat/session-store.mts';
 import type { DisplayAccess } from '../../server/chat/display-access.mts';
 import type { DisplayGateway } from '../../server/chat/display-gateway.mts';
-import type { Channel, Tokens } from '../../server/chzzk/api.mts';
+import type { Channel, Tokens, ChzzkApi } from '../../server/chzzk/api.mts';
 import type { ChatSnapshot } from '../../server/chzzk/session.mts';
 export const nonce = () => randomBytes(32).toString('hex');
 export const denied = (code: number) => (e: unknown) => e instanceof DisplayAccessError && e.status === code;
@@ -27,6 +27,7 @@ export function deferred<T>() {
 }
 type Options = {
   path?: string; key?: Uint8Array; now?: () => number;
+  audienceApi?: Pick<ChzzkApi, 'listLives'>;
   createDisplay?: (access: DisplayAccess, origin: () => string, snapshot: () => unknown) =>
     Pick<DisplayGateway, 'changed' | 'upgrade' | 'close' | 'report' | 'outputFor' | 'connectionCounts'>;
 };
@@ -52,7 +53,7 @@ export async function fixture(options: Options = {}) {
     refresh: async (token: string) => { refreshCalls++; return refreshHook ? refreshHook(token) : tokens(ownerOf(token), refreshCalls); },
     revoke: async () => { if (revokeFails) throw new Error('private upstream error body'); },
   };
-  const creators = new Creators({ api, sessions: store, grants, now,
+  const creators = new Creators({ api, sessions: store, grants, now, audienceApi: options.audienceApi,
     createChat(changed) {
       let owner = '', snapshot: ChatSnapshot = { state: 'idle', received: 0, messages: [] }, running = false;
       const finish = (state: 'stopped' | 'revoked' | 'disconnected') => {

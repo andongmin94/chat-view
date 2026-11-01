@@ -24,9 +24,10 @@ OUT.mkdir(exist_ok=True)
 
 
 class Fixture:
-    def __init__(self) -> None:
+    def __init__(self, trial: bool = False) -> None:
         self.process = subprocess.Popen(
-            ["node", "--experimental-strip-types", "tools/management-browser-fixture.mts"],
+            ["node", "--experimental-strip-types", "tools/management-browser-fixture.mts"] +
+            (["--trial-preview"] if trial else []),
             cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
         )

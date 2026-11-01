@@ -25,7 +25,9 @@ test('creator chooses a second approved nonpayable banner while OBS source URL a
         const prompt = await response.text();
         assert.match(prompt, /data-campaign-switch="confirm"/u);
         assert.match(prompt, /취소하고 기존 소재 유지/u);
-        assert.match(prompt, /시청자 광고 실측·HP·수익을 기록하지 않습니다/u);
+        assert.match(prompt, /시험 HP·현금 가치 없는 포인트만 기록/u);
+        assert.match(prompt, /시청자 광고 실측이나 현금 수익은 기록하지 않습니다/u);
+        assert.match(prompt, /각 소재의 시험 잔액은 초기화되지 않습니다/u);
         const newView = /name="view" value="([a-f0-9]{64})"/u.exec(prompt)?.[1];
         assert(newView && newView !== b.view, 'a one-use review replaces the older form token');
         b.view = newView;

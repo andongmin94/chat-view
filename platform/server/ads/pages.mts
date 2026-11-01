@@ -5,6 +5,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { TEST_CAMPAIGNS } from './campaigns.mts';
 import type { Campaigns, CampaignStatus } from './campaigns.mts';
 import type { OutputView } from '../chat/broadcast-output.mts';
+import type { TrialCampaign } from './activity.mts';
 
 const escape = (value: string) => value.replace(/[&<>"']/gu,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -89,9 +90,9 @@ style="display:flex;align-items:center;gap:3%;box-sizing:border-box;width:100%;a
 export type CampaignSelectionState = 'provider-required' | 'streaming-required' | 'ready';
 
 export function campaignsPage(status: CampaignStatus, csrf: string, origin: string,
-  { selectionState, streamingConnected, previewReady, output, viewToken }: {
+  { selectionState, streamingConnected, previewReady, output, viewToken, trial }: {
     selectionState: CampaignSelectionState; streamingConnected: boolean; previewReady: boolean;
-    output: OutputView; viewToken: string;
+    output: OutputView; viewToken: string; trial?: readonly TrialCampaign[];
   }): string {
   const form = (path: string, label: string) => `<form method="post" action="${path}"><input type="hidden" name="csrf" value="${csrf}"><input type="hidden" name="view" value="${viewToken}"><button>${label}</button></form>`;
   const source = status.sourceId ? `${origin}/public/ads/${status.sourceId}` : undefined;
@@ -143,7 +144,8 @@ export function campaignsPage(status: CampaignStatus, csrf: string, origin: stri
     help: '<p>같은 공개 URL의 시험 배너를 OBS 미리보기에서 확인하세요. 실제 배너 표시·송출·시청자 노출은 아직 확인된 것이 아닙니다.</p><p><a href="#obs-source-setup">기존 공개 소스 설정 보기</a></p>',
   };
   return `<p><a href="/account">내 연결 관리</a> · <a href="/campaigns/activity">비지급 활동 기록 · 근거 구분 보기</a></p>
-<p><strong>시험 광고 · 지급 없음</strong> — 이 단계에서는 시청 실적, HP, 수익을 계산하지 않습니다.</p>
+<p><strong>시험 광고 · 지급 없음</strong> — 채널 시청자 시간 추정에 따른 시험 HP·현금 가치 없는 포인트만 기록합니다.
+실제 광고 시청 실적이나 현금 수익은 계산하지 않습니다.</p>
 <section aria-labelledby="campaign-selection-title">
 <h2 id="campaign-selection-title">시험 캠페인 선택 준비</h2>
 <p data-campaign-selection-state="${selectionState}">${selectionText}</p>
@@ -156,15 +158,21 @@ ${selectionState !== 'ready' ? `<ol>
 ${source && !status.selected ? `<p data-banner-manual-reselect="${selectionState === 'ready' ? 'ready' : 'sender-required'}">기존 공개 URL은 그대로 사용할 수 있습니다. 송출 역할을 다시 승인해도 광고는 자동 선택되지 않습니다. 준비 상태 확인 후 캠페인을 다시 선택하세요.</p>` : ''}
 </section>
 <p>운영자가 고정한 비지급 시험 소재 두 가지 중 한 가지를 직접 선택합니다.
-서로 다른 배너 문구를 시험할 수 있지만 광고 시청시간·HP·보상은 기록하지 않습니다.</p>
-${TEST_CAMPAIGNS.map((campaign, index) => `<section data-test-campaign="${campaign.id}" data-campaign-selected="${selectedCampaign?.id === campaign.id}">
+서로 다른 배너 문구를 시험할 수 있습니다. 소재별 시험 HP·포인트는 분리되며 중지·재선택으로 초기화되지 않습니다.</p>
+${TEST_CAMPAIGNS.map((campaign, index) => {
+  const balance = trial?.find(value => value.campaignId === campaign.id);
+  return `<section data-test-campaign="${campaign.id}" data-campaign-selected="${selectedCampaign?.id === campaign.id}">
 <h2>${escape(campaign.brand)} · ${escape(campaign.title)}</h2>
 ${testCreativePreview(campaign)}
+${balance ? `<p data-campaign-trial="${campaign.id}">남은 시험 HP <strong>${balance.remainingHp} / ${balance.initialHp} HP</strong> ·
+누적 시험 <strong>${balance.points}포인트</strong> (현금 가치 없음).
+${balance.remainingHp === 0 ? '시험 적립만 중단됩니다. 공개 배너와 선택은 자동 변경되지 않습니다.' : '추정 채널 시청자시간 1분마다 1 HP를 소모하고 시험 1포인트를 기록합니다.'}</p>` : ''}
 <p>권장 OBS 브라우저 소스 크기: <strong>960 × 180</strong></p>
 ${selectionState === 'ready' ? form(`/campaigns/${campaign.id}/select`,
   selectedCampaign?.id === campaign.id ? '이 시험 캠페인 다시 선택'
     : index === 0 && !status.selected ? '이 시험 캠페인 선택'
-    : `${escape(campaign.title)} 선택`) : ''}</section>`).join('')}
+    : `${escape(campaign.title)} 선택`) : ''}</section>`;
+}).join('')}
 <p data-selected-test-campaign="${selectedCampaign?.id ?? 'none'}">현재 선택:
 <strong>${selectedCampaign ? escape(selectedCampaign.title) : '없음'}</strong></p>
 <p>선택 중인 소재를 다른 것으로 교체할 때는 <strong>별도의 교체 확인 화면</strong>에서 한 번 더 승인해야 합니다.

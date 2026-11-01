@@ -101,9 +101,15 @@ test('official sample -> accepted report estimate -> private owner page, without
     await pause(550);assert.equal((await alice.report()).status,200);
     const summary=f.creators.activity.summary('alice');assert(summary.estimatedViewerMs!>0);
     assert.equal(summary.estimatedViewerMs,17*summary.audienceCoverageMs);assert(summary.audienceUnmeasuredMs>0);
+    const trial=summary.trial.campaigns.find(row=>row.campaignId==='chatview-test')!;
+    assert.equal(trial.creditedViewerMs,summary.estimatedViewerMs,'new accepted estimates enter the same owner trial');
+    assert.equal(trial.points,Math.floor(trial.creditedViewerMs/60000));
+    assert.equal(trial.remainingHp,100-trial.points);assert.equal(summary.hp,null);assert.equal(summary.revenue,null);
     const html=await f.get('/campaigns/activity',alice.b);assert.match(html,/17명/u);assert.match(html,/시청자·분/u);
     assert.match(html,/data-evidence-state="partial"/u);
     assert.match(html,/data-evidence-state="not-measured"/u);
+    assert.match(html,/data-evidence-stage="trial"/u);assert.match(html,/현금 가치 없음/u);
+    const campaigns=await f.get('/campaigns',alice.b);assert.match(campaigns,/data-campaign-trial="chatview-test"/u);
     assert.match(html,/표본이 없던 송출 구간은 추가하지 않았습니다/u);
     for(const secret of [alice.lease.token,alice.lease.outputToken,alice.lease.sessionToken,'PRIVATE_CLIENT']) assert(!html.includes(secret));
     assert.equal(f.creators.activity.summary('bob').estimatedViewerMs,null);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import type { ActivitySummary, ActivityEvidenceRow, ActivityReason, ActivityState } from './activity.mts';
+import { TRIAL_VIEWER_MS_PER_HP } from './activity.mts';
 import { testCampaign } from './campaigns.mts';
 import type { AudienceReason } from '../chzzk/audience.mts';
 const states: Record<ActivityState, string> = {
@@ -127,7 +128,8 @@ export function activityPage(summary: ActivitySummary, rows: readonly ActivityEv
   return `<p><strong>비지급 시험 기록 · 출력 활동은 광고 노출·시청시간이 아닙니다.</strong></p>
 <nav aria-label="측정 근거 단계"><a href="#activity-output">1. 송출 PC 출력 보고</a> ·
 <a href="#activity-audience">2. 채널 시청자 추정</a> ·
-<a href="#activity-exposure">3. 광고 노출·HP 미측정</a></nav>
+<a href="#activity-exposure">3. 광고 실제 시청 미측정</a> ·
+<a href="#activity-trial">4. 시험 HP·포인트</a></nav>
 <p>이 계정이 최근 선택했던 시험 캠페인들의 승인된 송출 연결이 보낸 보고만 기록합니다.
 시험 소재를 전환하면 다음 보고에서 새 구간이 시작되며 이전 구간을 이어 합산하지 않습니다.
 같은 상태의 연속 보고 두 개 사이를 보수적으로 근사하며, 실제 지속 송출을 보증하지 않습니다.
@@ -167,12 +169,37 @@ export function activityPage(summary: ActivitySummary, rows: readonly ActivityEv
 출력 보고가 있거나 시청자 시간이 추정돼도 시청자 화면의 광고 표시·주목 여부를 확인할 수 없습니다.</p>
 <dl>
 <dt>실측 광고 시청시간</dt><dd>미측정 — 노출·시청 계측 없음</dd>
-<dt>HP·수익·지급</dt><dd>계산하지 않음 — 지급 가능한 실적 없음</dd>
+<dt>광고 실측 기반 HP·현금 수익·지급</dt><dd>계산하지 않음 — 지급 가능한 실적 없음</dd>
 </dl></section>
+<section id="activity-trial" aria-labelledby="activity-trial-title" data-evidence-stage="trial">
+<h2 id="activity-trial-title">4. 시험 HP·포인트 · 현금 가치 없음</h2>
+<p>계정과 시험 소재마다 100 HP로 시작합니다. 새로 확인한 추정 채널 시청자시간 1분마다
+1 HP를 소모하고 시험 1포인트를 기록합니다.
+1 HP 미만의 진행은 다음 구간에 이어지며 소재별 최대 100포인트입니다. 과거 활동은 소급하지 않습니다.</p>
+<p>광고 실제 시청 실적·현금·출금·지급 확정이 아닙니다. 시청자 표본 누락·녹화 전용·미리보기에는
+차감과 적립이 없고, 유효한 0명 표본은 미측정과 구분합니다. 송출·녹화 동시 보고는 한 번만 계산합니다.</p>
+${summary.trial.campaigns.map(trial => `<section data-trial-campaign="${trial.campaignId}" data-trial-state="${trial.remainingHp === 0 ? 'exhausted' : trial.startedAt === null ? 'not-started' : 'active'}">
+<h3>${testCampaign(trial.campaignId)!.title}</h3>
+<dl><dt>남은 시험 HP</dt><dd data-trial-hp="${trial.remainingHp}">${trial.remainingHp} / ${trial.initialHp} HP</dd>
+<dt>누적 시험 포인트</dt><dd data-trial-points="${trial.points}">${trial.points}포인트 · 현금 가치 없음</dd>
+<dt>다음 1 HP 진행</dt><dd>${(trial.progressViewerMs / TRIAL_VIEWER_MS_PER_HP).toFixed(3)} / 1분 (추정 채널 시청자시간)</dd></dl>
+${trial.remainingHp === 0 ? '<p>시험 HP가 소진돼 이 소재의 추가 차감·포인트 적립만 중단됩니다. 선택과 공개 배너는 자동으로 바뀌거나 중지되지 않습니다.</p>'
+  : trial.startedAt === null ? '<p>아직 이 소재에 반영한 새 시청자 추정 구간이 없습니다. 현재 표본 수집 상태는 위에서 확인하세요.</p>' : ''}
+</section>`).join('')}
+<p>중지·다른 소재 선택·재선택·승인 철회·서버 재시작으로 시험 잔액과 누적 포인트를 초기화하지 않습니다.
+소재별 잔액은 유지하며 아래 개별 보상 기록만 기존 활동과 같은 최근 7일 보관 기준을 적용합니다.</p>
+<h3>최근 시험 포인트 기록</h3>
+${summary.trial.rewards.length ? `<div style="overflow-x:auto"><table style="width:100%;text-align:left;font-size:14px;border-collapse:collapse">
+<caption>최근 7일 시험 보상 중 최대 50건 · 현금 지급 기록 아님</caption>
+<thead><tr><th scope="col">서버 확인 시각 (UTC)</th><th scope="col">시험 소재</th><th scope="col">소모 HP 누계</th><th scope="col">시험 적립</th></tr></thead>
+<tbody>${summary.trial.rewards.slice(0, 50).map(reward => `<tr data-trial-reward="${reward.campaignId}:${reward.consumedHp}"><td>${date(reward.at)}</td>
+<td>${testCampaign(reward.campaignId)!.title}</td><td style="white-space:nowrap">${reward.consumedHp} HP</td><td style="white-space:nowrap">+${reward.points}포인트</td></tr>`).join('')}</tbody></table></div>`
+  : '<p>최근 7일에 저장된 시험 포인트 기록이 없습니다. 잔액과 누적 포인트는 위에 따로 표시합니다.</p>'}
+</section>
 <p>송출·녹화 동시 구간은 합집합에 한 번만 반영합니다. 공개 배너 조회, 미리보기,
 소스 표시/숨김 이벤트는 기록을 만들거나 시간을 늘리지 않습니다.</p>
 <section aria-labelledby="activity-history-title" data-activity-view="${review ? 'review' : 'all'}">
-<h2 id="activity-history-title">4. 최근 서버 보고 근거</h2>
+<h2 id="activity-history-title">5. 최근 서버 보고 근거</h2>
 <nav aria-label="저장된 근거 보기"><a href="/campaigns/activity">전체 기록</a> ·
 <a href="/campaigns/activity/review">연속성·채널 표본 확인 구간만 보기</a></nav>
 ${review ? `<p data-review-count="${rows.length}">확인할 근거 ${rows.length}건 · 첫 보고/상태 전환·순번 누락·재연결 공백, 또는 연속 송출 구간의 채널 시청자 표본 미측정/부분 수집을 보여줍니다.
@@ -180,7 +207,8 @@ ${review ? `<p data-review-count="${rows.length}">확인할 근거 ${rows.length
 첫 보고는 정상적인 시작 경계일 수 있습니다. 위쪽 합계는 여전히 전체 보관 근거이며, 아래 표와 CSV에만 이 필터를 적용합니다.</p>`
 : '<p>전체 서버 보고 내역입니다. 연속성 공백과 채널 시청자 표본 미측정을 따로 확인할 수 있습니다.</p>'}
 <p><a href="${download}" download="chatview-nonpayable-activity.csv">${review ? '확인 구간만' : '내 전체'} 비지급 출력 근거 CSV 다운로드 (최대 1,000건)</a><br>
-송출·녹화 보고와 <strong>조건부 채널 시청자 추정</strong>만 포함합니다. 광고 실측 노출·HP·수익은 값이 없고, 미측정은 0으로 바꾸지 않습니다. 계정 소유자만 다운로드할 수 있습니다.</p>
+송출·녹화 보고와 <strong>조건부 채널 시청자 추정</strong>만 포함합니다. 광고 실측 노출·HP·수익은 값이 없고, 미측정은 0으로 바꾸지 않습니다.
+위 시험 HP·포인트는 별도 기록이며 이 출력 근거 CSV에 포함하지 않습니다. 계정 소유자만 다운로드할 수 있습니다.</p>
 <p>최근 7일 이내에 시작한 구간 중 최대 1,000건을 보관합니다. 동일 상태는 시간 단위로 합칩니다.
 보관 중 ${summary.intervals}건, 수신 보고 ${summary.reports}개, 계산 제외 ${summary.unknownIntervals}건.
 아래는 ${review ? '점검 대상 중 최근 50건' : '최근 50건'}입니다. 각 행의 채널 시청자 시간은 별도 근거의 <strong>추정</strong>이며 광고 실측값은 아닙니다. 전체 방송 이력이나 평생 합계가 아닙니다.</p>

@@ -3,9 +3,17 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Membership } from '../chat/session-store.mts';
 import type { OutputAcceptance } from '../chat/broadcast-output.mts';
 import type { AudienceView } from '../chzzk/audience.mts';
+import { TEST_CAMPAIGNS, testCampaign } from './campaigns.mts';
 
 export const ACTIVITY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const ACTIVITY_ROW_LIMIT = 1000;
+export const TRIAL_INITIAL_HP = 100;
+export const TRIAL_VIEWER_MS_PER_HP = 60_000;
+const TRIAL_VIEWER_MS_CAP = TRIAL_INITIAL_HP * TRIAL_VIEWER_MS_PER_HP;
+export type TrialCampaign = Readonly<{ campaignId: string; initialHp: number; remainingHp: number;
+  consumedHp: number; points: number; creditedViewerMs: number; progressViewerMs: number;
+  startedAt: number | null; lastAt: number | null }>;
+export type TrialReward = Readonly<{ campaignId: string; consumedHp: number; points: 1; at: number }>;
 export type ActivityState = 'streaming' | 'recording' | 'both' | 'idle' | 'unknown';
 export type ActivityReason = 'first-report' | 'continuous' | 'connection-change' |
   'sequence-gap' | 'stale-gap' | 'state-change' | 'clock-change';
@@ -47,12 +55,70 @@ export class CampaignActivity {
       activity_id INTEGER PRIMARY KEY REFERENCES campaign_activity(id) ON DELETE CASCADE,
       estimated_viewer_ms INTEGER NOT NULL CHECK(estimated_viewer_ms >= 0),
       covered_ms INTEGER NOT NULL CHECK(covered_ms > 0)
-    ) STRICT;`);
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS campaign_trial_balances (
+      owner TEXT NOT NULL, campaign_id TEXT NOT NULL,
+      credited_viewer_ms INTEGER NOT NULL CHECK(credited_viewer_ms BETWEEN 0 AND ${TRIAL_VIEWER_MS_CAP}),
+      started_at INTEGER NOT NULL CHECK(started_at > 0),
+      last_at INTEGER NOT NULL CHECK(last_at > 0),
+      PRIMARY KEY(owner, campaign_id)
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS campaign_trial_rewards (
+      owner TEXT NOT NULL, campaign_id TEXT NOT NULL,
+      consumed_hp INTEGER NOT NULL CHECK(consumed_hp BETWEEN 1 AND ${TRIAL_INITIAL_HP}),
+      at INTEGER NOT NULL CHECK(at > 0),
+      PRIMARY KEY(owner, campaign_id, consumed_hp),
+      FOREIGN KEY(owner, campaign_id) REFERENCES campaign_trial_balances(owner, campaign_id)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS campaign_trial_rewards_time ON campaign_trial_rewards(at);`);
     this.#expire();
   }
   #expire() {
     this.#db.prepare('DELETE FROM campaign_activity WHERE from_at < ?')
       .run(this.#now() - ACTIVITY_RETENTION_MS);
+    this.#db.prepare('DELETE FROM campaign_trial_rewards WHERE at < ?')
+      .run(this.#now() - ACTIVITY_RETENTION_MS);
+  }
+  // Only this newly accepted interval's estimate enters the trial. Historical
+  // activity is never backfilled. Balances outlive the bounded receipt history
+  // and are deliberately independent of selections, sources and PC approvals.
+  #recordTrial(owner: string, campaign: string, viewerMs: number, at: number): void {
+    if (!testCampaign(campaign)) return;
+    this.#db.prepare(`INSERT OR IGNORE INTO campaign_trial_balances
+      VALUES (?, ?, 0, ?, ?)`).run(owner, campaign, at, at);
+    const balance = this.#db.prepare(`SELECT credited_viewer_ms FROM campaign_trial_balances
+      WHERE owner = ? AND campaign_id = ?`).get(owner, campaign)!;
+    const before = Number(balance.credited_viewer_ms);
+    if (before === TRIAL_VIEWER_MS_CAP) return;
+    // Clamp the delta before adding, so even a large safe estimate cannot overflow.
+    const after = before + Math.min(viewerMs, TRIAL_VIEWER_MS_CAP - before);
+    this.#db.prepare(`UPDATE campaign_trial_balances SET credited_viewer_ms = ?, last_at = ?
+      WHERE owner = ? AND campaign_id = ?`).run(after, at, owner, campaign);
+    for (let hp = Math.floor(before / TRIAL_VIEWER_MS_PER_HP) + 1;
+      hp <= Math.floor(after / TRIAL_VIEWER_MS_PER_HP); hp++) {
+      this.#db.prepare('INSERT INTO campaign_trial_rewards VALUES (?, ?, ?, ?)')
+        .run(owner, campaign, hp, at);
+    }
+  }
+  trials(owner: string): TrialCampaign[] {
+    const rows = this.#db.prepare(`SELECT campaign_id, credited_viewer_ms, started_at, last_at
+      FROM campaign_trial_balances WHERE owner = ?`).all(owner);
+    return TEST_CAMPAIGNS.map(campaign => {
+      const row = rows.find(value => value.campaign_id === campaign.id);
+      const creditedViewerMs = Number(row?.credited_viewer_ms ?? 0);
+      const consumedHp = Math.floor(creditedViewerMs / TRIAL_VIEWER_MS_PER_HP);
+      return { campaignId: campaign.id, initialHp: TRIAL_INITIAL_HP,
+        remainingHp: TRIAL_INITIAL_HP - consumedHp, consumedHp, points: consumedHp,
+        creditedViewerMs, progressViewerMs: creditedViewerMs % TRIAL_VIEWER_MS_PER_HP,
+        startedAt: row ? Number(row.started_at) : null, lastAt: row ? Number(row.last_at) : null };
+    });
+  }
+  trialRewards(owner: string): TrialReward[] {
+    return this.#db.prepare(`SELECT campaign_id, consumed_hp, at FROM campaign_trial_rewards
+      WHERE owner = ? AND at >= ? ORDER BY at DESC, consumed_hp DESC LIMIT ?`)
+      .all(owner, this.#now() - ACTIVITY_RETENTION_MS, ACTIVITY_ROW_LIMIT)
+      .map((row): TrialReward => ({ campaignId: String(row.campaign_id), consumedHp: Number(row.consumed_hp),
+        points: 1, at: Number(row.at) }));
   }
   // Clearing never extends or deletes history. A new run/selection/connection
   // needs two new receipts; process-local heads are intentionally not restored.
@@ -131,11 +197,13 @@ export class CampaignActivity {
       if (viewerMs !== undefined) {
         const old = this.#db.prepare('SELECT estimated_viewer_ms FROM campaign_audience WHERE activity_id = ?').get(row);
         // Unrepresentable estimates are omitted, never rounded into an exact total.
-        if (Number.isSafeInteger(Number(old?.estimated_viewer_ms ?? 0) + viewerMs))
+        if (Number.isSafeInteger(Number(old?.estimated_viewer_ms ?? 0) + viewerMs)) {
           this.#db.prepare(`INSERT INTO campaign_audience VALUES (?, ?, ?)
             ON CONFLICT(activity_id) DO UPDATE SET
               estimated_viewer_ms = estimated_viewer_ms + excluded.estimated_viewer_ms,
               covered_ms = covered_ms + excluded.covered_ms`).run(row, viewerMs, duration);
+          this.#recordTrial(owner, campaign, viewerMs, at);
+        }
       }
       this.#db.prepare(`DELETE FROM campaign_activity WHERE owner = ? AND id NOT IN
         (SELECT id FROM campaign_activity WHERE owner = ? ORDER BY id DESC LIMIT ?)`)
@@ -184,6 +252,7 @@ export class CampaignActivity {
       audienceCoverageMs: coveredMs, audienceUnmeasuredMs: Math.max(0, Number(totals.streaming) - coveredMs),
       audience: this.#audience(owner), audienceMethod: 'last-sample-hold' as const,
       measuredAdViewerMs: null, hp: null, revenue: null,
+      trial: { campaigns: this.trials(owner), rewards: this.trialRewards(owner) },
       intervals: Number(totals.intervals), reports: Number(totals.reports),
       streamingMs: Number(totals.streaming), recordingMs: Number(totals.recording),
       activeMs: Number(totals.active), idleMs: Number(totals.idle), unknownIntervals: Number(totals.unknown),

@@ -4,15 +4,14 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 작업: RelWithDebInfo D1 확인과 창 상단 장식선 정리 (로컬 완료·원격 미반영)
+## 현재 작업: Windows 버튼 그림자 정렬 (로컬 완료·원격 미반영)
 
-2026-11-01 `OBS` 로컬 HEAD `f5dfeaf2a3e3cf2f9c972e78f7cf2c963f275e9e`, 미커밋 변경 없음에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일했다.
+2026-11-01 `OBS` 로컬 HEAD `6f93cfb9e2d3db13705a3288ccaf5ac956065ad9`, 미커밋 변경 없음에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일했다.
 
-- **RelWithDebInfo 조건:** 기존 공통/WGC 라이브러리, companion chat/video와 합성 source 실행 파일의 원래 소스·링크·생성 문서·CTest 선언만 `.ci` CMake 구성으로 가져와 **Visual Studio 18/x64/Windows SDK26100**의 실제 **RelWithDebInfo**로 새로 빌드했다. MSBuild 실제 명령에서 **`/Zi /O2 /Ob1 /MT /D NDEBUG /W4 /WX`**, 링크 **`/DEBUG /INCREMENTAL`**을 확인했다. libobs SDK가 없어 전체 공식 OBS 프로젝트 configure는 하지 않았고, 필요한 두 실행 파일의 원래 대상 조건만 맞춘 빌드다. 새 검사 프레임워크나 추적되는 빌드 경로는 추가하지 않았다.
-- **D1 실행:** UI 장식선 변경 전 위 빌드와 Node **24.22.1**·실제 FixedVersion WebView2 **155.0.4283.62**로 **reapproval 9.42초 통과 → redraw 6.17초 통과**, CTest **2/2·15.61초**. 원래 predecessor/조건/timeout/retry를 유지해 각 1회만 실행했다. D1은 미재현이며 실패 진단/deadline 관측 분기는 미실행이다. 로컬 Windows **26300.9711**과 CI #483의 Server **26100**, VS Community/Enterprise 에디션(동일 MSVC19.51.36260.0), 더 앞선 전체 검사 이력 차이는 남는다. D1 제품 수정이나 해결 주장은 없다.
-- **창 상단 수정:** 사용자 이미지의 의미를 확인한 결과는 제목 표시줄 바로 아래의 검은 장식선이 너무 붙어 보인다는 것이었다. 공유 `NativePanelTheme`의 client 영역 최상단 **4 DIP stripe 그리기만 제거**했다. 제목·상태 문구의 기존 좌표와 위 여백, 네이티브 제목 표시줄·입력·캡처 보호는 유지한다. Control Center를 MSVC **`/W4 /WX`**로 다시 컴파일/링크하고 실제 창에서 선 제거와 제목 표시줄 아래 여백을 확인했다. 기존 사용자용 Control Center 미리보기를 갱신했다.
-- **기존 UI 상태:** 직전 `f5dfeaf`의 HUD·Windows 연결/영상 설정·Control Center·웹 관리 neobrutal 스타일과 Tab 이동 수정, 당시 native surface/return·웹 관리 Node8개/TypeScript·크기별 시각 검사 통과는 유지한다. 이번에는 통과한 전체 UI/플랫폼 검사를 반복하지 않았다. `git diff --check` 통과.
-- **종료 범위:** 관측된 창 외관 문제만 수정했다. 동일 D1 재반복·전체 51개/385개·전체 브라우저 suite·Actions·push·시스템 설치/보안 변경·배포/qualification은 하지 않았다. 과거 #482/#483 실패와 D1 미해결 상태, 실계정·물리 투컴 등 기존 미완료 항목은 유지한다.
+- **관측·수정:** 둥근 버튼 면 아래 사각형 `FillRect` 그림자가 모서리에 검은 턱을 만들고, 눌린 면 밖에도 사각 모서리가 남는 구조였다. 공유 `NativePanelTheme`에서 면·테두리·그림자를 같은 둥근 외곽으로 그리도록 맞췄다. 눌리면 그림자 위치로 면이 내려가며 별도 그림자는 그리지 않는다. 비활성 버튼은 진한 그림자를 제거하고 테두리를 낮은 대비로 표시하되 면·본문 위치는 유지한다. 2 DIP 테두리·4 DIP 그림자·5 DIP 모서리를 각각 DPI에 맞춰 계산해, 125%에서 테두리 반올림 때문에 그림자가 6px로 커지던 계산도 정리했다. 입력/포커스/클릭·승인·timeout/retry는 변경하지 않았다.
+- **이번 검증:** Control Center MSVC **`/W4 /WX`** 컴파일/링크 및 `git diff --check` 통과. 실제 창의 일반/비활성 버튼 모서리·그림자와 네이티브 키보드 포커스를 확인하고 기존 사용자용 Control Center 미리보기를 갱신했다. 새 검사 도구나 프레임워크는 만들지 않았다.
+- **기존 상태:** `6f93cfb`의 창 상단 4 DIP 장식선 제거와 기존 neobrutal UI/Tab 이동은 유지한다. 그 세션의 CMake **RelWithDebInfo**·Node24.22.1·WebView2 155.0.4283.62에서 **reapproval 9.42초 → redraw 6.17초, 2/2 통과**는 이전 결과이며 이번에 반복하지 않았다. D1 미재현·원인 미확정, CI와 OS/더 앞선 검사 이력 차이는 그대로다.
+- **종료 범위:** 버튼 페인트와 이 현재 상태 기록만 변경했다. D1 재실행·전체 검사·Actions·push·보안 설정 변경·배포/qualification은 하지 않았다. 기존 D1 및 실계정·물리 투컴 등 미완료 항목은 유지한다.
 
 ## 직전 완료 작업: HUD 크기 변경 시 최신 채팅 추적과 읽던 위치 유지 (로컬 검증 완료·원격 미반영)
 

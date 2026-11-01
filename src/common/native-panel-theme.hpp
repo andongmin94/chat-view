@@ -53,23 +53,31 @@ public:
 private:
     static void paint_button(HWND window, HDC dc, bool primary) noexcept {
         RECT bounds{}; GetClientRect(window, &bounds);
-        const int unit = MulDiv(2, static_cast<int>(GetDpiForWindow(window)), 96);
-        const int shadow = unit * 2;
+        const int dpi = static_cast<int>(GetDpiForWindow(window));
+        const int unit = MulDiv(2, dpi, 96);
+        const int shadow = MulDiv(4, dpi, 96);
+        const int corner = MulDiv(10, dpi, 96);
         const auto state = SendMessageW(window, BM_GETSTATE, 0, 0);
-        const bool pressed = (state & BST_PUSHED) != 0;
         const bool enabled = IsWindowEnabled(window) != FALSE;
+        const bool pressed = enabled && (state & BST_PUSHED) != 0;
         SetDCBrushColor(dc, background); FillRect(dc, &bounds, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
         RECT face = bounds; face.right -= shadow; face.bottom -= shadow;
-        RECT offset = face; OffsetRect(&offset, shadow, shadow);
-        SetDCBrushColor(dc, ink); FillRect(dc, &offset, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-        if (pressed) OffsetRect(&face, shadow, shadow);
-        const HPEN pen = CreatePen(PS_SOLID, unit, ink);
-        const auto old_pen = SelectObject(dc, pen);
+        const auto old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
         const auto old_brush = SelectObject(dc, GetStockObject(DC_BRUSH));
+        if (enabled && !pressed) {
+            RECT offset = face; OffsetRect(&offset, shadow, shadow);
+            SetDCBrushColor(dc, ink);
+            RoundRect(dc, offset.left, offset.top, offset.right, offset.bottom, corner, corner);
+        }
+        if (pressed) OffsetRect(&face, shadow, shadow);
+        // Nested filled silhouettes keep the border and shadow aligned at
+        // fractional DPI too, without a centered pen protruding past an edge.
+        SetDCBrushColor(dc, enabled ? ink : RGB(165, 167, 173));
+        RoundRect(dc, face.left, face.top, face.right, face.bottom, corner, corner);
+        RECT inside = face; InflateRect(&inside, -unit, -unit);
         SetDCBrushColor(dc, primary && enabled ? ink : enabled ? RGB(255, 255, 255) : background);
-        RoundRect(dc, face.left + unit / 2, face.top + unit / 2, face.right - unit / 2, face.bottom - unit / 2,
-            unit * 3, unit * 3);
-        SelectObject(dc, old_brush); SelectObject(dc, old_pen); DeleteObject(pen);
+        RoundRect(dc, inside.left, inside.top, inside.right, inside.bottom, corner - unit * 2, corner - unit * 2);
+        SelectObject(dc, old_brush); SelectObject(dc, old_pen);
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, !enabled ? RGB(112, 113, 118) : primary ? RGB(255, 255, 255) : ink);
         const auto old_font = SelectObject(dc, reinterpret_cast<HFONT>(SendMessageW(window, WM_GETFONT, 0, 0)));

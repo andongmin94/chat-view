@@ -9,9 +9,10 @@ import { fixture } from '../platform/tests/fixtures/service.mts';
 
 const executable = process.argv[2], source = process.argv[3], mode = process.argv[4];
 assert(executable && source && ['early-first', 'return', 'revoked', 'reapproved', 'redraw',
-  'observe-late-ready', 'observe-never-ready'].includes(mode ?? ''), 'native flow, source and explicit mode required');
+  'observe-late-ready', 'observe-never-ready', 'recover-first-ack'].includes(mode ?? ''), 'native flow, source and explicit mode required');
 const earlyFirst = mode === 'early-first', reapproved = mode === 'reapproved', redraw = mode === 'redraw';
 const observation = mode === 'observe-late-ready' || mode === 'observe-never-ready';
+const recoverFirstAck = mode === 'recover-first-ack';
 const revoked = mode === 'revoked' || reapproved;
 const f = await fixture({ createDisplay: (access, origin, snapshot) => new DisplayGateway(access, origin, snapshot) });
 let child: ReturnType<typeof spawn> | undefined;
@@ -88,16 +89,17 @@ try {
   child.stderr!.on('data', chunk => {
     const value = String(chunk);
     errors = (errors + value).slice(-4096);
-    // Negative regression modes require the complete, fixed diagnostic record.
+    // Explicit recovery regressions require the complete, fixed diagnostic record.
     // Overflow must fail, rather than silently lose the original failure.
-    if (observation && !observationOverflow) {
+    if ((observation || recoverFirstAck) && !observationOverflow) {
       observationStderr += value;
       if (observationStderr.length > 8192) {
         observationOverflow = true; observationStderr = '';
       }
     }
   });
-  const phases = observation ? ['browser-opened'] : earlyFirst
+  const phases = observation ? ['browser-opened'] : recoverFirstAck
+    ? ['browser-opened', 'ack-suppressed', 'ack-recovered', 'ack-recovery-stopped'] : earlyFirst
     ? ['browser-opened', 'early-first-visible', 'early-stopped',
       'early-returned', 'early-returned-text', 'early-final-stopped',
       'early-revoked', 'browser-opened', 'early-reapproval-pending',
@@ -117,6 +119,9 @@ try {
       if (line === 'browser-opened') {
         assert(pending);
         if (loginStarts === 1) {
+          // The real prewarmed document must be ready and its ACK receiver
+          // suppressed before the original browser request is approved.
+          if (recoverFirstAck) continue;
           // Input condition only: the original native 15-second wait starts
           // before consent, leaving part of its unchanged product deadline.
           if (observation) await new Promise<void>(resolve => setTimeout(resolve, 3000));
@@ -126,6 +131,25 @@ try {
           (earlyFirst ? loginStarts === 2 : reapproved),
           'the new browser challenge stays pending until explicit owner consent');
         continue;
+      }
+      if (recoverFirstAck) {
+        assert.equal(loginStarts, 1, 'ACK recovery does not start another login');
+        assert.equal(refreshes, 0, 'ACK recovery preserves the existing server connection');
+        assert.equal(signouts, 0, 'local recovery and Stop never revoke the approval');
+        assert.equal(denials, 0); assert.equal(freshApproval, false); assert.equal(cancelled, 0);
+        assert(f.store.find(other.lease.sessionToken), 'Bob approval survives local ACK recovery and Stop');
+        if (line === 'ack-suppressed') {
+          assert(pending && !target, 'the first consent is pending until the actual ACK listener is suppressed');
+          await f.authenticate('alice', pending);
+          assert.equal((await f.post(`/login/${pending.id}/approve`)).status, 200);
+          continue;
+        } else {
+          assert(line === 'ack-recovered' || line === 'ack-recovery-stopped');
+          assert(target && f.store.find(target)?.membership?.connectionId === connectionId,
+            'ACK recovery and local Stop preserve the exact original gaming approval');
+          await account(line === 'ack-recovered' ? 1 : 0);
+        }
+        child!.stdin!.write('continue\n'); continue;
       }
       if (earlyFirst && line.startsWith('early-')) {
         const hasNewConsent = ['early-reapproval-empty', 'early-reapproved', 'early-signed-out'].includes(line);
@@ -267,7 +291,14 @@ try {
       assert(!observationOverflow, 'complete negative diagnostic record stays within 8192 characters');
       // Fixed scalar/marker assertions are below the shared close/drive wait,
       // so neither the final stderr line nor unexpected stdout can be missed.
-    } else assert.equal(code, 0, errors);
+    } else {
+      assert.equal(code, 0, errors);
+      if (recoverFirstAck) {
+        assert(!driveFailed && !parentDeadlineReached, 'ACK recovery ends without parent cancellation');
+        assert.equal(signal, null, 'successful native ACK recovery exits without a termination signal');
+        assert(!observationOverflow, 'complete recovery diagnostic stays within 8192 characters');
+      }
+    }
     assert.equal(phase, phases.length);
   } finally { clearTimeout(deadline); }
   assert(f.store.find(other.lease.sessionToken), 'another creator approval is unchanged');
@@ -278,6 +309,10 @@ try {
       'negative readiness observation neither renews nor revokes the exact browser approval');
     const lines = observationStderr.replace(/\r\n/gu, '\n').split('\n');
     assert.equal(lines.pop(), '', 'negative diagnostic record ends with a complete line');
+    const recovery = lines.shift();
+    assert.equal(recovery,
+      'Companion first chat recovery: kind=preparing prior_awaiting_render=0 prior_native_ready=0 prior_frames=0 prior_deadline_matches=1',
+      'held document conditions enter the preparation recovery without a prior publication');
     assert(lines.length === 6 || lines.length === 8, 'only the fixed negative diagnostic sequence is accepted');
     assert.equal(lines[0], 'Companion first chat observation: original-failure');
     assert.equal(lines.at(-1), 'Companion chat/video: subscribed empty own DOM',
@@ -326,7 +361,18 @@ try {
       'held current document reaches its original preparation deadline without a handshake or ACK');
     }
     console.log(`companion first chat observation ${mode}: child_exit=1 original_failure_preserved=1`);
+    console.log(recovery); // Exact validated recovery branch, with no document identifiers.
     for (const line of lines) console.log(line); // Only the validated fixed diagnostics above.
+  } else if (recoverFirstAck) {
+    assert.equal(loginStarts, 1); assert.equal(refreshes, 0); assert.equal(signouts, 0);
+    assert.equal(denials, 0); assert.equal(freshApproval, false); assert.equal(cancelled, 0);
+    assert(target && f.store.find(target)?.membership?.connectionId === connectionId,
+      'the native render recovery and Stop retain the original approval');
+    const recovery = 'Companion first chat recovery: kind=render prior_awaiting_render=1 prior_native_ready=1 prior_frames=0 prior_deadline_matches=1';
+    assert.equal(observationStderr.replace(/\r\n/gu, '\n'), `${recovery}\n`,
+      'only one exact render-recovery diagnostic is accepted');
+    console.log(recovery);
+    console.log('companion first chat render recovery: original approval, first empty ACK and Stop passed');
   } else if (earlyFirst) {
     assert(removed && freshApproval && oldTarget !== target &&
       oldConnection !== connectionId && !f.store.find(oldTarget) && !f.store.find(target),

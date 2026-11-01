@@ -18,6 +18,12 @@ namespace chatview {
 struct NativeChatSurfaceTestAccess {
     static ICoreWebView2 *core(NativeChatSurface &s) { return s.webview_.Get(); }
     static auto readiness(const NativeChatSurface &s) { return s.readiness_evidence(); }
+    static bool suppress_ack_for_current_document(NativeChatSurface &s) {
+        if (!s.ready() || !s.message_token_.value ||
+            FAILED(s.webview_->remove_WebMessageReceived(s.message_token_))) return false;
+        s.message_token_ = {};
+        return true;
+    }
 };
 struct NativeChatConnectionTestAccess {
     static HWND host(NativeChatConnection &c) { return c.host_; }
@@ -30,6 +36,17 @@ struct NativeChatConnectionTestAccess {
     static bool active(NativeChatConnection &c) { return c.active_; }
     static bool awaiting_render(NativeChatConnection &c) { return c.awaiting_frame_ != 0U; }
     static bool document_recovery_attempted(NativeChatConnection &c) { return c.first_document_recovery_attempted_; }
+    struct RecoverySnapshot {
+        bool attempted, replaying, awaiting_render, native_ready;
+        unsigned long long frames;
+        ULONGLONG loading_deadline, render_deadline;
+    };
+    static RecoverySnapshot recovery_snapshot(NativeChatConnection &c) {
+        // Scalars only: observing this boundary must not dispatch COM events.
+        return {c.first_document_recovery_attempted_, c.replaying_first_render_,
+            c.awaiting_frame_ != 0U, c.ready_, c.surface_.rendered_frames(),
+            c.loading_deadline_, c.render_deadline_};
+    }
     static ULONGLONG first_display_deadline(NativeChatConnection &c) {
         return c.awaiting_frame_ ? c.render_deadline_ : c.loading_deadline_;
     }
@@ -144,6 +161,11 @@ bool pixels(COLORREF expected)
 }
 struct Flow {
     chatview::NativeChatConnection &chat; chatview::VideoOutputPanel &video;
+    struct Recovery {
+        bool seen = false, render = false, prior_awaiting_render = false;
+        bool prior_native_ready = false, prior_deadline_matches = false, emitted = false;
+        unsigned long long prior_frames = 0U;
+    } recovery;
     void pulse() {
         MSG message{};
         while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
@@ -151,7 +173,30 @@ struct Flow {
             if (video.dispatch(message) || chat.dispatch(message)) continue;
             TranslateMessage(&message); DispatchMessageW(&message);
         }
-        chat.tick(); Video::pulse(video);
+        const auto before = Chat::recovery_snapshot(chat);
+        chat.tick();
+        const auto after = Chat::recovery_snapshot(chat);
+        if (!recovery.seen && !before.attempted && after.attempted) {
+            recovery.seen = true;
+            // ACK recovery clears native ready after its sole readiness check,
+            // so this tick cannot republish and clear the replay marker yet.
+            recovery.render = after.replaying;
+            recovery.prior_awaiting_render = before.awaiting_render;
+            recovery.prior_native_ready = before.native_ready;
+            recovery.prior_frames = before.frames;
+            recovery.prior_deadline_matches = Chat::first_display_deadline(chat) ==
+                (after.replaying ? before.render_deadline : before.loading_deadline);
+        }
+        Video::pulse(video);
+    }
+    void recovery_evidence() {
+        if (!recovery.seen || recovery.emitted) return;
+        recovery.emitted = true;
+        std::cerr << "Companion first chat recovery: kind=" << (recovery.render ? "render" : "preparing")
+            << " prior_awaiting_render=" << recovery.prior_awaiting_render
+            << " prior_native_ready=" << recovery.prior_native_ready
+            << " prior_frames=" << recovery.prior_frames
+            << " prior_deadline_matches=" << recovery.prior_deadline_matches << '\n';
     }
     void wait(const std::function<bool()> &done, const char *message, ULONGLONG ms = 15000) {
         const auto due = GetTickCount64() + ms;
@@ -310,6 +355,7 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
 {
     const bool revoked = mode == L"revoked" || mode == L"reapproved";
     const bool redraw = mode == L"redraw";
+    const bool recover_first_ack = mode == L"recover-first-ack";
     const bool observe_late = mode == L"observe-late-ready";
     const bool observe_never = mode == L"observe-never-ready";
     const bool observation = observe_late || observe_never;
@@ -596,8 +642,16 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
         video.close(); chat.close(); hud.destroy();
         return;
     }
+    bool ack_suppressed = false;
     try {
         flow.wait([&] {
+            if (recover_first_ack && !ack_suppressed && browser_requests == 1U &&
+                Chat::client(chat).login_pending() && Chat::surface(chat).ready()) {
+                expect(chatview::NativeChatSurfaceTestAccess::suppress_ack_for_current_document(Chat::surface(chat)),
+                    "suppress first ACK only after the actual prewarmed nonce handshake");
+                ack_suppressed = true;
+                std::cout << "ack-suppressed\n" << std::flush;
+            }
             if (deferred && Chat::document_recovery_attempted(chat) && deferred->state->held[0])
                 expect(deferred->complete(0U), "release document A after the existing recovery reserves C");
             return Chat::surface(chat).rendered_frames() >= 1 && Chat::membership(chat).has_value();
@@ -610,6 +664,7 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
         const auto budget = deadline > began ? deadline - began : 0U;
         const bool observe = (redraw || observation) &&
             std::string_view(failure.what()) == "subscribed empty own DOM";
+        flow.recovery_evidence();
         if (observe) std::cerr << "Companion first chat observation: original-failure\n";
         Chat::first_display_evidence(chat);
         if (observe) {
@@ -671,10 +726,30 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
         }
         throw; // Always rethrow the original 15-second failure, including after a late ACK.
     } catch (...) {
+        flow.recovery_evidence();
         Chat::first_display_evidence(chat);
         throw; // Preserve the original readiness condition and 15-second bound.
     }
     expect(Chat::surface(chat).rendered_messages() == 0 && !Chat::first_text(chat), "empty subscription is not first text");
+    if (recover_first_ack) {
+        expect(ack_suppressed && flow.recovery.seen && flow.recovery.render &&
+            flow.recovery.prior_awaiting_render && flow.recovery.prior_native_ready &&
+            flow.recovery.prior_frames == 0U && flow.recovery.prior_deadline_matches &&
+            browser_requests == 1U && Chat::membership(chat).has_value(),
+            "lost first ACK recovery retains its prior render state, deadline and original approval");
+        flow.recovery_evidence();
+        flow.checkpoint("ack-recovered");
+        command(dialog, 105); // Local Stop preserves the exact server approval.
+        flow.wait([&] { return !Chat::client(chat).running() &&
+            !Chat::membership(chat) && !Chat::surface(chat).ready() &&
+            Chat::surface(chat).rendered_messages() == 0U &&
+            !Chat::first_text(chat) && Chat::client(chat).can_resume_current(); },
+            "local Stop clears recovered chat without revoking the approval");
+        expect(browser_requests == 1U, "ACK recovery and local Stop never open another login");
+        flow.checkpoint("ack-recovery-stopped");
+        video.close(); chat.close(); hud.destroy();
+        return;
+    }
     flow.state(Status::Receiving, controls);
     // Model a retry notification already dequeued before the native owner
     // cancelled legacy page recovery. The real HUD procedure must not reload
@@ -1135,7 +1210,7 @@ int wmain(int argc, wchar_t **argv)
         expect(argc == 3, "source fixture and explicit flow mode required");
         const std::wstring_view mode(argv[2]);
         expect(mode == L"early-first" || mode == L"return" || mode == L"revoked" || mode == L"reapproved" ||
-            mode == L"redraw" || mode == L"observe-late-ready" || mode == L"observe-never-ready" || mode == L"redraw-revoked-live" ||
+            mode == L"redraw" || mode == L"recover-first-ack" || mode == L"observe-late-ready" || mode == L"observe-never-ready" || mode == L"redraw-revoked-live" ||
             mode == L"redraw-revoked-black" || mode == L"redraw-reapproved-live" ||
             mode == L"redraw-reapproved-black", "known flow mode");
         std::string origin, auxiliary; std::getline(std::cin, origin); std::getline(std::cin, auxiliary);

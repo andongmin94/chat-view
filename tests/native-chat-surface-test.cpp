@@ -200,6 +200,12 @@ int main()
         expect(evaluate(core.Get(), L"nativeMessageContract.sourceMatches") == L"true", "native event identifies its bridge");
         await([&] { return surface.rendered_frames() == 1U; }, "actual DOM render acknowledgement");
         expect(surface.rendered_messages() == 1U, "one rendered text row");
+        await([&] { return evaluate(core.Get(), LR"JS(
+            document.fonts.check("500 16px 'Pretendard Variable'", '한글 ABC') &&
+            Array.from(document.fonts).some(face =>
+                face.family.includes('Pretendard Variable') && face.status === 'loaded') &&
+            getComputedStyle(document.body).fontFamily.includes('Pretendard Variable')
+        )JS") == L"true"; }, "embedded Pretendard font is loaded in the acknowledged owned DOM");
         expect(evaluate(core.Get(), LR"JS(
             document.querySelector('#messages li b').textContent === '모의 사용자 <script>' &&
             document.querySelector('#messages li .content').textContent === '한글 😀 <img onerror=evil()>' &&
@@ -476,7 +482,8 @@ int main()
         expect(evaluate(core.Get(), LR"JS((() => {
             const list = document.getElementById('messages');
             const unread = document.getElementById('jump-latest');
-            list.scrollTop = 90;
+            // Read inside the second row regardless of card padding/font metrics.
+            list.scrollTop = list.children[1].offsetTop - list.children[0].offsetTop + 5;
             if (list.scrollHeight - list.scrollTop - list.clientHeight < 80) return false;
             const anchor = [...list.children].find(row =>
                 row.getBoundingClientRect().bottom > list.getBoundingClientRect().top);

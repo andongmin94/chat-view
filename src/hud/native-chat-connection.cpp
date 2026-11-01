@@ -209,10 +209,10 @@ bool NativeChatConnection::open_dialog() noexcept
         klass.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
         const bool gaming = role_ == DisplayRole::Gaming;
-        const int dialog_height = gaming ? 750 : 694;
+        const int dialog_height = gaming ? 840 : 788;
         dialog_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT | WS_EX_LAYERED, kClass,
             L"ChatView · 자체 채팅 연결 (개발 검증)", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-            CW_USEDEFAULT, CW_USEDEFAULT, 600, dialog_height, nullptr, nullptr, klass.hInstance, this);
+            CW_USEDEFAULT, CW_USEDEFAULT, 840, dialog_height, nullptr, nullptr, klass.hInstance, this);
         if (!dialog_) return false;
         displayed_status_.reset();
         retry_first_display_label_ = false;
@@ -228,50 +228,52 @@ bool NativeChatConnection::open_dialog() noexcept
         const UINT dpi = GetDpiForWindow(dialog_);
         theme_.initialize(dialog_);
         const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
-        SetWindowPos(dialog_, nullptr, 0, 0, scale(600), scale(dialog_height), SWP_NOMOVE | SWP_NOZORDER);
+        SetWindowPos(dialog_, nullptr, 0, 0, scale(840), scale(dialog_height), SWP_NOMOVE | SWP_NOZORDER);
         const auto add = [&](const wchar_t *kind, const wchar_t *caption, DWORD style,
                              int id, int x, int y, int width, int height) {
-            HWND item = CreateWindowExW(std::wstring_view(kind) == L"EDIT" ? WS_EX_CLIENTEDGE : 0,
+            HWND item = CreateWindowExW(0,
                 kind, caption, WS_CHILD | WS_VISIBLE | style, scale(x), scale(y), scale(width), scale(height),
                 dialog_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), klass.hInstance, nullptr);
             if (item) theme_.apply(item, id == kConnect);
             return item;
         };
-        add(L"STATIC", L"서비스 주소 (새 로그인용 · HTTPS, 경로 제외)", 0, 0, 20, 16, 550, 24);
-        HWND origin = add(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, kOrigin, 20, 44, 550, 30);
         const auto role_text = std::wstring(L"현재 실행: ") + display_role_label(role_);
-        add(L"STATIC", role_text.c_str(), 0, kRole, 20, 82, 550, 24);
-        add(L"STATIC", L"", 0, kSession, 20, 110, 550, 72);
-        add(L"BUTTON", L"개발용 로컬 서버 허용 (http://127.0.0.1만)", WS_TABSTOP | BS_AUTOCHECKBOX, kLocal, 20, 194, 550, 28);
-        add(L"BUTTON", L"이 PC에서 연결 유지 · 다음 실행부터 자동 연결", WS_TABSTOP | BS_AUTOCHECKBOX, kRemember, 20, 228, 550, 28);
-        add(L"BUTTON", L"로그인 / 연결", WS_TABSTOP | BS_DEFPUSHBUTTON, kConnect, 20, 272, 150, 32);
-        add(L"BUTTON", L"연결 중지", WS_TABSTOP | BS_PUSHBUTTON, kDisconnect, 186, 272, 120, 32);
-        add(L"BUTTON", L"로그아웃", WS_TABSTOP | BS_PUSHBUTTON, kForget, 322, 272, 150, 32);
+        HWND role = add(L"STATIC", role_text.c_str(), 0, kRole, 28, 24, 768, 28);
+        HWND origin_label = add(L"STATIC", L"서비스 주소 (새 로그인용 · HTTPS, 경로 제외)", 0, 0, 52, 100, 720, 22);
+        HWND origin = add(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, kOrigin, 52, 132, 720, 40);
+        add(L"STATIC", L"", 0, kSession, 52, 474, 348, 112);
+        add(L"BUTTON", L"개발용 로컬 서버 허용 (http://127.0.0.1만)", WS_TABSTOP | BS_AUTOCHECKBOX, kLocal, 52, 184, 720, 24);
+        add(L"BUTTON", L"이 PC에서 연결 유지 · 다음 실행부터 자동 연결", WS_TABSTOP | BS_AUTOCHECKBOX, kRemember, 52, 216, 720, 24);
+        add(L"BUTTON", L"로그인 / 연결", WS_TABSTOP | BS_DEFPUSHBUTTON, kConnect, 52, 260, 160, 44);
+        add(L"BUTTON", L"연결 중지", WS_TABSTOP | BS_PUSHBUTTON, kDisconnect, 228, 260, 128, 44);
+        add(L"BUTTON", L"로그아웃", WS_TABSTOP | BS_PUSHBUTTON, kForget, 372, 260, 128, 44);
         HWND resume = add(L"BUTTON", L"현재 승인으로 자체 채팅 복귀", WS_TABSTOP | BS_PUSHBUTTON,
-            kResume, 20, 314, 300, 32);
+            kResume, 516, 260, 256, 44);
         HWND manage = add(L"BUTTON", L"계정·시험 광고·활동 관리", WS_TABSTOP | BS_PUSHBUTTON,
-            kManage, 336, 314, 234, 32);
+            kManage, 52, 316, 272, 44);
         HWND reopen = add(L"BUTTON", L"브라우저 승인 페이지 다시 열기", WS_TABSTOP | BS_PUSHBUTTON,
-            kReopenLogin, 20, 354, 350, 32);
-        HWND code = add(L"STATIC", L"", SS_CENTERIMAGE, kLoginCode, 386, 354, 184, 32);
-        HWND previous = add(L"STATIC", L"", SS_CENTERIMAGE, kPreviousLoginCode, 20, 390, 550, 26);
-        HWND display = add(L"STATIC", L"", 0, kDisplayStatus, 20, 424, 550, 38);
+            kReopenLogin, 340, 316, 320, 44);
+        HWND code = add(L"STATIC", L"", SS_CENTERIMAGE, kLoginCode, 676, 316, 96, 40);
+        HWND previous = add(L"STATIC", L"", SS_CENTERIMAGE, kPreviousLoginCode, 52, 372, 720, 28);
+        HWND display = add(L"STATIC", L"", 0, kDisplayStatus, 52, 598, 348, 44);
         // Only the OBS-free gaming companion offers a separate-output panel.
         // The button queues a local UI request, not video consent or login.
         HWND video = gaming ? add(L"BUTTON", L"별도 영상 출력 설정 열기",
-            WS_TABSTOP | BS_PUSHBUTTON, kCompanionVideo, 20, 470, 250, 32) : nullptr;
-        if (gaming) add(L"STATIC", L"게임 PC 전용 · 채팅 연결/영상 출력은 서로 독립적", 0, 0, 284, 470, 286, 32);
-        const int offset = 70 + (gaming ? 46 : 0);
+            WS_TABSTOP | BS_PUSHBUTTON, kCompanionVideo, 424, 654, 348, 44) : nullptr;
+        if (gaming) add(L"STATIC", L"게임 PC 전용 · 채팅 연결/영상 출력은 서로 독립적", 0, 0, 424, 710, 348, 40);
         HWND management_scope = add(L"STATIC", L"브라우저의 로그인 계정으로 관리합니다. 열린 화면의 채널을 확인하세요.\n브라우저 화면은 HUD 캡처 보호 대상이 아닙니다.",
-            0, kManagementScope, 20, 402 + offset, 550, 40);
+            0, kManagementScope, 424, 474, 348, 60);
         add(L"STATIC", L"브라우저에서 채널과 요청 역할을 승인하세요. 기기등록이나 키 입력은 없습니다.\n공용 PC에서는 연결 유지를 선택하지 마세요.",
-            0, kNotice, 20, 452 + offset, 550, 80);
+            0, kNotice, 424, 550, 348, 88);
         // Always visible when this panel is open, independent of login, output
         // reports and transient notices. Local status never certifies video.
         HWND scope = add(L"STATIC", L"수신 영상의 HUD 제외: 미검증\n채팅 연결·OBS 활성 보고는 영상 검증이 아닙니다.",
-            0, kVideoScope, 20, 538 + offset, 550, 40);
+            0, kVideoScope, 52, 654, 348, 48);
         if (!origin || !scope || !resume || !reopen || !code || !previous || !display || !manage || !management_scope ||
             (gaming && !video)) { DestroyWindow(dialog_); dialog_ = nullptr; return false; }
+        SendMessageW(role, WM_SETFONT, reinterpret_cast<WPARAM>(theme_.card_font()), TRUE);
+        SendMessageW(origin_label, WM_SETFONT, reinterpret_cast<WPARAM>(theme_.bold_font()), TRUE);
+        SendMessageW(display, WM_SETFONT, reinterpret_cast<WPARAM>(theme_.bold_font()), TRUE);
         SendMessageW(origin, EM_SETLIMITTEXT, 2048, 0);
         if (auto saved = load_connection()) {
             SetWindowTextW(origin, saved->origin.c_str());
@@ -294,7 +296,17 @@ LRESULT CALLBACK NativeChatConnection::procedure(HWND window, UINT message, WPAR
     }
     if (!self) return DefWindowProcW(window, message, wparam, lparam);
     LRESULT themed = 0;
-    if (self->theme_.handle_message(window, message, wparam, lparam, themed)) return themed;
+    if (self->theme_.handle_message(window, message, wparam, lparam, themed)) {
+        if (message == WM_ERASEBKGND) {
+            const UINT dpi = GetDpiForWindow(window);
+            const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
+            NativePanelTheme::paint_card(reinterpret_cast<HDC>(wparam),
+                {scale(28), scale(76), scale(796), scale(426)}, dpi);
+            NativePanelTheme::paint_card(reinterpret_cast<HDC>(wparam),
+                {scale(28), scale(450), scale(796), scale(self->role_ == DisplayRole::Gaming ? 778 : 726)}, dpi);
+        }
+        return themed;
+    }
     if (message == WM_COMMAND) {
         if (LOWORD(wparam) == kConnect || LOWORD(wparam) == IDOK) { self->connect(); return 0; }
         if (LOWORD(wparam) == kDisconnect) {

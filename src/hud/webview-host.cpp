@@ -29,6 +29,7 @@ using Microsoft::WRL::ComPtr;
 // Reserved virtual origin, answered entirely from memory. This is not a server.
 constexpr wchar_t kLocalDocumentOrigin[] = L"https://chatview.invalid/";
 constexpr wchar_t kLocalDocumentFilter[] = L"https://chatview.invalid/*";
+constexpr wchar_t kLocalFontUrl[] = L"https://chatview.invalid/fonts/PretendardVariable.woff2";
 
 constexpr wchar_t kSetupPage[] = LR"HTML(
 <!doctype html>
@@ -549,21 +550,35 @@ HRESULT WebViewHost::handle_local_document_request(
     LPWSTR uri = nullptr;
     LPWSTR method = nullptr;
     COREWEBVIEW2_WEB_RESOURCE_CONTEXT context{};
-    const bool allowed = ready_ && current_url_.empty() &&
+    const bool local_request = ready_ && current_url_.empty() &&
         !local_document_url_.empty() &&
         SUCCEEDED(args->get_ResourceContext(&context)) &&
-        context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT &&
-        SUCCEEDED(request->get_Uri(&uri)) && uri && local_document_url_ == uri &&
+        SUCCEEDED(request->get_Uri(&uri)) && uri &&
         SUCCEEDED(request->get_Method(&method)) && method && wcscmp(method, L"GET") == 0;
+    const bool document = local_request &&
+        context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT && local_document_url_ == uri;
+    const bool font = local_request &&
+        context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FONT && wcscmp(uri, kLocalFontUrl) == 0;
+    const bool allowed = document || font;
     CoTaskMemFree(uri);
     CoTaskMemFree(method);
     ComPtr<IStream> content;
     if (allowed) {
+        const void *bytes = local_document_utf8_.data();
+        ULONG size = static_cast<ULONG>(local_document_utf8_.size());
+        if (font) {
+            const HMODULE module = GetModuleHandleW(nullptr);
+            const HRSRC resource = FindResourceW(module, L"CHATVIEW_PRETENDARD_WEB", RT_RCDATA);
+            if (!resource) return HRESULT_FROM_WIN32(GetLastError());
+            const HGLOBAL loaded = LoadResource(module, resource);
+            size = SizeofResource(module, resource);
+            bytes = loaded ? LockResource(loaded) : nullptr;
+            if (!bytes || !size) return E_FAIL;
+        }
         result = CreateStreamOnHGlobal(nullptr, TRUE, &content);
         if (FAILED(result)) return result;
         ULONG written = 0U;
-        const ULONG size = static_cast<ULONG>(local_document_utf8_.size());
-        result = content->Write(local_document_utf8_.data(), size, &written);
+        result = content->Write(bytes, size, &written);
         if (FAILED(result) || written != size) return FAILED(result) ? result : E_FAIL;
         LARGE_INTEGER beginning{};
         result = content->Seek(beginning, STREAM_SEEK_SET, nullptr);
@@ -572,9 +587,11 @@ HRESULT WebViewHost::handle_local_document_request(
     ComPtr<ICoreWebView2WebResourceResponse> response;
     result = environment_->CreateWebResourceResponse(content.Get(),
         allowed ? 200 : 404, allowed ? L"OK" : L"Not Found",
-        L"Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n"
-        L"X-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n"
-        L"Content-Security-Policy: frame-ancestors 'none'\r\n", &response);
+        font ? L"Content-Type: font/woff2\r\nCache-Control: no-store\r\n"
+            L"X-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n"
+            : L"Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n"
+            L"X-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n"
+            L"Content-Security-Policy: frame-ancestors 'none'\r\n", &response);
     return FAILED(result) ? result : args->put_Response(response.Get());
 }
 

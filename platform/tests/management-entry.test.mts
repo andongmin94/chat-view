@@ -10,6 +10,16 @@ const routes = ['/account', '/campaigns', '/campaigns/activity'];
 test('management entry reuses browser identity and never exchanges a display approval', async () => {
   const f = await fixture();
   try {
+    const font = await f.request('/assets/PretendardVariable.woff2');
+    assert.equal(font.status, 200);
+    assert.equal(font.headers.get('content-type'), 'font/woff2');
+    assert.equal(font.headers.get('set-cookie'), null, 'font reads do not create browser authority');
+    assert.equal(Buffer.from(await font.arrayBuffer()).subarray(0, 4).toString('ascii'), 'wOF2');
+    assert.equal((await f.request('/assets/PretendardVariable.woff2?path=other')).status, 400);
+    assert.equal((await f.request('/assets/PretendardVariable.woff2', { method: 'POST' })).status, 405);
+    assert.equal((await f.request('/assets/PretendardVariable.woff2', {
+      headers: { Origin: 'https://attacker.invalid' },
+    })).status, 403);
     const alice = await f.connect('alice', 'streaming');
     const before = f.store.connections('alice');
     const exchanges = f.exchangeCalls;
@@ -17,6 +27,7 @@ test('management entry reuses browser identity and never exchanges a display app
       const response = await f.request(path, { headers: { Cookie: alice.b.cookie } });
       assert.equal(response.status, 200);
       assert.match(response.headers.get('content-type') ?? '', /text\/html/u);
+      assert.match(response.headers.get('content-security-policy') ?? '', /font-src 'self'/u);
       const html = await response.text();
       assert(!html.includes(alice.lease.sessionToken));
       assert(!html.includes(alice.lease.token));

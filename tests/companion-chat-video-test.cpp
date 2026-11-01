@@ -324,6 +324,38 @@ void run(const wchar_t *source_path, const std::wstring &origin, const std::wstr
     SetWindowPos(hud_window, nullptr, 40, 40, 300, 220, SWP_NOZORDER | SWP_NOACTIVATE);
     expect(chat.open_dialog(), "gaming connection panel"); const HWND dialog = Chat::dialog(chat);
     const HWND controls = Video::open(video); expect(controls != nullptr, "video settings");
+    if (mode == L"return") {
+        const HWND local = GetDlgItem(dialog, 103);
+        SendMessageW(local, BM_SETCHECK, BST_UNCHECKED, 0);
+        SetActiveWindow(dialog);
+        SetFocus(local);
+        SendMessageW(local, BM_CLICK, 0, 0);
+        expect(SendMessageW(local, BM_GETCHECK, 0, 0) == BST_CHECKED,
+            "painted checkbox retains native auto-toggle");
+        SendMessageW(local, BM_CLICK, 0, 0);
+        expect(SendMessageW(local, BM_GETCHECK, 0, 0) == BST_UNCHECKED,
+            "painted checkbox toggles back without connecting");
+        for (const int id : {201, 202}) {
+            RECT choice{};
+            const HWND item = GetDlgItem(controls, id);
+            const bool has_bounds = GetWindowRect(item, &choice) != FALSE;
+            const int expected_height = MulDiv(40, static_cast<int>(GetDpiForWindow(controls)), 96);
+            const auto item_height = SendMessageW(item, CB_GETITEMHEIGHT, static_cast<WPARAM>(-1), 0);
+            const auto geometry = "native select has the reference 40-DIP closed height: id=" + std::to_string(id) +
+                " rect_height=" + std::to_string(choice.bottom - choice.top) +
+                " item_height=" + std::to_string(item_height) + " expected_height=" + std::to_string(expected_height);
+            expect(has_bounds && choice.bottom - choice.top == expected_height, geometry.c_str());
+        }
+        const HWND choice = GetDlgItem(controls, 201);
+        SetActiveWindow(controls);
+        SetFocus(choice);
+        SendMessageW(choice, WM_KEYDOWN, VK_F4, 0);
+        expect(SendMessageW(choice, CB_GETDROPPEDSTATE, 0, 0) != FALSE,
+            "painted select retains the native keyboard popup");
+        SendMessageW(choice, WM_KEYDOWN, VK_ESCAPE, 0);
+        expect(SendMessageW(choice, CB_GETDROPPEDSTATE, 0, 0) == FALSE,
+            "native keyboard dismisses the painted selection list");
+    }
     // Both synthetic game windows have the SAME caption and executable.
     // The native picker must still distinguish their owner processes before
     // a streamer could explicitly permit video from the wrong window.

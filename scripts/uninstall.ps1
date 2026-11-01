@@ -120,7 +120,8 @@ $files = @(
     (Join-Path $obsRoot 'obs-plugins\64bit\chat-view-config.exe'),
     (Join-Path $obsRoot 'obs-plugins\64bit\chat-view-diagnostics.exe'),
     (Join-Path $obsRoot 'data\obs-plugins\chat-view-obs\locale\en-US.ini'),
-    (Join-Path $obsRoot 'data\obs-plugins\chat-view-obs\locale\ko-KR.ini')
+    (Join-Path $obsRoot 'data\obs-plugins\chat-view-obs\locale\ko-KR.ini'),
+    (Join-Path $obsRoot 'data\obs-plugins\chat-view-obs\fonts\LICENSE.txt')
 )
 
 $removalErrors = [System.Collections.Generic.List[string]]::new()
@@ -149,6 +150,12 @@ if ((Test-Path -LiteralPath $localeDirectory -PathType Container) -and
     -not (Get-ChildItem -LiteralPath $localeDirectory -Force |
         Select-Object -First 1)) {
     Remove-Item -LiteralPath $localeDirectory -Force
+}
+$fontDirectory = Join-Path $dataRoot 'fonts'
+if ((Test-Path -LiteralPath $fontDirectory -PathType Container) -and
+    -not (Get-ChildItem -LiteralPath $fontDirectory -Force |
+        Select-Object -First 1)) {
+    Remove-Item -LiteralPath $fontDirectory -Force
 }
 if ((Test-Path -LiteralPath $dataRoot -PathType Container) -and
     -not (Get-ChildItem -LiteralPath $dataRoot -Force |

@@ -362,6 +362,10 @@ $packageFiles = @(
     @{
         Source = Join-Path $PSScriptRoot 'data\obs-plugins\chat-view-obs\locale\ko-KR.ini'
         RelativeDestination = 'data\obs-plugins\chat-view-obs\locale\ko-KR.ini'
+    },
+    @{
+        Source = Join-Path $PSScriptRoot 'data\obs-plugins\chat-view-obs\fonts\LICENSE.txt'
+        RelativeDestination = 'data\obs-plugins\chat-view-obs\fonts\LICENSE.txt'
     }
 )
 

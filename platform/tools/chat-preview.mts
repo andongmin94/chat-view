@@ -3,12 +3,13 @@ import { readFile } from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
 import type { ChatSnapshot } from '../server/chzzk/session.mts';
 
-export const CHAT_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+export const CHAT_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const assets = new Map([
   ['/chat', ['chat.html', 'text/html; charset=utf-8']],
   ['/chat.js', ['chat.js', 'text/javascript; charset=utf-8']],
   ['/chat-renderer.js', ['chat-renderer.js', 'text/javascript; charset=utf-8']],
   ['/chat.css', ['chat.css', 'text/css; charset=utf-8']],
+  ['/assets/PretendardVariable.woff2', ['../../data/fonts/PretendardVariable.woff2', 'font/woff2']],
 ]);
 
 // Same-browser, loopback-only preview. Not a public chat delivery service.

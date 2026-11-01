@@ -44,7 +44,7 @@ constexpr int kNativeConnectId = 1009;
 constexpr int kNativeStatusId = 1010;
 constexpr int kExternalHintId = 1011;
 constexpr int kWindowWidthDip = 960;
-constexpr int kWindowHeightDip = 740;
+constexpr int kWindowHeightDip = 896;
 constexpr int kMinimumUrlLength = 0;
 constexpr int kMaximumUrlLength = 2048;
 
@@ -784,6 +784,15 @@ private:
         LRESULT themed = 0;
         if (message != WM_CTLCOLORSTATIC &&
             theme_.handle_message(window_, message, wparam, lparam, themed)) {
+            if (message == WM_ERASEBKGND) {
+                const auto card = [&](int left, int top, int width, int height) {
+                    RECT bounds{scale_dip(left, dpi_), scale_dip(top, dpi_),
+                        scale_dip(left + width, dpi_), scale_dip(top + height, dpi_)};
+                    theme_.paint_card(reinterpret_cast<HDC>(wparam), bounds, dpi_);
+                };
+                card(28, 128, 904, 120);
+                card(28, 272, 904, 172);
+            }
             return themed;
         }
 
@@ -1735,7 +1744,7 @@ private:
         destroy_fonts();
         theme_.initialize(window_);
         title_font_ = CreateFontW(
-            -scale_dip(25, dpi_),
+            -scale_dip(28, dpi_),
             0,
             0,
             0,
@@ -1748,7 +1757,7 @@ private:
             CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE,
-            L"Segoe UI");
+            L"Pretendard");
         const std::array<HWND, 28U> body_controls{
             subtitle_,
             video_scope_,
@@ -1802,13 +1811,13 @@ private:
             SendMessageW(
                 label,
                 WM_SETFONT,
-                reinterpret_cast<WPARAM>(theme_.bold_font()),
+                reinterpret_cast<WPARAM>(label == status_group_ || label == native_label_ || label == url_label_ ? theme_.card_font() : theme_.bold_font()),
                 TRUE);
         }
         SendMessageW(
             subtitle_,
             WM_SETFONT,
-            reinterpret_cast<WPARAM>(theme_.bold_font()),
+            reinterpret_cast<WPARAM>(theme_.body_font()),
             TRUE);
     }
 
@@ -1837,35 +1846,36 @@ private:
                 TRUE);
         };
 
-        move(title_, 32, 24, 896, 38);
-        move(subtitle_, 34, 61, 892, 24);
-        move(recovery_button_, 34, 92, 240, 38);
-        move(video_scope_, 290, 90, 636, 44);
-        move(native_label_, 34, 145, 400, 22);
-        move(native_button_, 34, 173, 240, 36);
-        move(native_value_, 290, 175, 636, 40);
-        move(url_label_, 34, 225, 500, 22);
-        move(url_edit_, 34, 252, 672, 32);
-        move(save_button_, 718, 251, 208, 34);
-        move(provider_value_, 36, 289, 888, 24);
-        move(external_hint_, 36, 315, 888, 38);
-        move(status_group_, 28, 363, 904, 226);
-        move(obs_label_, 52, 395, 190, 24);
-        move(obs_value_, 248, 395, 650, 24);
-        move(hud_label_, 52, 431, 190, 24);
-        move(hud_value_, 248, 431, 650, 24);
-        move(safety_label_, 52, 467, 190, 24);
-        move(safety_value_, 248, 467, 650, 24);
-        move(output_label_, 52, 503, 190, 24);
-        move(output_value_, 248, 503, 650, 24);
-        move(recovery_label_, 52, 539, 190, 24);
-        move(recovery_value_, 248, 539, 650, 24);
-        move(feedback_, 34, 599, 892, 40);
-        move(edit_button_, 34, 653, 142, 38);
-        move(restart_button_, 186, 653, 142, 38);
-        move(diagnostics_button_, 338, 653, 198, 38);
-        move(close_button_, 806, 653, 120, 38);
-        move(version_, 556, 661, 230, 22);
+        move(title_, 32, 24, 500, 40);
+        move(subtitle_, 34, 70, 500, 40);
+        move(video_scope_, 568, 32, 360, 64);
+        move(native_label_, 52, 152, 608, 24);
+        move(native_value_, 52, 184, 608, 40);
+        move(native_button_, 704, 182, 204, 44);
+        move(url_label_, 52, 296, 608, 24);
+        move(url_edit_, 52, 332, 620, 40);
+        move(save_button_, 704, 330, 204, 44);
+        move(provider_value_, 52, 388, 224, 32);
+        move(external_hint_, 300, 388, 608, 32);
+        move(status_group_, 28, 468, 904, 260);
+        // Keep complete HUD and recovery explanations readable in two lines.
+        move(obs_label_, 52, 524, 160, 20);
+        move(obs_value_, 236, 524, 672, 36);
+        move(hud_label_, 52, 560, 160, 20);
+        move(hud_value_, 236, 560, 672, 36);
+        move(safety_label_, 52, 596, 160, 20);
+        move(safety_value_, 236, 596, 672, 36);
+        move(output_label_, 52, 632, 160, 20);
+        move(output_value_, 236, 632, 672, 36);
+        move(recovery_label_, 52, 668, 160, 20);
+        move(recovery_value_, 236, 668, 672, 36);
+        move(recovery_button_, 676, 480, 232, 44);
+        move(feedback_, 32, 744, 892, 40);
+        move(edit_button_, 32, 800, 160, 44);
+        move(restart_button_, 208, 800, 160, 44);
+        move(diagnostics_button_, 384, 800, 208, 44);
+        move(close_button_, 808, 800, 120, 44);
+        move(version_, 612, 814, 180, 20);
     }
 
     void center_on_primary_monitor()

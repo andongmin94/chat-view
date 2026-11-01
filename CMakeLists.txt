@@ -614,3 +614,23 @@ install(FILES
 )
 
 include(cmake/native-chat.cmake)
+
+# Keep the native and owned-WebView typography inside each existing UI binary.
+enable_language(RC)
+set(CHATVIEW_PRETENDARD_MEDIUM_FILE "${CMAKE_CURRENT_SOURCE_DIR}/data/fonts/Pretendard-Medium.otf")
+set(CHATVIEW_PRETENDARD_BOLD_FILE "${CMAKE_CURRENT_SOURCE_DIR}/data/fonts/Pretendard-Bold.otf")
+set(CHATVIEW_PRETENDARD_WEB_FILE "${CMAKE_CURRENT_SOURCE_DIR}/data/fonts/PretendardVariable.woff2")
+configure_file(src/common/native-ui-fonts.rc.in generated/native-ui-fonts.rc @ONLY)
+get_property(chatview_native_font_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(chatview_target IN LISTS chatview_native_font_targets)
+    get_target_property(chatview_target_type "${chatview_target}" TYPE)
+    if(chatview_target_type STREQUAL "EXECUTABLE")
+        get_target_property(chatview_target_sources "${chatview_target}" SOURCES)
+        foreach(chatview_source IN LISTS chatview_target_sources)
+            if(chatview_source MATCHES "(^|/)src/(hud/webview-host|config/main)\\.cpp$")
+                target_sources("${chatview_target}" PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/native-ui-fonts.rc")
+                break()
+            endif()
+        endforeach()
+    endif()
+endforeach()

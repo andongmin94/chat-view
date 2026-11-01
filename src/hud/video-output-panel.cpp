@@ -284,7 +284,7 @@ void VideoOutputPanel::open() noexcept
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
         panel_ = CreateWindowExW(WS_EX_CONTROLPARENT | WS_EX_DLGMODALFRAME | WS_EX_LAYERED, kPanelClass,
             L"ChatView · 게임 창 별도 출력 (실험)", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-            CW_USEDEFAULT, CW_USEDEFAULT, 660, 668, nullptr, nullptr, klass.hInstance, this);
+            CW_USEDEFAULT, CW_USEDEFAULT, 900, 792, nullptr, nullptr, klass.hInstance, this);
         if (!panel_) return;
         // GetWindowDisplayAffinity requires a layered window. Keep this panel
         // opaque and verify protection before both first show and later reuse.
@@ -303,37 +303,51 @@ void VideoOutputPanel::open() noexcept
         const auto dpi = GetDpiForWindow(panel_);
         theme_.initialize(panel_);
         const auto scale = [dpi](int v) { return MulDiv(v, static_cast<int>(dpi), 96); };
-        SetWindowPos(panel_, nullptr, 0, 0, scale(660), scale(668), SWP_NOMOVE | SWP_NOZORDER);
+        SetWindowPos(panel_, nullptr, 0, 0, scale(900), scale(792), SWP_NOMOVE | SWP_NOZORDER);
         const auto add = [&](const wchar_t *kind, const wchar_t *caption, DWORD style, int id, int x, int y, int w, int h) {
             HWND item = CreateWindowExW(0, kind, caption, WS_CHILD | WS_VISIBLE | style,
                 scale(x), scale(y), scale(w), scale(h), panel_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), klass.hInstance, nullptr);
             if (!item) throw std::runtime_error("Video controls unavailable");
             theme_.apply(item, id == kIdentify || id == kStart);
+            return item;
         };
-        add(L"STATIC", L"게임 창만 선택합니다. 화면 전체·챗뷰 자체 창은 캡처하지 않습니다.", 0, 0, 20, 18, 610, 24);
-        add(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, kSource, 20, 48, 610, 180);
-        add(L"STATIC", L"창을 직접 선택하세요. PID·프로그램명·창 제목을 확인합니다.", 0, kSourceHint, 20, 76, 610, 18);
-        add(L"STATIC", L"별도 확장 출력 (캡처카드 입력) · 복제/주 화면/HDR는 허용하지 않습니다.", 0, 0, 20, 94, 610, 24);
-        add(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, kMonitor, 20, 124, 610, 150);
-        add(L"STATIC", L"출력 화면의 SDR/복제/HDR 상태를 확인 중입니다.", 0, kMonitorHint, 20, 153, 610, 21);
-        add(L"BUTTON", L"1. 시험 패턴 표시", BS_PUSHBUTTON | WS_TABSTOP, kIdentify, 20, 177, 235, 32);
-        add(L"BUTTON", L"2. 수신 확인 · 게임 출력", BS_PUSHBUTTON | WS_TABSTOP, kStart, 270, 177, 360, 32);
-        add(L"BUTTON", L"목록 새로고침", BS_PUSHBUTTON | WS_TABSTOP, kRefresh, 20, 223, 190, 32);
-        add(L"BUTTON", L"중지 · 검은 화면", BS_PUSHBUTTON | WS_TABSTOP, kStop, 225, 223, 195, 32);
-        add(L"BUTTON", L"출력 창 닫기", BS_PUSHBUTTON | WS_TABSTOP, kRelease, 435, 223, 195, 32);
-        add(L"BUTTON", L"자체 채팅 연결창 열기", BS_PUSHBUTTON | WS_TABSTOP, kChat, 20, 270, 250, 34);
+        HWND title = add(L"STATIC", L"게임 창 별도 출력 (실험)", 0, 0, 28, 24, 828, 28);
+        HWND source_label = add(L"STATIC", L"게임 창만 선택합니다. 화면 전체·챗뷰 자체 창은 캡처하지 않습니다.", 0, 0, 52, 96, 378, 40);
+        HWND source = add(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, kSource, 52, 148, 378, 180);
+        add(L"STATIC", L"창을 직접 선택하세요. PID·프로그램명·창 제목을 확인합니다.", 0, kSourceHint, 52, 200, 378, 40);
+        HWND monitor_label = add(L"STATIC", L"별도 확장 출력 (캡처카드 입력) · 복제/주 화면/HDR는 허용하지 않습니다.", 0, 0, 454, 96, 378, 40);
+        HWND monitor = add(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_TABSTOP | WS_VSCROLL, kMonitor, 454, 148, 378, 150);
+        for (const HWND choice : {source, monitor}) {
+            // CB_SETITEMHEIGHT excludes native combo chrome; size the closed control to 40 DIP.
+            RECT closed{};
+            if (!GetWindowRect(choice, &closed)) throw std::runtime_error("Video selection geometry unavailable");
+            const int text_height = static_cast<int>(SendMessageW(choice, CB_GETITEMHEIGHT, static_cast<WPARAM>(-1), 0));
+            SendMessageW(choice, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1),
+                text_height + scale(40) - (closed.bottom - closed.top));
+            SendMessageW(choice, CB_SETITEMHEIGHT, 0, scale(36));
+        }
+        add(L"STATIC", L"출력 화면의 SDR/복제/HDR 상태를 확인 중입니다.", 0, kMonitorHint, 454, 200, 378, 40);
+        add(L"BUTTON", L"1. 시험 패턴 표시", BS_PUSHBUTTON | WS_TABSTOP, kIdentify, 52, 264, 300, 44);
+        add(L"BUTTON", L"2. 수신 확인 · 게임 출력", BS_PUSHBUTTON | WS_TABSTOP, kStart, 376, 264, 456, 44);
+        add(L"BUTTON", L"목록 새로고침", BS_PUSHBUTTON | WS_TABSTOP, kRefresh, 52, 324, 244, 44);
+        add(L"BUTTON", L"중지 · 검은 화면", BS_PUSHBUTTON | WS_TABSTOP, kStop, 320, 324, 244, 44);
+        add(L"BUTTON", L"출력 창 닫기", BS_PUSHBUTTON | WS_TABSTOP, kRelease, 588, 324, 244, 44);
+        add(L"BUTTON", L"자체 채팅 연결창 열기", BS_PUSHBUTTON | WS_TABSTOP, kChat, 52, 440, 280, 44);
         // Chat-button feedback must not overwrite the video notice: while a
         // test pattern is displayed that notice holds its receiver check label.
-        add(L"STATIC", L"기존 게임 PC HUD 연결창 · 영상 확인과 별개", 0, kChatHint, 286, 271, 344, 32);
-        add(L"STATIC", L"", 0, kChatStatus, 20, 313, 610, 40);
+        add(L"STATIC", L"기존 게임 PC HUD 연결창 · 영상 확인과 별개", 0, kChatHint, 52, 496, 378, 36);
+        HWND chat_status = add(L"STATIC", L"", 0, kChatStatus, 52, 544, 378, 52);
         shown_chat_status_ = nullptr;
-        add(L"STATIC", hotkey_black_
+        HWND step_label = add(L"STATIC", hotkey_black_
             ? L"영상 출력 단계 · Ctrl+Alt+Shift+B 긴급 검정 · 실제 수신 미검증"
             : L"긴급 단축키 등록 불가 · 중지 버튼 사용 · 실제 수신 미검증",
-            0, 0, 20, 365, 610, 22);
-        add(L"STATIC", L"", 0, kStep, 20, 390, 610, 55);
-        add(L"STATIC", L"시험 패턴의 표시 번호·테두리·움직임을 수신 PC에서 직접 확인하세요.\n번호 입력/기기등록은 없습니다. 게임은 확인 후에만 캡처합니다.\n육안 확인은 HUD 제외나 수신 영상의 자동 검증이 아닙니다.\n영상만/SDR. 출력 창 해제·앱 종료 뒤에는 바탕화면이 보일 수 있습니다.", 0, 0, 20, 455, 610, 80);
-        add(L"STATIC", L"대기 중 · 투컴 영상 미검증", 0, kNotice, 20, 541, 610, 73);
+            0, 0, 454, 440, 378, 40);
+        add(L"STATIC", L"", 0, kStep, 454, 492, 378, 52);
+        add(L"STATIC", L"시험 패턴의 표시 번호·테두리·움직임을 수신 PC에서 직접 확인하세요.\n번호 입력/기기등록은 없습니다. 게임은 확인 후에만 캡처합니다.\n육안 확인은 HUD 제외나 수신 영상의 자동 검증이 아닙니다.\n영상만/SDR. 출력 창 해제·앱 종료 뒤에는 바탕화면이 보일 수 있습니다.", 0, 0, 454, 560, 378, 144);
+        add(L"STATIC", L"대기 중 · 투컴 영상 미검증", 0, kNotice, 52, 612, 378, 92);
+        SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(theme_.card_font()), TRUE);
+        for (const HWND label : {source_label, monitor_label, chat_status, step_label})
+            SendMessageW(label, WM_SETFONT, reinterpret_cast<WPARAM>(theme_.bold_font()), TRUE);
         EnableWindow(GetDlgItem(panel_, kStart), FALSE);
         refresh(); ShowWindow(panel_, SW_SHOWNORMAL); show_chat_status(); SetForegroundWindow(panel_);
     } catch (...) { if (panel_) DestroyWindow(panel_);
@@ -724,7 +738,17 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
     }
     if (!self) return DefWindowProcW(window, message, wparam, lparam);
     LRESULT themed = 0;
-    if (window == self->panel_ && self->theme_.handle_message(window, message, wparam, lparam, themed)) return themed;
+    if (window == self->panel_ && self->theme_.handle_message(window, message, wparam, lparam, themed)) {
+        if (message == WM_ERASEBKGND) {
+            const UINT dpi = GetDpiForWindow(window);
+            const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
+            NativePanelTheme::paint_card(reinterpret_cast<HDC>(wparam),
+                {scale(28), scale(72), scale(856), scale(392)}, dpi);
+            NativePanelTheme::paint_card(reinterpret_cast<HDC>(wparam),
+                {scale(28), scale(416), scale(856), scale(728)}, dpi);
+        }
+        return themed;
+    }
     try {
         if (message == WM_HOTKEY && window == self->panel_ &&
             wparam == kEmergencyBlackHotkey && self->hotkey_black_ && !self->closing_) {

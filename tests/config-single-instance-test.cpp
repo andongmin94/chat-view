@@ -312,6 +312,10 @@ bool saved_url_matches(
 
 int wmain(int argument_count, wchar_t **arguments)
 {
+    // Match the Control Center so rectangles and window DPI use the same pixel units.
+    if (SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) == nullptr) {
+        return fail(L"Failed to match the Control Center DPI awareness");
+    }
     if (argument_count != 2) {
         return fail(L"Expected the Control Center executable path");
     }

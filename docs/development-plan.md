@@ -4,15 +4,15 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 작업: CI #483 조건 대조와 neobrutal UI 적용 (로컬 완료·원격 미반영)
+## 현재 작업: RelWithDebInfo D1 확인과 창 상단 장식선 정리 (로컬 완료·원격 미반영)
 
-2026-11-01 `OBS` 로컬 HEAD `b4f6fe97690fd5841efdf91419d95ee07fb626f3`, 미커밋 변경 없음에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일했다. 사용자 요청 범위는 HUD·Windows 창·웹 관리 화면 모두다.
+2026-11-01 `OBS` 로컬 HEAD `f5dfeaf2a3e3cf2f9c972e78f7cf2c963f275e9e`, 미커밋 변경 없음에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일했다.
 
-- **D1 조건 대조·실행:** 과거 #483은 Node **24.22.1**, WebView2 Runtime **155.0.4283.62**, Windows Server build **26100**이며 바로 앞 검사는 `companion-chat-reapproval`이었다. 기존 로컬의 Node **26.13.0**·Runtime **156.0.4314.50** 단독 반복과 구분한다. 공식 SHA256 검증 Node24.22.1과 Microsoft 서명 확인 FixedVersion155.0.4283.62를 `.ci`에 준비하고 **검사 자식 프로세스에서만** 사용했다. 해당 경로의 실제 WebView2 프로세스도 확인했다. UI 수정 전 기존 바이너리로 **reapproved 10.758초 통과 → redraw 6.711초 통과**, 각 1회만 실행했다. D1은 재현되지 않았고 실패 진단/deadline 분기는 미실행이다. 시스템 설치·레지스트리·보안 설정은 변경하지 않았다. 로컬 OS **26300.9711**, 직접 `/O2 /MT` 빌드와 CI RelWithDebInfo, 그 이전 전체 검사 이력 차이는 남아 있어 이 차이들의 인과관계나 D1 해결을 주장하지 않는다.
-- **UI:** 참조 [neobrutal-ui](https://github.com/andongmin94/neobrutal-ui) `d342db6`의 Mono 색상·2px 테두리·4px 하드 섀도·5px 모서리·굵은 제목·눌림/포커스를 기존 구조에 적용했다. HUD와 브라우저 채팅 미리보기, Windows 연결·영상 설정·Control Center, 웹 계정·캠페인·활동 관리 화면을 포함한다. Win32 컨트롤의 입력/접근성은 유지하며 공통 GDI 페인트만 재사용한다. React·UI 패키지·원격 자산은 추가하지 않았다. 기존 인증·승인·캡처 보호·네이티브 ACK·timeout·retry는 유지한다.
-- **관측 후 수정:** 새 HUD 여백으로 100px 검사 영역이 105px이 된 실패는 `box-sizing:border-box`로 수정했고 기존 기대값은 유지했다. 실제 모바일 미리보기에서 ChatView 로고가 줄바꿈되는 문제는 관리 화면의 좁은 브랜드 열만 80px로 보정했다. Control Center에서 Tab이 입력칸으로 이동하지 않는 기존 결함은 기존 메시지 루프에 Win32 `IsDialogMessage`를 연결해 수정했다. 실제 창에서 Tab/Shift+Tab 이동을 확인했다.
-- **검증:** MSVC **14.51 `/W4 /WX`** 관련 소스 직접 빌드와 Control Center 링크 통과. UI 수정 후 실제 WebView2 **155**의 기존 native surface **1/1**, companion chat/video **return 1/1** 통과. 기존 웹 관리 관련 Node **8/8**, TypeScript 통과. 기존 Python Playwright Flow/Fixture로 Chromium **143.0.7499.4**의 계정·캠페인·활동을 **1000px/390px 6조합**, 실제 template/renderer의 합성 HUD **560×800/280×400**을 확인했다. 가로 넘침과 읽기 제어 잘림 없음, HUD 최신 gap 0px. Windows Control Center 실창도 시각/접근성 확인했다. 합성 브라우저 미리보기는 실제 게임/하드웨어 캡처 증거가 아니다. `git diff --check` 통과.
-- **남은 범위·종료:** D1의 탐색 시작·nonce handshake·source 중 실제 중단 단계는 여전히 미확정이며 기존 #482/#483 실패는 유지한다. 동일 D1 반복·전체 51개/385개·전체 브라우저 suite·실계정·물리 투컴·설치/패키징·배포 qualification·Actions·push는 실행하지 않았다. 다음 D1 작업은 남은 OS/빌드/선행 이력 조건의 실제 재현 근거가 있을 때만 진행한다.
+- **RelWithDebInfo 조건:** 기존 공통/WGC 라이브러리, companion chat/video와 합성 source 실행 파일의 원래 소스·링크·생성 문서·CTest 선언만 `.ci` CMake 구성으로 가져와 **Visual Studio 18/x64/Windows SDK26100**의 실제 **RelWithDebInfo**로 새로 빌드했다. MSBuild 실제 명령에서 **`/Zi /O2 /Ob1 /MT /D NDEBUG /W4 /WX`**, 링크 **`/DEBUG /INCREMENTAL`**을 확인했다. libobs SDK가 없어 전체 공식 OBS 프로젝트 configure는 하지 않았고, 필요한 두 실행 파일의 원래 대상 조건만 맞춘 빌드다. 새 검사 프레임워크나 추적되는 빌드 경로는 추가하지 않았다.
+- **D1 실행:** UI 장식선 변경 전 위 빌드와 Node **24.22.1**·실제 FixedVersion WebView2 **155.0.4283.62**로 **reapproval 9.42초 통과 → redraw 6.17초 통과**, CTest **2/2·15.61초**. 원래 predecessor/조건/timeout/retry를 유지해 각 1회만 실행했다. D1은 미재현이며 실패 진단/deadline 관측 분기는 미실행이다. 로컬 Windows **26300.9711**과 CI #483의 Server **26100**, VS Community/Enterprise 에디션(동일 MSVC19.51.36260.0), 더 앞선 전체 검사 이력 차이는 남는다. D1 제품 수정이나 해결 주장은 없다.
+- **창 상단 수정:** 사용자 이미지의 의미를 확인한 결과는 제목 표시줄 바로 아래의 검은 장식선이 너무 붙어 보인다는 것이었다. 공유 `NativePanelTheme`의 client 영역 최상단 **4 DIP stripe 그리기만 제거**했다. 제목·상태 문구의 기존 좌표와 위 여백, 네이티브 제목 표시줄·입력·캡처 보호는 유지한다. Control Center를 MSVC **`/W4 /WX`**로 다시 컴파일/링크하고 실제 창에서 선 제거와 제목 표시줄 아래 여백을 확인했다. 기존 사용자용 Control Center 미리보기를 갱신했다.
+- **기존 UI 상태:** 직전 `f5dfeaf`의 HUD·Windows 연결/영상 설정·Control Center·웹 관리 neobrutal 스타일과 Tab 이동 수정, 당시 native surface/return·웹 관리 Node8개/TypeScript·크기별 시각 검사 통과는 유지한다. 이번에는 통과한 전체 UI/플랫폼 검사를 반복하지 않았다. `git diff --check` 통과.
+- **종료 범위:** 관측된 창 외관 문제만 수정했다. 동일 D1 재반복·전체 51개/385개·전체 브라우저 suite·Actions·push·시스템 설치/보안 변경·배포/qualification은 하지 않았다. 과거 #482/#483 실패와 D1 미해결 상태, 실계정·물리 투컴 등 기존 미완료 항목은 유지한다.
 
 ## 직전 완료 작업: HUD 크기 변경 시 최신 채팅 추적과 읽던 위치 유지 (로컬 검증 완료·원격 미반영)
 

@@ -40,9 +40,6 @@ public:
         if (message == WM_ERASEBKGND) {
             RECT bounds{}; GetClientRect(window, &bounds);
             FillRect(reinterpret_cast<HDC>(wparam), &bounds, background_);
-            RECT stripe = bounds; stripe.bottom = MulDiv(4, static_cast<int>(GetDpiForWindow(window)), 96);
-            SetDCBrushColor(reinterpret_cast<HDC>(wparam), ink);
-            FillRect(reinterpret_cast<HDC>(wparam), &stripe, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
             result = 1; return true;
         }
         if (message == WM_CTLCOLORSTATIC || message == WM_CTLCOLORBTN ||

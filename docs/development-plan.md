@@ -4,14 +4,15 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 작업: readiness 진단을 포함한 D1 로컬 재현 (10회에서 미재현)
+## 현재 작업: CI #483 조건 대조와 neobrutal UI 적용 (로컬 완료·원격 미반영)
 
-2026-11-01 `OBS` 로컬 HEAD `dbe326654cec51084efdbcdb14d62b882bee43ea`, 미커밋 변경 없음에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일했다. 추가한 readiness 진단을 포함한 기존 실행 파일과 Node driver로 `companion-chat-video redraw`만 최대 10회·첫 실패 시 중단 조건으로 순차 실행했다.
+2026-11-01 `OBS` 로컬 HEAD `b4f6fe97690fd5841efdf91419d95ee07fb626f3`, 미커밋 변경 없음에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일했다. 사용자 요청 범위는 HUD·Windows 창·웹 관리 화면 모두다.
 
-- **진단:** `Companion first chat phase`에 `surface_attached`(활성 수신기가 현재 호스트의 소유 문서에 연결됨), `navigation_started`(해당 문서의 own NavigationStarting 수락), `nonce_handshake`(현재 유효한 nonce handshake 수신), `source_matches`(실제 source 조회 성공 및 own URL 일치) boolean 4개를 추가했다. 기존 `surface_ready`는 같은 조회의 네 조건 AND로 출력한다. 비공개 friend 진단 조회만 사용하며 URL·nonce 값·탐색 ID·본문·자격정보는 출력하지 않는다. 실제 `ready()` 판정·권한·timeout·retry와 실패 후 원래 deadline 관측 분기는 그대로다.
-- **이번 재현:** **10/10 통과·실패 0건·재현 0건**, 각 driver 실행 **6.348~6.474초**. 최초 빈 DOM부터 redraw 이후 전체 고정 phase까지 기존 조건으로 통과했다. 실행 파일의 네 진단 필드 포함을 확인했으나, 실패 로그 출력·실패 후 원래 deadline 관측 분기는 미실행이다. 이번에 빌드나 통과한 다른 검사는 반복하지 않았다. `git diff --check` 통과.
-- **기존 검증·환경 차이:** 진단 구현 시 MSVC **14.51 `/W4 /WX`** 직접 빌드, native surface **1/1**, redraw **1/1** 통과는 이전 결과다. 현재 Node **26.13.0**·WebView2 Runtime **156.0.4314.50**·Windows build **26300.9711**과 과거 실패 #483의 Node **24.22.1**·Runtime **155.0.4283.62**·Windows Server build **26100**은 다르다. 당시에는 다른 CTest들 뒤에 redraw를 실행했고 이번에는 단독 반복했다. 각 실행의 새 임시 프로필·메시지 펌프·15초 최초 대기·45초 부모 제한은 동일하며, 환경/순서 차이가 원인이라는 증거는 없다.
-- **남은 범위·종료:** 관측된 결함이 없어 제품·테스트·timeout·retry는 수정하지 않고 이번 결과만 보존한다. 과거 #482/#483 실패와 D1 미해결 상태를 유지한다. 플래그는 현재 문서 상태이며 이전 문서 이력을 복원하지 않는다. 같은 실패가 재현돼야 attached 여부와 탐색 시작·handshake·source를 원래 deadline 결과와 함께 구분할 수 있다. 전체 검사·Actions·push·배포·qualification은 실행하지 않았다.
+- **D1 조건 대조·실행:** 과거 #483은 Node **24.22.1**, WebView2 Runtime **155.0.4283.62**, Windows Server build **26100**이며 바로 앞 검사는 `companion-chat-reapproval`이었다. 기존 로컬의 Node **26.13.0**·Runtime **156.0.4314.50** 단독 반복과 구분한다. 공식 SHA256 검증 Node24.22.1과 Microsoft 서명 확인 FixedVersion155.0.4283.62를 `.ci`에 준비하고 **검사 자식 프로세스에서만** 사용했다. 해당 경로의 실제 WebView2 프로세스도 확인했다. UI 수정 전 기존 바이너리로 **reapproved 10.758초 통과 → redraw 6.711초 통과**, 각 1회만 실행했다. D1은 재현되지 않았고 실패 진단/deadline 분기는 미실행이다. 시스템 설치·레지스트리·보안 설정은 변경하지 않았다. 로컬 OS **26300.9711**, 직접 `/O2 /MT` 빌드와 CI RelWithDebInfo, 그 이전 전체 검사 이력 차이는 남아 있어 이 차이들의 인과관계나 D1 해결을 주장하지 않는다.
+- **UI:** 참조 [neobrutal-ui](https://github.com/andongmin94/neobrutal-ui) `d342db6`의 Mono 색상·2px 테두리·4px 하드 섀도·5px 모서리·굵은 제목·눌림/포커스를 기존 구조에 적용했다. HUD와 브라우저 채팅 미리보기, Windows 연결·영상 설정·Control Center, 웹 계정·캠페인·활동 관리 화면을 포함한다. Win32 컨트롤의 입력/접근성은 유지하며 공통 GDI 페인트만 재사용한다. React·UI 패키지·원격 자산은 추가하지 않았다. 기존 인증·승인·캡처 보호·네이티브 ACK·timeout·retry는 유지한다.
+- **관측 후 수정:** 새 HUD 여백으로 100px 검사 영역이 105px이 된 실패는 `box-sizing:border-box`로 수정했고 기존 기대값은 유지했다. 실제 모바일 미리보기에서 ChatView 로고가 줄바꿈되는 문제는 관리 화면의 좁은 브랜드 열만 80px로 보정했다. Control Center에서 Tab이 입력칸으로 이동하지 않는 기존 결함은 기존 메시지 루프에 Win32 `IsDialogMessage`를 연결해 수정했다. 실제 창에서 Tab/Shift+Tab 이동을 확인했다.
+- **검증:** MSVC **14.51 `/W4 /WX`** 관련 소스 직접 빌드와 Control Center 링크 통과. UI 수정 후 실제 WebView2 **155**의 기존 native surface **1/1**, companion chat/video **return 1/1** 통과. 기존 웹 관리 관련 Node **8/8**, TypeScript 통과. 기존 Python Playwright Flow/Fixture로 Chromium **143.0.7499.4**의 계정·캠페인·활동을 **1000px/390px 6조합**, 실제 template/renderer의 합성 HUD **560×800/280×400**을 확인했다. 가로 넘침과 읽기 제어 잘림 없음, HUD 최신 gap 0px. Windows Control Center 실창도 시각/접근성 확인했다. 합성 브라우저 미리보기는 실제 게임/하드웨어 캡처 증거가 아니다. `git diff --check` 통과.
+- **남은 범위·종료:** D1의 탐색 시작·nonce handshake·source 중 실제 중단 단계는 여전히 미확정이며 기존 #482/#483 실패는 유지한다. 동일 D1 반복·전체 51개/385개·전체 브라우저 suite·실계정·물리 투컴·설치/패키징·배포 qualification·Actions·push는 실행하지 않았다. 다음 D1 작업은 남은 OS/빌드/선행 이력 조건의 실제 재현 근거가 있을 때만 진행한다.
 
 ## 직전 완료 작업: HUD 크기 변경 시 최신 채팅 추적과 읽던 위치 유지 (로컬 검증 완료·원격 미반영)
 

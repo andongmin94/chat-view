@@ -3,6 +3,7 @@
 #include "hud/display-client.hpp"
 #include "hud/native-chat-surface.hpp"
 #include "common/native-chat-control.hpp"
+#include "common/native-panel-theme.hpp"
 #include <Windows.h>
 #include <optional>
 #include <string>
@@ -60,6 +61,7 @@ private:
     NativeChatSurface surface_;
     HWND host_ = nullptr;
     HWND dialog_ = nullptr;
+    NativePanelTheme theme_;
     UINT open_message_ = 0U;
     UINT query_message_ = 0U;
     bool opening_dialog_ = false;

@@ -183,7 +183,7 @@ add_executable(chat-view-config WIN32
 )
 target_include_directories(chat-view-config PRIVATE "${CHATVIEW_SOURCE_DIR}")
 target_link_libraries(
-    chat-view-config PRIVATE chat-view-common user32 gdi32 shell32)
+    chat-view-config PRIVATE chat-view-common user32 gdi32 shell32 comctl32)
 target_compile_definitions(chat-view-config PRIVATE CHATVIEW_VERSION="${PROJECT_VERSION}")
 chatview_enable_win32(chat-view-config)
 set_target_properties(chat-view-config PROPERTIES OUTPUT_NAME "chat-view-config")

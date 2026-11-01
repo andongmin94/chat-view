@@ -3,6 +3,7 @@
 #include "common/chat-config.hpp"
 #include "common/hud-health.hpp"
 #include "common/native-chat-control.hpp"
+#include "common/native-panel-theme.hpp"
 #include "common/stream-readiness.hpp"
 #include "common/win32-handle.hpp"
 #include "common/window-messages.hpp"
@@ -47,10 +48,10 @@ constexpr int kWindowHeightDip = 740;
 constexpr int kMinimumUrlLength = 0;
 constexpr int kMaximumUrlLength = 2048;
 
-constexpr COLORREF kColorText = RGB(32, 33, 36);
+constexpr COLORREF kColorText = chatview::NativePanelTheme::ink;
 constexpr COLORREF kColorMuted = RGB(95, 99, 104);
 constexpr COLORREF kColorGood = RGB(24, 128, 56);
-constexpr COLORREF kColorWarning = RGB(184, 109, 0);
+constexpr COLORREF kColorWarning = RGB(139, 83, 0);
 constexpr COLORREF kColorError = RGB(176, 0, 32);
 
 struct Options {
@@ -675,6 +676,11 @@ public:
         destroy_fonts();
     }
 
+    bool dispatch(MSG &message) const noexcept
+    {
+        return IsDialogMessageW(window_, &message) != FALSE;
+    }
+
     [[nodiscard]] bool create(HINSTANCE instance)
     {
         instance_ = instance;
@@ -689,8 +695,7 @@ public:
         window_class.lpfnWndProc = &ControlCenterWindow::window_proc;
         window_class.hInstance = instance_;
         window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        window_class.hbrBackground =
-            reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        window_class.hbrBackground = nullptr;
         window_class.lpszClassName = kWindowClassName;
 
         if (RegisterClassExW(&window_class) == 0U &&
@@ -774,6 +779,12 @@ private:
                 SetForegroundWindow(window_);
             }
             return 0L;
+        }
+
+        LRESULT themed = 0;
+        if (message != WM_CTLCOLORSTATIC &&
+            theme_.handle_message(window_, message, wparam, lparam, themed)) {
+            return themed;
         }
 
         switch (message) {
@@ -1714,20 +1725,21 @@ private:
         }
 
         SetTextColor(device, color);
+        SetBkColor(device, chatview::NativePanelTheme::background);
         SetBkMode(device, TRANSPARENT);
-        return reinterpret_cast<LRESULT>(
-            GetSysColorBrush(COLOR_WINDOW));
+        return reinterpret_cast<LRESULT>(theme_.background_brush());
     }
 
     void create_fonts()
     {
         destroy_fonts();
+        theme_.initialize(window_);
         title_font_ = CreateFontW(
             -scale_dip(25, dpi_),
             0,
             0,
             0,
-            FW_SEMIBOLD,
+            FW_BOLD,
             FALSE,
             FALSE,
             FALSE,
@@ -1737,37 +1749,6 @@ private:
             CLEARTYPE_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE,
             L"Segoe UI");
-        body_font_ = CreateFontW(
-            -scale_dip(15, dpi_),
-            0,
-            0,
-            0,
-            FW_NORMAL,
-            FALSE,
-            FALSE,
-            FALSE,
-            DEFAULT_CHARSET,
-            OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE,
-            L"Segoe UI");
-        label_font_ = CreateFontW(
-            -scale_dip(15, dpi_),
-            0,
-            0,
-            0,
-            FW_SEMIBOLD,
-            FALSE,
-            FALSE,
-            FALSE,
-            DEFAULT_CHARSET,
-            OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_DONTCARE,
-            L"Segoe UI");
-
         const std::array<HWND, 28U> body_controls{
             subtitle_,
             video_scope_,
@@ -1799,11 +1780,7 @@ private:
             recovery_label_};
         for (HWND control : body_controls) {
             if (control != nullptr) {
-                SendMessageW(
-                    control,
-                    WM_SETFONT,
-                    reinterpret_cast<WPARAM>(body_font_),
-                    TRUE);
+                theme_.apply(control, control == native_button_);
             }
         }
 
@@ -1812,7 +1789,8 @@ private:
             WM_SETFONT,
             reinterpret_cast<WPARAM>(title_font_),
             TRUE);
-        const std::array<HWND, 7U> labels{
+        const std::array<HWND, 8U> labels{
+            status_group_,
             native_label_,
             url_label_,
             obs_label_,
@@ -1824,13 +1802,13 @@ private:
             SendMessageW(
                 label,
                 WM_SETFONT,
-                reinterpret_cast<WPARAM>(label_font_),
+                reinterpret_cast<WPARAM>(theme_.bold_font()),
                 TRUE);
         }
         SendMessageW(
             subtitle_,
             WM_SETFONT,
-            reinterpret_cast<WPARAM>(label_font_),
+            reinterpret_cast<WPARAM>(theme_.bold_font()),
             TRUE);
     }
 
@@ -1839,14 +1817,6 @@ private:
         if (title_font_ != nullptr) {
             DeleteObject(title_font_);
             title_font_ = nullptr;
-        }
-        if (body_font_ != nullptr) {
-            DeleteObject(body_font_);
-            body_font_ = nullptr;
-        }
-        if (label_font_ != nullptr) {
-            DeleteObject(label_font_);
-            label_font_ = nullptr;
         }
     }
 
@@ -1941,6 +1911,7 @@ private:
     chatview::ControlStatusReader status_reader_;
     chatview::ControlStatusSnapshot snapshot_;
     chatview::HudHealthSnapshot latest_health_;
+    chatview::NativePanelTheme theme_;
     HINSTANCE instance_ = nullptr;
     HWND window_ = nullptr;
     HWND title_ = nullptr;
@@ -1976,8 +1947,6 @@ private:
     HWND diagnostics_button_ = nullptr;
     HWND close_button_ = nullptr;
     HFONT title_font_ = nullptr;
-    HFONT body_font_ = nullptr;
-    HFONT label_font_ = nullptr;
     UINT activation_message_ = 0U;
     UINT dpi_ = 96U;
     bool connected_ = false;
@@ -2065,6 +2034,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int)
         int result = 0;
         while ((result = GetMessageW(
                     &message, nullptr, 0U, 0U)) > 0) {
+            if (window.dispatch(message)) continue;
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }

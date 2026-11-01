@@ -3,6 +3,7 @@
 #include "hud/window-capture.hpp"
 #include "hud/video-output-check.hpp"
 #include "hud/video-layout.hpp"
+#include "common/native-panel-theme.hpp"
 #include <string>
 #include <vector>
 
@@ -59,6 +60,7 @@ private:
     std::uint64_t selection_epoch_ = 0;
     ULONGLONG next_path_check_ = 0;
     HWND panel_ = nullptr, output_ = nullptr, cover_ = nullptr, source_ = nullptr;
+    NativePanelTheme theme_;
     HMONITOR monitor_ = nullptr, source_monitor_ = nullptr;
     DWORD source_process_ = 0, source_thread_ = 0;
     std::wstring output_device_;

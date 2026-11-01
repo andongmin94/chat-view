@@ -206,7 +206,7 @@ bool NativeChatConnection::open_dialog() noexcept
         }
         WNDCLASSW klass{}; klass.lpfnWndProc = procedure; klass.hInstance = GetModuleHandleW(nullptr);
         klass.lpszClassName = kClass; klass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        klass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        klass.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
         const bool gaming = role_ == DisplayRole::Gaming;
         const int dialog_height = gaming ? 750 : 694;
@@ -226,6 +226,7 @@ bool NativeChatConnection::open_dialog() noexcept
             DestroyWindow(dialog_); dialog_ = nullptr; return false;
         }
         const UINT dpi = GetDpiForWindow(dialog_);
+        theme_.initialize(dialog_);
         const auto scale = [dpi](int value) { return MulDiv(value, static_cast<int>(dpi), 96); };
         SetWindowPos(dialog_, nullptr, 0, 0, scale(600), scale(dialog_height), SWP_NOMOVE | SWP_NOZORDER);
         const auto add = [&](const wchar_t *kind, const wchar_t *caption, DWORD style,
@@ -233,7 +234,7 @@ bool NativeChatConnection::open_dialog() noexcept
             HWND item = CreateWindowExW(std::wstring_view(kind) == L"EDIT" ? WS_EX_CLIENTEDGE : 0,
                 kind, caption, WS_CHILD | WS_VISIBLE | style, scale(x), scale(y), scale(width), scale(height),
                 dialog_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), klass.hInstance, nullptr);
-            if (item) SendMessageW(item, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+            if (item) theme_.apply(item, id == kConnect);
             return item;
         };
         add(L"STATIC", L"서비스 주소 (새 로그인용 · HTTPS, 경로 제외)", 0, 0, 20, 16, 550, 24);
@@ -292,6 +293,8 @@ LRESULT CALLBACK NativeChatConnection::procedure(HWND window, UINT message, WPAR
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
     }
     if (!self) return DefWindowProcW(window, message, wparam, lparam);
+    LRESULT themed = 0;
+    if (self->theme_.handle_message(window, message, wparam, lparam, themed)) return themed;
     if (message == WM_COMMAND) {
         if (LOWORD(wparam) == kConnect || LOWORD(wparam) == IDOK) { self->connect(); return 0; }
         if (LOWORD(wparam) == kDisconnect) {

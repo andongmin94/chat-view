@@ -113,9 +113,31 @@ export class PlatformApplication {
     // origin CSRF checks intact and disclose no Referer to external sites.
     response.setHeader('Referrer-Policy', referrerPolicy);
     response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
-    response.end(`<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>ChatView · ${title}</title>
-<style>body{font:16px/1.7 system-ui;max-width:720px;margin:48px auto;padding:0 24px}h1{font-size:28px}form{margin:12px 0}button{font:inherit;padding:10px 16px;cursor:pointer}small{display:block}</style>
-<h1>${title}</h1>${content}<p><small>개발 서비스입니다. PC 역할 연결은 HUD 없는 영상 전달이나 실제 광고 노출의 증거가 아닙니다.</small></p></html>`);
+    response.end(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>ChatView · ${title}</title>
+<style>
+:root{color-scheme:light;--canvas:#f4f5f7;--paper:#fff;--ink:#27282b;--line:#000;--muted:#565a63;--shadow:4px 4px 0 var(--line);--radius:5px;font:500 16px/1.7 'Segoe UI','Malgun Gothic',sans-serif;color:var(--ink);background:var(--canvas)}
+*{box-sizing:border-box}body{margin:0}a{color:inherit;text-decoration-thickness:2px;text-underline-offset:4px}a:hover{background:#e4e7ec}a:focus-visible,button:focus-visible,input:focus-visible{outline:3px solid var(--ink);outline-offset:4px}
+.app-shell{width:min(100%,1000px);margin:auto;padding:28px 32px 40px}.app-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:24px;border-bottom:2px solid var(--line)}
+.brand{display:flex;align-items:center;gap:12px;font-size:24px;font-weight:800;letter-spacing:-1px;text-decoration:none}.brand-mark{display:grid;place-items:center;width:38px;height:38px;border:2px solid var(--line);border-radius:var(--radius);background:var(--ink);color:#fff;box-shadow:3px 3px 0 var(--line);font-size:15px;letter-spacing:-1px}
+.service-badge{flex:none;padding:5px 10px;border:2px solid var(--line);border-radius:var(--radius);background:var(--paper);font-size:12px;font-weight:700}.page-heading{padding:36px 0 24px}.page-heading p{margin:0 0 8px;color:var(--muted);font-size:13px;font-weight:700;letter-spacing:.04em}
+h1,h2,h3,h4{font-weight:700;line-height:1.3;letter-spacing:-.035em;overflow-wrap:anywhere}h1{margin:0;font-size:clamp(28px,4vw,40px)}h2{margin:0 0 16px;font-size:23px}h3{margin:24px 0 12px;font-size:19px}h4{margin:20px 0 10px;font-size:17px}p{margin:12px 0;overflow-wrap:anywhere}strong{font-weight:750}
+.page-content{min-width:0}.page-content>p{max-width:85ch}.page-content section{min-width:0;margin:24px 0;padding:24px;border:2px solid var(--line);border-radius:var(--radius);background:var(--paper);box-shadow:var(--shadow)}
+.page-content section section{margin:24px 0 0;padding:20px 0 0;border:0;border-top:2px solid var(--line);border-radius:0;background:transparent;box-shadow:none}.page-content section>:first-child{margin-top:0}.page-content section>:last-child{margin-bottom:0}
+form{margin:16px 0 20px}button{max-width:100%;padding:10px 16px;border:2px solid var(--line);border-radius:var(--radius);background:var(--ink);color:#fff;box-shadow:var(--shadow);font:700 14px/1.5 'Segoe UI','Malgun Gothic',sans-serif;text-align:center;cursor:pointer;transition:transform 140ms ease,box-shadow 140ms ease}
+button:hover:not(:disabled){transform:translate(3px,3px);box-shadow:1px 1px 0 var(--line)}button:active:not(:disabled){transform:translate(4px,4px);box-shadow:none}button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
+form[action$="/deny"] button,form[action$="/cancel"] button,form[action$="/switch"] button,form[action$="/stop"] button{background:var(--paper);color:var(--ink)}form[action$="/revoke"] button{background:#fff0ef;color:#822b24}
+label{display:block;margin:12px 0 6px;font-size:14px;font-weight:700}input:not([type=hidden]){min-height:44px;max-width:100%;padding:10px 12px;border:2px solid var(--line);border-radius:var(--radius);background:var(--paper);color:var(--ink);font:inherit}input[readonly]{background:var(--canvas);font-size:14px}
+table{width:100%;margin:18px 0;border-collapse:collapse;text-align:left;font-size:14px}th,td{padding:12px 10px;border:2px solid var(--line);vertical-align:top;overflow-wrap:anywhere}th{background:var(--canvas);font-weight:700}caption{margin-bottom:10px;text-align:left;font-weight:700}tbody tr:nth-child(even){background:#f8f9fa}
+ol,ul{padding-left:24px}li{margin:10px 0}dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 20px;padding:16px;border-left:3px solid var(--line);background:var(--canvas)}dt{font-weight:700}dd{margin:0}figure{max-width:100%}small{display:block;color:var(--muted);font-size:13px;line-height:1.65}
+[data-login-code]{display:inline-block;margin:4px;padding:3px 10px;border:2px solid var(--line);border-radius:var(--radius);background:var(--canvas);font-size:22px;letter-spacing:.12em}.page-content section[data-campaign-selected="true"]{border-left-width:8px}.page-content section[data-campaign-selected="true"]>h2:before{content:'선택됨';display:inline-block;vertical-align:middle;margin:0 10px 6px 0;padding:3px 8px;border:2px solid var(--line);border-radius:var(--radius);background:var(--ink);color:#fff;font:700 12px/1.5 'Segoe UI','Malgun Gothic',sans-serif;letter-spacing:0}
+.app-footer{margin-top:36px;padding:20px 0 0;border-top:2px solid var(--line)}
+@media(max-width:600px){.app-shell{padding:18px 16px 28px}.app-header{padding-bottom:18px}.brand{font-size:22px}.page-heading{padding:28px 0 18px}.page-content section{padding:18px 16px;margin:20px 0}h2{font-size:21px}th,td{padding:10px 7px;font-size:12px}dl{grid-template-columns:1fr;gap:2px;padding:12px}dd{margin-bottom:8px}.service-badge{padding:4px 7px;font-size:11px}button{white-space:normal}[data-test-creative-preview] [role=img]>div:first-child{flex-basis:80px!important}}
+@media(prefers-reduced-motion:reduce){button{transition:none}}
+</style></head><body><div class="app-shell">
+<header class="app-header"><a class="brand" href="/account"><span class="brand-mark" aria-hidden="true">CV</span>ChatView</a><span class="service-badge">개발 서비스</span></header>
+<main><header class="page-heading"><p>내 채팅 · 연결 · 시험 광고</p><h1>${title}</h1></header><div class="page-content">${content}</div></main>
+<footer class="app-footer"><small>개발 서비스입니다. PC 역할 연결은 HUD 없는 영상 전달이나 실제 광고 노출의 증거가 아닙니다.</small></footer>
+</div></body></html>`);
   }
   #redirect(response: ServerResponse, location: string) {
     response.writeHead(303, { Location: location }); response.end();

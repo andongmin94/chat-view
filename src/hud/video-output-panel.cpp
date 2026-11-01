@@ -278,7 +278,7 @@ void VideoOutputPanel::open() noexcept
         if (panel_) { ShowWindow(panel_, SW_SHOWNORMAL); show_chat_status(); SetForegroundWindow(panel_); return; }
         WNDCLASSW klass{}; klass.hInstance = GetModuleHandleW(nullptr); klass.lpfnWndProc = procedure;
         klass.hCursor = LoadCursorW(nullptr, IDC_ARROW); klass.lpszClassName = kPanelClass;
-        klass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        klass.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
         klass.lpszClassName = kOutputClass; klass.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
         if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return;
@@ -301,13 +301,14 @@ void VideoOutputPanel::open() noexcept
         if (!hotkey_black_)
             OutputDebugStringW(L"[ChatView] Companion emergency blackout hotkey unavailable; use Stop button\n");
         const auto dpi = GetDpiForWindow(panel_);
+        theme_.initialize(panel_);
         const auto scale = [dpi](int v) { return MulDiv(v, static_cast<int>(dpi), 96); };
         SetWindowPos(panel_, nullptr, 0, 0, scale(660), scale(668), SWP_NOMOVE | SWP_NOZORDER);
         const auto add = [&](const wchar_t *kind, const wchar_t *caption, DWORD style, int id, int x, int y, int w, int h) {
             HWND item = CreateWindowExW(0, kind, caption, WS_CHILD | WS_VISIBLE | style,
                 scale(x), scale(y), scale(w), scale(h), panel_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), klass.hInstance, nullptr);
             if (!item) throw std::runtime_error("Video controls unavailable");
-            SendMessageW(item, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+            theme_.apply(item, id == kIdentify || id == kStart);
         };
         add(L"STATIC", L"게임 창만 선택합니다. 화면 전체·챗뷰 자체 창은 캡처하지 않습니다.", 0, 0, 20, 18, 610, 24);
         add(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP | WS_VSCROLL, kSource, 20, 48, 610, 180);
@@ -722,6 +723,8 @@ LRESULT CALLBACK VideoOutputPanel::procedure(HWND window, UINT message, WPARAM w
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
     }
     if (!self) return DefWindowProcW(window, message, wparam, lparam);
+    LRESULT themed = 0;
+    if (window == self->panel_ && self->theme_.handle_message(window, message, wparam, lparam, themed)) return themed;
     try {
         if (message == WM_HOTKEY && window == self->panel_ &&
             wparam == kEmergencyBlackHotkey && self->hotkey_black_ && !self->closing_) {

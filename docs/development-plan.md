@@ -4,13 +4,13 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 작업: D1 첫 표시 간헐 실패의 로컬 재현 (재현되지 않음)
+## 현재 작업: D1 첫 표시 대기의 최소 readiness 진단 (로컬 검증 완료·원격 미반영)
 
-2026-11-01 `OBS` 로컬 HEAD `ceb0badc1a641154f3ec302f2bebce2691ec2245`, 미커밋 변경 없음에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일했다. 기존 CMake 대상의 소스·링크 구성을 그대로 사용해 MSVC **14.51 `/W4 /WX`**로 companion chat/video와 합성 source 실행 파일만 직접 빌드했다. Node **26.13.0**, WebView2 **156.0.4314.50**의 실제 WinHTTP/WebView2/HUD/WGC와 기존 Node driver를 사용했다.
+2026-11-01 `OBS` 로컬 HEAD `935581f346594f9b16e4fece9236993292614a28`, 미커밋 변경 없음에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일했다. 기존 D1 실패의 탐색 시작·nonce handshake·현재 source 일치 여부를 구분하도록 기존 실패 출력만 보강했다.
 
-- **실행 결과:** 과거 #482/#483 실패 대상 `companion-chat-video redraw`를 최초 1회와 간헐 재현 목적의 추가 3회, 합계 **4/4 통과**했다. 과거 #482의 다른 실패 대상 `redraw-revoked-black` **1/1**, 승인 응답 이전에 첫 텍스트가 존재하는 `early-first` **1/1**도 통과했다. 로컬 실패 **0건**, 과거 실패 **재현 0건**이며 D1 해결/신뢰성 완료의 증거로 계산하지 않는다. 모든 실행은 기존 driver와 예산을 유지한 직접 실행이며 전체 CTest 실행이 아니다.
-- **좁혀진 경계와 한계:** 기존 #483 로그의 `pending_subscribed=1, pending_frame=1, awaiting_render=0, native_ready=0, surface_ready=0, surface_discarded=0, recovery_attempted=1`은 현재 소유 문서가 아직 ready가 아니어서 첫 프레임을 게시하지 못한 단계다. ACK 유실로 확정할 수 없고, 탐색 시작·nonce handshake·현재 source 중 무엇이 지연됐는지는 기존 기록으로 구분되지 않는다. 로컬에서는 최초 빈 DOM 대기를 모두 통과했으므로 실패 후 원래 제품 deadline 관측 분기도 실행되지 않았다. 제품 deadline을 남긴 시험 실패가 이후 늦은 ACK로 끝났을지 또는 제품 마감까지 실패했을지는 여전히 미확정이다.
-- **변경·종료:** 관측된 로컬 결함이 없어 제품·테스트·timeout·retry를 수정하지 않았다. 재현 결과만 이 현재 상태 기록에 보존한다. 전체 51개·385개, Actions·push·배포·설치/패키징·qualification은 실행하지 않았다. 다음에 같은 실패가 재현되면 기존 실패 후 deadline 관측 결과부터 확보하고, 소유 문서의 탐색/nonce/source 경계를 구분한다. D1과 기존 미완료 항목은 유지한다.
+- **진단:** `Companion first chat phase`에 `surface_attached`(활성 수신기가 현재 호스트의 소유 문서에 연결됨), `navigation_started`(해당 문서의 own NavigationStarting 수락), `nonce_handshake`(현재 유효한 nonce handshake 수신), `source_matches`(실제 source 조회 성공 및 own URL 일치) boolean 4개를 추가했다. 기존 `surface_ready`는 같은 조회의 네 조건 AND로 출력한다. 비공개 friend 진단 조회만 사용하며 URL·nonce 값·탐색 ID·본문·자격정보는 출력하지 않는다. 실제 `ready()` 판정·권한·timeout·retry와 실패 후 원래 deadline 관측 분기는 그대로다.
+- **이번 검증:** 기존 CMake 대상과 동일한 소스·링크로 MSVC **14.51 `/W4 /WX`** 직접 빌드 통과. WebView2 **156.0.4314.50**에서 기존 native surface 검사 **1/1 통과**: 문서 없음의 네 조건 false, 실제 nonce-ready의 네 조건 true, 실제 setup DOM 교체 뒤 source 불일치를 확인했다. Node **26.13.0**의 기존 `companion-chat-video redraw` **1/1 통과**. `git diff --check` 통과. D1 실패가 재현되지 않아 실패 로그 출력·실패 후 deadline 관측 분기는 이번 실행에서 미실행이다.
+- **남은 범위·종료:** 직전 로컬 재현 시도의 redraw **4/4**, redraw-revoked-black **1/1**, early-first **1/1** 통과와 과거 #482/#483 실패를 그대로 유지하며 D1 해결로 계산하지 않는다. 새 플래그는 현재 문서 상태이며 무효화/교체 전 문서의 이력을 복원하지 않는다. 다음 같은 실패에서 attached 여부를 먼저 보고, 탐색 시작 미수락·handshake 미수신·source 불일치를 원래 deadline 결과와 함께 구분한다. 전체 51개·385개, Actions·push·배포·설치/패키징·qualification은 실행하지 않았으며 D1과 기존 미완료 항목은 유지한다.
 
 ## 직전 완료 작업: HUD 크기 변경 시 최신 채팅 추적과 읽던 위치 유지 (로컬 검증 완료·원격 미반영)
 

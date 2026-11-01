@@ -201,6 +201,15 @@ bool NativeChatSurface::ready() const noexcept
            matching_source(webview_.Get(), state_->document_url);
 }
 
+NativeChatSurface::ReadinessEvidence NativeChatSurface::readiness_evidence() const noexcept
+{
+    const auto state = state_;
+    const auto webview = webview_;
+    const bool source_matches = state && webview && matching_source(webview.Get(), state->document_url);
+    return {state && state->attached(), state && state->saw_navigation,
+            state && state->handshake, source_matches};
+}
+
 bool NativeChatSurface::discarded() const noexcept
 {
     // A pending (but valid) asynchronous navigation is deliberately NOT

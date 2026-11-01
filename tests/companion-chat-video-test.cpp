@@ -15,6 +15,10 @@
 #include <string_view>
 
 namespace chatview {
+struct NativeChatSurfaceTestAccess {
+    static ICoreWebView2 *core(NativeChatSurface &s) { return s.webview_.Get(); }
+    static auto readiness(const NativeChatSurface &s) { return s.readiness_evidence(); }
+};
 struct NativeChatConnectionTestAccess {
     static HWND host(NativeChatConnection &c) { return c.host_; }
     static HWND dialog(NativeChatConnection &c) { return c.dialog_; }
@@ -32,9 +36,11 @@ struct NativeChatConnectionTestAccess {
         // Failure-only bounded phase flags: no URL, verifier, token or chat.
         const auto now = GetTickCount64();
         const auto loading_remaining = c.loading_deadline_ > now ? c.loading_deadline_ - now : 0U;
+        const auto surface = NativeChatSurfaceTestAccess::readiness(c.surface_);
         std::cerr << "Companion first chat phase: active=" << c.active_
             << " worker=" << c.client_.running() << " awaiting_login=" << c.awaiting_login_
-            << " surface_ready=" << c.surface_.ready()
+            << " surface_ready=" << (surface.attached && surface.navigation_started &&
+                surface.nonce_handshake && surface.source_matches)
             << " frames=" << c.surface_.rendered_frames() << " rows=" << c.surface_.rendered_messages()
             << " rejected=" << c.surface_.rejected_frames()
             << " metadata=" << c.connection_state_.has_value()
@@ -42,14 +48,15 @@ struct NativeChatConnectionTestAccess {
             << " awaiting_render=" << (c.awaiting_frame_ != 0U)
             << " native_ready=" << c.ready_
             << " surface_discarded=" << c.surface_.discarded()
+            << " surface_attached=" << surface.attached
+            << " navigation_started=" << surface.navigation_started
+            << " nonce_handshake=" << surface.nonce_handshake
+            << " source_matches=" << surface.source_matches
             << " pending_subscribed=" << c.pending_subscribed_
             << " recovery_attempted=" << c.first_document_recovery_attempted_
             << " reconnecting=" << c.reconnecting_
             << " loading_remaining_ms=" << loading_remaining << '\n';
     }
-};
-struct NativeChatSurfaceTestAccess {
-    static ICoreWebView2 *core(NativeChatSurface &s) { return s.webview_.Get(); }
 };
 struct VideoOutputPanelTestAccess {
     static HWND open(VideoOutputPanel &p) { p.open(); return p.panel_; }

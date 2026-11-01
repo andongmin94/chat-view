@@ -37,6 +37,14 @@ public:
     [[nodiscard]] unsigned long long rejected_frames() const noexcept;
 private:
     friend struct NativeChatSurfaceTestAccess;
+    // Test-only readiness evidence; never expose the private URL or nonce.
+    struct ReadinessEvidence {
+        bool attached;
+        bool navigation_started;
+        bool nonce_handshake;
+        bool source_matches;
+    };
+    [[nodiscard]] ReadinessEvidence readiness_evidence() const noexcept;
     struct State;
     std::shared_ptr<State> state_;
     Microsoft::WRL::ComPtr<ICoreWebView2> webview_;

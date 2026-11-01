@@ -17,6 +17,7 @@ struct WebViewHostTestAccess {
 };
 struct NativeChatSurfaceTestAccess {
     static ICoreWebView2 *core(NativeChatSurface &surface) { return surface.webview_.Get(); }
+    static auto readiness(const NativeChatSurface &surface) { return surface.readiness_evidence(); }
     static bool omit_completed_for_current_document(NativeChatSurface &surface) {
         if (!surface.webview_ || !surface.completed_token_.value ||
             FAILED(surface.webview_->remove_NavigationCompleted(surface.completed_token_))) return false;
@@ -127,6 +128,10 @@ int main()
         chatview::NativeChatSurface surface;
         expect(!surface.open(host), "uninitialized host rejected");
         expect(surface.discarded(), "an absent private document is explicitly unavailable");
+        const auto absent_readiness = chatview::NativeChatSurfaceTestAccess::readiness(surface);
+        expect(!absent_readiness.attached && !absent_readiness.navigation_started &&
+            !absent_readiness.nonce_handshake && !absent_readiness.source_matches,
+            "absent private document has no readiness evidence");
         expect(!surface.publish(kMessage), "pre-handshake publish rejected");
         expect(!surface.jump_to_latest(), "locked latest shortcut refuses an unowned document");
         expect(host.initialize(window), "initialize production host");
@@ -141,6 +146,10 @@ int main()
             "omit first native NavigationCompleted notification");
         await([&] { return surface.ready(); }, "owned document nonce handshake without load events");
         expect(!surface.discarded(), "owned nonce-ready private document remains valid");
+        const auto ready_evidence = chatview::NativeChatSurfaceTestAccess::readiness(surface);
+        expect(ready_evidence.attached && ready_evidence.navigation_started &&
+            ready_evidence.nonce_handshake && ready_evidence.source_matches,
+            "actual owned nonce-ready document satisfies each readiness condition");
         const UINT64 first_navigation = chatview::WebViewHostTestAccess::navigation(host);
         expect(host.is_current_navigation(first_navigation),
             "owned first document is bound to a nonzero WebView2 navigation ID");
@@ -238,6 +247,8 @@ int main()
             "superseding own chat immediately fences its prior navigation completion");
         expect(!surface.ready() && !surface.publish(kMessage), "setup immediately invalidates private delivery");
         await([&] { return evaluate(core.Get(), L"document.querySelector('h1')?.textContent === 'ChatView needs a chat URL'") == L"true"; }, "setup page actually loads");
+        expect(!chatview::NativeChatSurfaceTestAccess::readiness(surface).source_matches,
+            "actual setup DOM no longer matches the former private document source");
         const std::wstring setup_url = source(core.Get());
         const std::wstring setup_history = evaluate(core.Get(), L"history.length");
         expect(evaluate(core.Get(), L"globalThis.setupCanary = true") == L"true", "setup document canary");

@@ -1,12 +1,61 @@
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'Obs')]
 param(
-    [Parameter()]
+    [Parameter(ParameterSetName = 'Obs')]
     [ValidateNotNullOrEmpty()]
-    [string]$ObsPath = (Join-Path $env:ProgramFiles 'obs-studio')
+    [string]$ObsPath = (Join-Path $env:ProgramFiles 'obs-studio'),
+
+    [Parameter(Mandatory, ParameterSetName = 'Companion')]
+    [switch]$Companion,
+
+    [Parameter(ParameterSetName = 'Companion')]
+    [ValidateNotNullOrEmpty()]
+    [string]$CompanionPath = (Join-Path $env:LOCALAPPDATA 'Programs\ChatViewCompanion')
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+function Assert-CompanionDirectory {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+
+        [switch]$AllowNew
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        if ($AllowNew) { return }
+        throw "Companion installation directory was not found: '$Path'."
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "Companion destination is not a directory: '$Path'."
+    }
+    foreach ($itemPath in @($Path, (Join-Path $Path 'fonts'))) {
+        if ((Test-Path -LiteralPath $itemPath) -and
+            ((Get-Item -LiteralPath $itemPath -Force).Attributes -band
+                [IO.FileAttributes]::ReparsePoint)) {
+            throw "Companion installation paths may not be reparse points: '$itemPath'."
+        }
+    }
+    if ($AllowNew -and -not (Get-ChildItem -LiteralPath $Path -Force | Select-Object -First 1)) {
+        return
+    }
+
+    $hud = Join-Path $Path 'chat-view-hud.exe'
+    $launcher = Join-Path $Path 'start-companion.cmd'
+    $expectedLauncher = @(
+        '@echo off',
+        'setlocal DisableDelayedExpansion',
+        'start "" "%~dp0chat-view-hud.exe" --companion'
+    ) -join "`n"
+    if ((Test-Path -LiteralPath $hud -PathType Leaf) -and
+        (Test-Path -LiteralPath $launcher -PathType Leaf) -and
+        [IO.File]::ReadAllText($launcher).Replace("`r`n", "`n").TrimEnd([char[]]"`r`n") -ceq $expectedLauncher) {
+        return
+    }
+    throw "Directory is not a ChatView companion installation: '$Path'."
+}
+
 
 $SupportedObsVersion = '32.2.2'
 $MinimumWindowsBuild = 19041
@@ -75,17 +124,23 @@ function Resolve-ObsRoot {
 function Get-RunningInstalledChatViewProcesses {
     param(
         [Parameter(Mandatory)]
-        [string]$ObsRoot
+        [string]$ObsRoot,
+
+        [switch]$CompanionMode
     )
 
-    $targetPaths = @(
+    $targetPaths = if ($CompanionMode) {
+        @([System.IO.Path]::GetFullPath(
+            (Join-Path $ObsRoot 'chat-view-hud.exe')))
+    }
+    else { @(
         [System.IO.Path]::GetFullPath(
             (Join-Path $ObsRoot 'obs-plugins\64bit\chat-view-hud.exe')),
         [System.IO.Path]::GetFullPath(
             (Join-Path $ObsRoot 'obs-plugins\64bit\chat-view-config.exe')),
         [System.IO.Path]::GetFullPath(
             (Join-Path $ObsRoot 'obs-plugins\64bit\chat-view-diagnostics.exe'))
-    )
+    ) }
 
     $running = @()
     foreach ($processName in @(
@@ -120,13 +175,15 @@ function Assert-InstalledChatViewProcessesStopped {
         [Parameter(Mandatory)]
         [string]$ObsRoot,
 
-        [int]$WaitMilliseconds = 5000
+        [int]$WaitMilliseconds = 5000,
+
+        [switch]$CompanionMode
     )
 
     $deadline = [DateTime]::UtcNow.AddMilliseconds($WaitMilliseconds)
     do {
         $running = @(
-            Get-RunningInstalledChatViewProcesses -ObsRoot $ObsRoot
+            Get-RunningInstalledChatViewProcesses -ObsRoot $ObsRoot -CompanionMode:$CompanionMode
         )
         if ($running.Count -eq 0) {
             return
@@ -136,6 +193,9 @@ function Assert-InstalledChatViewProcessesStopped {
 
     $details = $running |
         ForEach-Object { "$($_.Name) PID $($_.Id)" }
+    if ($CompanionMode) {
+        throw "Close the installed ChatView companion before continuing: $($details -join ', ')."
+    }
     throw "Close the installed ChatView HUD, Control Center, and diagnostics processes before continuing: $($details -join ', ')."
 }
 
@@ -338,7 +398,37 @@ function Copy-ChatViewFilesTransactionally {
     throw 'Installation failed for an unknown reason.'
 }
 
-$packageFiles = @(
+$packageFiles = if ($Companion) { @(
+    @{
+        Source = Join-Path $PSScriptRoot 'obs-plugins\64bit\chat-view-hud.exe'
+        RelativeDestination = 'chat-view-hud.exe'
+    },
+    @{
+        Source = Join-Path $PSScriptRoot 'start-companion.cmd'
+        RelativeDestination = 'start-companion.cmd'
+    },
+    @{
+        Source = Join-Path $PSScriptRoot 'uninstall.ps1'
+        RelativeDestination = 'uninstall.ps1'
+    },
+    @{
+        Source = Join-Path $PSScriptRoot 'uninstall-companion.cmd'
+        RelativeDestination = 'uninstall-companion.cmd'
+    },
+    @{
+        Source = Join-Path $PSScriptRoot 'LICENSE'
+        RelativeDestination = 'LICENSE'
+    },
+    @{
+        Source = Join-Path $PSScriptRoot 'README.md'
+        RelativeDestination = 'README.md'
+    },
+    @{
+        Source = Join-Path $PSScriptRoot 'data\obs-plugins\chat-view-obs\fonts\LICENSE.txt'
+        RelativeDestination = 'fonts\LICENSE.txt'
+    }
+) }
+else { @(
     @{
         Source = Join-Path $PSScriptRoot 'obs-plugins\64bit\chat-view-obs.dll'
         RelativeDestination = 'obs-plugins\64bit\chat-view-obs.dll'
@@ -367,7 +457,7 @@ $packageFiles = @(
         Source = Join-Path $PSScriptRoot 'data\obs-plugins\chat-view-obs\fonts\LICENSE.txt'
         RelativeDestination = 'data\obs-plugins\chat-view-obs\fonts\LICENSE.txt'
     }
-)
+) }
 
 $runtimeInstaller =
     Join-Path $PSScriptRoot 'ensure-webview2-runtime.ps1'
@@ -376,9 +466,9 @@ $pluginPreflight =
     Join-Path $PSScriptRoot 'chat-view-plugin-preflight.exe'
 $requiredPackageFiles = @(
     $runtimeInstaller,
-    $selfTest,
-    $pluginPreflight
+    $selfTest
 ) + @($packageFiles | ForEach-Object { $_.Source })
+if (-not $Companion) { $requiredPackageFiles += $pluginPreflight }
 
 foreach ($file in $requiredPackageFiles) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
@@ -386,18 +476,26 @@ foreach ($file in $requiredPackageFiles) {
     }
 }
 
-if (-not (Test-Administrator)) {
-    Invoke-ElevatedSelf
+if ($Companion) {
+    Assert-SupportedWindows
+    $installRoot = [System.IO.Path]::GetFullPath($CompanionPath)
+    Assert-CompanionDirectory -Path $installRoot -AllowNew
 }
+else {
+    if (-not (Test-Administrator)) {
+        Invoke-ElevatedSelf
+    }
 
-Assert-SupportedWindows
+    Assert-SupportedWindows
 
-if (Get-Process -Name 'obs64' -ErrorAction SilentlyContinue) {
-    throw 'Close OBS Studio before installing ChatView OBS.'
+    if (Get-Process -Name 'obs64' -ErrorAction SilentlyContinue) {
+        throw 'Close OBS Studio before installing ChatView OBS.'
+    }
+
+    $obsRoot = Resolve-ObsRoot -Path $ObsPath
+    $installRoot = $obsRoot
 }
-
-$obsRoot = Resolve-ObsRoot -Path $ObsPath
-Assert-InstalledChatViewProcessesStopped -ObsRoot $obsRoot
+Assert-InstalledChatViewProcessesStopped -ObsRoot $installRoot -CompanionMode:$Companion
 & $runtimeInstaller
 
 Write-Host 'Running the local transparent-HUD preflight...'
@@ -408,27 +506,36 @@ Invoke-NativePreflight `
     ) `
     -FailureMessage 'The ChatView HUD preflight failed on this PC'
 
-Write-Host 'Checking the plugin against the installed OBS runtime...'
-Invoke-NativePreflight `
-    -Executable $pluginPreflight `
-    -Arguments @(
-        (Join-Path $PSScriptRoot 'obs-plugins\64bit\chat-view-obs.dll'),
-        (Join-Path $obsRoot 'bin\64bit')
-    ) `
-    -FailureMessage 'The ChatView plugin could not be loaded against this OBS installation'
+if (-not $Companion) {
+    Write-Host 'Checking the plugin against the installed OBS runtime...'
+    Invoke-NativePreflight `
+        -Executable $pluginPreflight `
+        -Arguments @(
+            (Join-Path $PSScriptRoot 'obs-plugins\64bit\chat-view-obs.dll'),
+            (Join-Path $obsRoot 'bin\64bit')
+        ) `
+        -FailureMessage 'The ChatView plugin could not be loaded against this OBS installation'
 
-if (Get-Process -Name 'obs64' -ErrorAction SilentlyContinue) {
-    throw 'OBS Studio started during installation. Close it and run the installer again.'
+    if (Get-Process -Name 'obs64' -ErrorAction SilentlyContinue) {
+        throw 'OBS Studio started during installation. Close it and run the installer again.'
+    }
 }
-Assert-InstalledChatViewProcessesStopped -ObsRoot $obsRoot
+Assert-InstalledChatViewProcessesStopped -ObsRoot $installRoot -CompanionMode:$Companion
 
 $files = foreach ($file in $packageFiles) {
     [pscustomobject]@{
         Source = $file.Source
-        Destination = Join-Path $obsRoot $file.RelativeDestination
+        Destination = Join-Path $installRoot $file.RelativeDestination
     }
 }
+if ($Companion) { Assert-CompanionDirectory -Path $installRoot -AllowNew }
 Copy-ChatViewFilesTransactionally -Files $files
 
-Write-Host "ChatView OBS $SupportedObsVersion-compatible build was installed to '$obsRoot'."
-Write-Host 'All package and local preflight checks passed. Start OBS Studio, then open Tools > ChatView Settings.'
+if ($Companion) {
+    Write-Host "ChatView companion was installed to '$installRoot'."
+    Write-Host 'Run start-companion.cmd in that folder. OBS is not required on this PC.'
+}
+else {
+    Write-Host "ChatView OBS $SupportedObsVersion-compatible build was installed to '$obsRoot'."
+    Write-Host 'All package and local preflight checks passed. Start OBS Studio, then open Tools > ChatView Settings.'
+}

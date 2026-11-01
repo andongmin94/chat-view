@@ -40,7 +40,13 @@ OBS 송출 PC에서는 **도구(Tools) → 현재 장면의 챗뷰 시험 배너
 
 현재 캡처 위험 정책은 Display Capture 상황에서 HUD를 숨길 수 있습니다. 이는 보호 동작이며, 스트리머가 계속 읽는 상태로 송출에서 제외되는 최종 요구를 충족했다는 뜻은 아닙니다. Windows 캡처 제외 설정, 장치 연결, 렌더링 성공은 물리적 HDMI 영상의 비공개 보장이 아닙니다.
 
-배포 패키지는 **해당 커밋의 전체 qualification이 성공한 결과만** 사용합니다. 일반 development CI는 패키지를 올리지 않습니다. 설치하려면 검증된 패키지를 풀고 OBS를 종료한 뒤 `install.cmd`를 실행합니다. 기본 OBS 경로는 `C:\Program Files\obs-studio`이며 다른 경로는 `install.ps1 -ObsPath`로 지정합니다. `uninstall.cmd`로 제거하며 사용자 설정은 유지됩니다. 이 설치기는 게임 PC용 배포 설치기가 아닙니다.
+배포 패키지는 **해당 커밋의 전체 qualification이 성공한 결과만** 사용합니다. 일반 development CI는 패키지를 올리지 않습니다. **OBS가 있는 송출 PC**에서는 검증된 패키지를 풀고 OBS를 종료한 뒤 `install.cmd`를 실행합니다. 기본 OBS 경로는 `C:\Program Files\obs-studio`이며 다른 경로는 `install.ps1 -ObsPath`로 지정합니다. 기존 OBS 설치는 **OBS Studio 32.2.2 x64** 검사와 플러그인 preflight를 유지합니다. `uninstall.cmd`로 제거하며 사용자 설정은 유지됩니다.
+
+**OBS 없는 게임 PC용 companion 설치 경로**도 같은 설치 스크립트에 있습니다. 검증된 패키지 폴더에서 `./install.ps1 -Companion`을 실행하면 사용자별 `%LOCALAPPDATA%\Programs\ChatViewCompanion`에 HUD와 실행/제거 파일·라이선스만 설치합니다. 이 경로는 OBS 설치나 관리자 승격을 요구하지 않으며, 패키지 manifest·Windows/WebView2·실제 HUD preflight 검사는 그대로 수행합니다. 설치 위치를 직접 정할 때만 `-CompanionPath 'C:\선택한\폴더'`를 함께 지정합니다. 새 빈 폴더 또는 기존 companion 실행 파일과 고정 실행 cmd가 확인된 설치 폴더만 변경하며, 다른 파일이 있는 일반 폴더는 설치·제거하지 않습니다. 시작 메뉴·자동 실행·레지스트리 등록은 하지 않습니다.
+
+설치 폴더의 **`start-companion.cmd`**를 실행하면 기존 개발/개인정보 경고를 거쳐 게임 PC 역할의 보호된 연결창이 열립니다. OBS 실행 인수와 섞거나 자체 로그인 승인을 만들지 않습니다. 같은 폴더의 **`uninstall-companion.cmd`**로 제거합니다. 실행 중인 해당 설치의 HUD를 먼저 종료해야 하며, 업데이트도 원래 패키지에서 같은 `-CompanionPath`로 설치합니다. `%LOCALAPPDATA%\ChatView`의 사용자 설정·저장된 승인은 설치/제거로 삭제하지 않습니다.
+
+이는 게임 PC 설치·실행·제거 경로의 구현이며, 물리 투컴 HUD 제외·실계정 치지직·배포 qualification 완료를 뜻하지 않습니다. 현재 배포 가능 여부는 [개발 현황](docs/development-plan.md)의 실제 검증 결과를 확인하세요.
 
 ## 개발 빌드
 

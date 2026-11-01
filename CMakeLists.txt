@@ -606,7 +606,9 @@ install(FILES
     LICENSE
     scripts/install.cmd
     scripts/install.ps1
+    scripts/start-companion.cmd
     scripts/uninstall.cmd
+    scripts/uninstall-companion.cmd
     scripts/uninstall.ps1
     scripts/ensure-webview2-runtime.ps1
     scripts/verify-package.ps1

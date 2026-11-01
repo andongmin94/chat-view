@@ -621,6 +621,10 @@ int fail_process_exit(HANDLE process)
 
 int wmain(int argument_count, wchar_t **arguments)
 {
+    if (SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) == nullptr) {
+        return fail(L"Failed to set the privacy preflight DPI context");
+    }
+
     if (argument_count != 2) {
         return fail(L"Expected the HUD executable path");
     }

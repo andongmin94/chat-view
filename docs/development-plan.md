@@ -4,14 +4,14 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 작업: neobrutal-ui 컴포넌트·글꼴·배치 정합 (로컬 완료·원격 미반영)
+## 현재 작업: OBS 없는 게임 PC 설치·실행·제거 (로컬 완료·원격 미반영)
 
-2026-11-01 `OBS` 로컬 HEAD `170a6ba580e9d30aa0e8c0d3ae19751c29af1659`, 미커밋 변경 없음에서 시작했다. 원격 OBS `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`는 유지한다.
+2026-11-01 `OBS` HEAD `398221b95a0fa0812eac34e434e52a82fbc93b60`의 깨끗한 상태에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일하다.
 
-- **관측·수정:** 색·그림자만 바꾼 이전 UI에는 Segoe UI·기존 Win32 입력창/체크박스/선택창과 조밀한 폼 배치가 남아 있었다. [neobrutal-ui](https://github.com/andongmin94/neobrutal-ui)의 실제 Mono 기본 테마·컴포넌트를 대조해 HUD·Windows 연결/영상/Control Center·웹 관리 공통 화면에 Pretendard, 검정 2px 테두리·5px 모서리·4px 그림자, 버튼/입력창 40px 및 카드 여백 24px를 적용했다. 버튼 hover/pressed는 3px/4px 이동·1px/0px 그림자, disabled는 50% 대비다. Windows 체크박스·선택 항목은 기존 컨트롤의 입력/접근성/선택 API와 native popup을 유지하며 그린다. 카드 구조로 재배치하고 실제로 잘리던 상태 항목 이름·긴 HUD/복구 설명의 폭을 확보했다. 기존 상단 장식선 제거를 유지한다.
-- **글꼴·경계:** [Pretendard v1.3.9](https://github.com/orioncactus/pretendard/tree/v1.3.9)의 Medium/Bold OTF·Variable WOFF2 및 원본 OFL을 포함했다. 네이티브는 EXE 리소스/프로세스 전용 폰트, 웹은 고정 same-origin 경로만 사용한다. 설치 파일 목록에도 OFL을 포함했다. 시스템 폰트/보안 설정·승인·nonce·renderer/ACK·timeout/retry는 변경하지 않았다. 글꼴 로드 검사는 첫 실제 ACK 뒤에 수행한다.
-- **검증:** 웹 관리/광고 상태 회귀 Node 8/8, preview 자산·인증 1/1, TypeScript 검사 통과. 기존 Chromium 도구로 관리 3화면의 1000/390px 및 HUD 560×800/280×400을 확인해 글꼴 로드·가로 넘침 없음·최신 하단 위치를 확인했다. CMake RelWithDebInfo `/W4 /WX`, Node24.22.1·WebView2 155.0.4283.62의 `native-chat-surface`는 2.93초 통과했다. 최초 1.87초 실패는 고정 90px 스크롤이 새 카드에서 첫 행을 벗어나지 못하는 fixture 전제로, 실제 둘째 행 offset 기준으로 고쳤고 anchor≤2px·unread·ACK 기대는 유지했다. 이어 companion return에서 실제 선택창 높이 40 DIP 기대가 실패해, Windows가 더하는 chrome 높이를 측정해 보정했다. companion return 4.66초 통과(실제 40 DIP·체크박스 토글·F4/Escape·기존 복귀 흐름), config-single-instance 4.70초 통과다. 설정창 검사의 추가 실패는 이 세션 DPI192에서 가상화 좌표와 실제 DPI를 혼용한 fixture 문제로, 검사 스레드만 제품과 같은 PMv2로 맞춰 엄격한 경계/비겹침/높이 기대를 유지했다. 임시 진단은 제거했다. 이미 통과한 검사는 반복하지 않았고, 설치/제거 스크립트 구문 검사와 `git diff --check`도 통과했다. 실제 Control Center의 텍스트/커서/Tab과 수정된 카드·버튼 표시를 확인했다.
-- **남은 범위:** D1은 이전 CMake RelWithDebInfo·Node24.22.1·WebView2 155.0.4283.62의 reapproval 9.42초 → redraw 6.17초 2/2 통과 이후 미재현·원인 미확정이다. 해당 D1 반복·전체 51/385개·Actions·push·실제 설치/패키징/출시 qualification은 이번에 실행하지 않는다. 실제 OBS/실계정·물리 투컴 수용 검증은 별도 미완료다.
+- **구현:** 기존 설치/제거 스크립트의 별도 `-Companion` 경로로 사용자별 HUD·고정 `--companion` 실행/제거 cmd·라이선스를 설치한다. OBS 분기의 32.2.2·승격·plugin preflight, 공통 manifest·WebView2·privacy preflight는 유지한다. 새 빈 폴더/확인된 기존 설치만 변경하고 설정·저장 승인·다른 사용자 파일은 보존한다.
+- **관측·수정:** DPI192에서 기존 self-test가 보호 적용 전 두 색 calibration에 실패해 설치를 복사 전에 차단했다. probe 생성 전 스레드를 제품과 같은 PMv2로 맞춘 뒤 실제 preflight가 통과했다. 색 임계·180ms settle·WDA·기한은 그대로다. 일반 폴더의 README/LICENSE 덮어쓰기/삭제와 자기 삭제 batch exit1도 임시 fixture에서 재현해 소유권 확인/기존 batch context 해제로 고쳤다.
+- **검증:** RelWithDebInfo `/W4 /WX` 빌드·정적 의존성(OBS/shared CRT/동적 WebView2Loader 없음), AST2·혼합 mode 거부2·manifest 정상/오염5·비소유 폴더 거부/보존4 통과. `.ci` 실제 설치7.88초·업데이트7.76초(각 필수 HUD preflight 포함), 설치본 기존 companion-launch 1회, 고정 cmd 실행→gaming 연결창→실행 중 설치/제거 거부2→정상 Q 종료, 수정한 제거 cmd exit0·payload 제거·notes/설정 보존 통과. 초기 실패를 성공으로 대체하지 않고 원인/수정과 구분한다.
+- **D1/경계:** 기존 `companion-chat-early-first`를 Node24.22.1·WebView2 155.0.4283.62·RelWithDebInfo에서 **1회4.08초 통과**했다. 승인 당시 첫 텍스트가 있는 별도 도착 순서만 확인했으며 실패 readiness 분기는 미실행, D1 원인 미확정이다. 통과한 UI3개/같은 D1 조합·전체51/385·Actions·push·시스템 설치/배포 qualification은 반복하지 않았다. 사용자가 실계정 CHZZK 앱·물리 투컴/캡처카드 미준비를 확인했다. 다음은 위임받은 비지급 시험 HP·포인트 흐름이다.
 
 ## 직전 완료 작업: HUD 크기 변경 시 최신 채팅 추적과 읽던 위치 유지 (로컬 검증 완료·원격 미반영)
 
@@ -604,7 +604,7 @@ HUD가 보이면서 수신 영상에는 없어야 한다. HUD 숨김은 보호�
 
 - [ ] **R-01 — 첫 표시/연결 신뢰성과 방송 안정성.** D1/D7, #390/#392 최초 표시 실패 및 #367 HUD smoke30.53초(기존30초 한도) 원인 미확정.
 - [ ] **R-02 — 반복·자원·설치·캡처·패키지 qualification.** routine/개별 flow와 구분.
-- [ ] **R-03 — 원컴/투컴 설치본·안내.** 실험/미지원/검증 범위 구분.
+- [ ] **R-03 — 원컴/투컴 설치본·안내.** 게임 PC용 per-user companion 설치·업데이트·고정 실행·제거 구현과 임시 설치 검증 완료. 배포 qualification·물리 사용 검증은 남았으며 실험/미지원/검증 범위를 구분한다.
 
 ## 남은 결함과 보존할 근거
 

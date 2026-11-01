@@ -9,9 +9,11 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace chatview {
 struct WebViewHostTestAccess {
+    static ICoreWebView2 *core(WebViewHost &host) { return host.webview_.Get(); }
     static UINT64 navigation(const WebViewHost &host) { return host.current_navigation_id_; }
     static const std::wstring &local_document(const WebViewHost &host) { return host.local_document_url_; }
 };
@@ -105,8 +107,97 @@ void expect_cancelled(ICoreWebView2 *core, const std::wstring &uri)
     expect(state->cancelled, "host cancels unowned document");
 }
 constexpr wchar_t kMessage[] = LR"JSON({"type":"chat-snapshot","version":1,"snapshot":{"state":"subscribed","received":1,"messages":[{"nickname":"모의 사용자 <script>","content":"한글 😀 <img onerror=evil()>","messageTime":1700000000000,"userRoleCode":"streamer","verifiedMark":true}]}})JSON";
+void ready_delivery_overlap(chatview::WebViewHost &host, chatview::NativeChatSurface &surface)
+{
+    using Surface = chatview::NativeChatSurfaceTestAccess;
+    using Host = chatview::WebViewHostTestAccess;
+    struct Observation {
+        HRESULT status = S_OK;
+        unsigned old_ready = 0U, new_ready = 0U;
+        std::wstring old_url, current_url, old_ready_message;
+        std::string old_bits, reserved_bits, current_bits;
+    };
+    const auto observed = std::make_shared<Observation>();
+    const auto bits = [](const auto &evidence) {
+        std::string value;
+        for (const bool bit : {evidence.attached, evidence.navigation_started,
+                evidence.nonce_handshake, evidence.source_matches}) value += bit ? '1' : '0';
+        return value;
+    };
+    ComPtr<ICoreWebView2> core = Host::core(host);
+    expect(core != nullptr, "ready-delivery overlap has the existing production core");
+    EventRegistrationToken token{};
+    // Register before A's surface handler: replace its authority while the
+    // actual old-source ready event is still being delivered, not by posting
+    // an old nonce from C. Never pump/wait inside this WebView2 callback.
+    expect(SUCCEEDED(core->add_WebMessageReceived(
+        Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+            [observed, &host, &surface, bits](ICoreWebView2 *, ICoreWebView2WebMessageReceivedEventArgs *args) -> HRESULT {
+                if (FAILED(observed->status)) return S_OK;
+                LPWSTR raw_source = nullptr, raw_message = nullptr;
+                try {
+                    const HRESULT got_source = args->get_Source(&raw_source);
+                    const HRESULT got_message = args->TryGetWebMessageAsString(&raw_message);
+                    if (FAILED(got_source) || FAILED(got_message) || !raw_source || !raw_message) {
+                        observed->status = E_FAIL;
+                    } else {
+                        const std::wstring sender(raw_source), message(raw_message);
+                        if (message.starts_with(L"chat-ready:") && sender == Host::local_document(host)) {
+                            if (observed->old_ready == 0U) {
+                                observed->old_url = sender; observed->old_ready_message = message;
+                                observed->old_bits = bits(Surface::readiness(surface));
+                                ++observed->old_ready;
+                                if (!surface.open(host)) observed->status = E_FAIL;
+                                else {
+                                    observed->current_url = Host::local_document(host);
+                                    const auto reserved = Surface::readiness(surface);
+                                    observed->reserved_bits = bits(reserved);
+                                    if (observed->current_url == observed->old_url || !reserved.attached ||
+                                        reserved.nonce_handshake || surface.ready()) observed->status = E_FAIL;
+                                }
+                            } else if (sender == observed->current_url) {
+                                ++observed->new_ready;
+                                observed->current_bits = bits(Surface::readiness(surface));
+                                if (message == observed->old_ready_message) observed->status = E_FAIL;
+                            } else observed->status = E_FAIL;
+                        }
+                    }
+                } catch (...) { observed->status = E_FAIL; }
+                CoTaskMemFree(raw_source); CoTaskMemFree(raw_message);
+                return S_OK;
+            }).Get(), &token)), "observe actual ready delivery before the native surface handler");
+    try {
+        expect(surface.open(host), "open document A for actual ready delivery overlap");
+        await([&] { return FAILED(observed->status) || surface.ready(); },
+            "replacement document C receives its own nonce after the actual A ready delivery");
+        expect(SUCCEEDED(observed->status) && observed->old_ready == 1U && observed->new_ready == 1U,
+            "exactly one actual A ready reserves C and one actual C ready completes it");
+        expect(observed->old_bits == "1101" && observed->current_bits == "1101",
+            "both actual sources navigate before their own nonce, and late A never authorizes C");
+        expect(Host::local_document(host) == observed->current_url && source(core.Get()) == observed->current_url &&
+            observed->current_url != observed->old_url && bits(Surface::readiness(surface)) == "1111",
+            "replacement C alone owns the selected URL, source and nonce readiness");
+        expect(surface.publish(kMessage), "publish actual first text to the nonce-ready replacement C");
+        await([&] { return surface.rendered_frames() == 1U && surface.rendered_messages() == 1U; },
+            "replacement C acknowledges its own first actual DOM text");
+        expect(evaluate(core.Get(), L"document.querySelector('#messages li .content').textContent === '한글 😀 <img onerror=evil()>'") == L"true",
+            "replacement C contains the synthetic text associated with its own ACK");
+        expect(SUCCEEDED(observed->status) && observed->old_ready == 1U && observed->new_ready == 1U &&
+            Host::local_document(host) == observed->current_url && source(core.Get()) == observed->current_url,
+            "late A cannot take back the host during C's first publication");
+        std::cout << "Native ready delivery overlap: a=" << observed->old_bits
+            << " reserved=" << observed->reserved_bits << " c_before_ready=" << observed->current_bits
+            << " final=" << bits(Surface::readiness(surface)) << " frames=" << surface.rendered_frames()
+            << " rows=" << surface.rendered_messages() << " old_ready=" << observed->old_ready
+            << " new_ready=" << observed->new_ready << '\n';
+    } catch (...) {
+        core->remove_WebMessageReceived(token);
+        throw;
+    }
+    core->remove_WebMessageReceived(token);
 }
-int main()
+}
+int main(int argc, char **argv)
 {
     wchar_t temporary[MAX_PATH]{};
     if (!GetTempPathW(MAX_PATH, temporary)) return 2;
@@ -117,6 +208,8 @@ int main()
     int code = 0;
     HWND window = nullptr;
     try {
+        expect(argc == 1 || (argc == 2 && std::string_view(argv[1]) == "ready-delivery-overlap"),
+            "default surface scenarios or explicit ready-delivery-overlap mode required");
         WNDCLASSW klass{}; klass.lpfnWndProc = window_proc;
         klass.hInstance = GetModuleHandleW(nullptr); klass.lpszClassName = L"ChatView.NativeChat.Test";
         expect(RegisterClassW(&klass) != 0U, "window class");
@@ -136,6 +229,10 @@ int main()
         expect(!surface.jump_to_latest(), "locked latest shortcut refuses an unowned document");
         expect(host.initialize(window), "initialize production host");
         await([&] { return host.ready(); }, "WebView2 startup");
+        if (argc == 2) {
+            ready_delivery_overlap(host, surface);
+            surface.close(); host.close();
+        } else {
         expect(surface.open(host), "open embedded own chat");
         expect(!surface.discarded(),
             "a new own navigation is pending, not a reason to restart its 15-second budget");
@@ -770,6 +867,7 @@ int main()
         }, "invalidated owner has no old private rows in actual blank WebView2 DOM");
         host.close(); expect(!surface.ready(), "host destruction invalidates surface"); surface.close(); core.Reset();
         std::cout << "Native own-chat DOM, memory navigation isolation, setup and teardown passed\n";
+        }
     } catch (const std::exception &error) {
         std::cerr << "Native chat test failed: " << error.what() << '\n'; code = 1;
     }

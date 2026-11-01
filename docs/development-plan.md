@@ -4,18 +4,17 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 작업: CI #483의 복구 전 게시 여부와 새 문서 준비 경계 대조
+## 현재 작업: 이전 실제 ready 신호 전달 중 새 문서의 탐색·nonce·source 확인
 
-2026-11-01 `OBS` HEAD `bfcff1041067e33aed4a58a6c5ea10f3604dcc27`의 깨끗한 상태에서 시작했고 한 번 fetch한 원격도 같았다. 기존 #483 원시 로그와 해당 SHA `512404b8a4f99213d96b449433579f76206c8d79` 이후의 문서/복구 코드를 대조했다. 사용자의 같은 검사 반복·timeout/retry 증가·전체 검사·Actions 금지와 OBS push 요청을 따른다.
+2026-11-01 `OBS` HEAD `aa9711cefdbbb64de3f7af6bf38cd8ff1ce79171`의 깨끗한 상태에서 시작했고 한 번 fetch한 원격도 같았다. 기존 문서 예약·탐색/nonce/source gate와 parser 초기화를 대조한 뒤, 사용자가 요청한 근거 있는 새 전환 조건 한 건만 실행했다.
 
-- **확인된 해석 수정:** #483은 `active/worker/metadata/pending_subscribed/recovery_attempted=1`, 현재 `frames/awaiting_render/native_ready/discarded=0`, 잔여1062ms였다. 준비 중 복구와 첫 게시 후 ACK 대기 중 복구는 모두 새 surface와 카운터를 만들고 같은 상태로 합쳐진다. ACK 복구도 `awaiting_frame_=0`, `ready_=false`, `loading_deadline_=render_deadline_`가 된다. 따라서 직전 기록의 **“첫 게시 전” 단정은 철회**한다. 당시 render deadline과 복구 전 상태가 없어 어느 분기인지 소급 확정할 수 없다.
-- **문서 전환 대조:** #483 이후 host의 새 URL 예약/탐색 ID 무효화, 오래된 시작 취소·완료 ID 차단, surface의 URL/nonce 결속과 복구 정책은 바뀌지 않았다. `discarded=0`은 **현재 receiver**가 탐색 실패·ProcessFailed·허용되지 않은 중복/외부 시작으로 무효화된 상태와 맞지 않는다. 이전 문서의 실패·지연 여부를 배제하는 증거는 아니다. 현재 문서의 navigation/nonce/source 기록도 #483에는 없어 셋 중 어느 단계인지 확정하지 않는다.
-- **최소 진단 보완:** 기존 `Flow::pulse()`의 `chat.tick()` 전후 스칼라만 비교해 첫 복구의 준비/ACK 분기, 직전 awaiting/native-ready/ACK 수와 마감 일치 여부를 한 건 보관한다. 첫 빈 DOM 실패 때만 고정 숫자/단계 한 행을 출력하므로 새 문서 카운터 초기화로 복구 전 단계가 사라지지 않는다. 마감 필드는 **이전 tick 값과의 일치**이며 승인 수신과 같은 tick의 정상 마감 갱신을 제품 결함으로 단정하지 않는다. 제품 코드·타이머·재시도·수신 예산은 바꾸지 않았다.
-- **새 입력 한 건의 실제 검증:** 기존 companion C++/Node 도구에 명시적 `recover-first-ack`를 추가했다. 원래 첫15초 wait 안에서 실제 nonce-ready 문서의 ACK handler만 제거한 뒤 동일 브라우저 요청을 승인한다. 실측 `kind=render prior_awaiting_render=1 prior_native_ready=1 prior_frames=0 prior_deadline_matches=1`을 확인했고, 기존1회 복구 뒤 새 문서의 첫 빈 ACK·정확한 승인/역할·Stop 후 승인 보존까지 **exit0 통과**했다. 로그인1회·refresh/signout0, Bob 승인 보존과 고정 진단 전체를 wrapper가 검사한다. 별도 controller/서버·강제 복구나 영구 CTest 등록은 없다.
-- **검증/한계:** Node24.22.1·실제 WebView2 Fixed155.0.4283.62·기존 RelWithDebInfo `/W4 /WX` companion 대상 빌드, wrapper 구문·diff 검사, 새 ACK 조건 **1회 통과**. 이번 조건에서 ACK 유실만으로 #483의 실패는 재현되지 않았으며 자연 D1 원인은 여전히 미확정이다. 직전 DOCUMENT 보류2건·기존 redraw/reapproval/early-first·전체51/385·실계정/물리 투컴·설치/패키징·Actions·배포는 반복/실행하지 않았다. 관련 미확인 제품 코드는 추측으로 고치지 않는다.
-- **반영/다음:** `[skip actions]` 커밋으로 OBS만 일반 fast-forward push하고 원격 SHA·해당 커밋 Actions0을 확인한다. 다음 자연 실패에서는 **복구 전 분기**와 현재 문서의 navigation/nonce/source, 남은 원래 기한의 ACK를 함께 읽는다. 같은 조건 반복으로 새 근거를 대신하지 않는다.
+- **새 조건의 근거:** WebView2의 [문서→호스트 메시지는 비동기이며 다른 종류 이벤트와 전체 순서가 보장되지 않는다](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2#add_webmessagereceived). 이전 검사는 A 응답을 파싱 전에 보류하거나 C에서 옛 nonce를 주입했다. 이번에는 기존 `native-chat-surface`의 명시적 `ready-delivery-overlap` 모드에서 **실제 A 출처의 ready가 전달되는 도중**, 복구와 같은 `surface.open()`의 close/blank/open 전환으로 C를 예약한다. 콜백은 탐색 예약 후 반환하고 기존 바깥 펌프만 사용한다. script/nonce 손상, 새 controller·타이머·재시도, 일반 진단 추가는 없다.
+- **실제 단계 관측:** 비트 순서는 attached/navigation/nonce/source다. A ready를 surface가 수락하기 직전 **1101**, C 예약 직후 **1000**, C 자신의 ready 수락 직전 **1101**, 수락 후 **1111**이었다. C의 fresh URL·다른 nonce·실제 DOM 텍스트와 고유 첫 ACK **frames1/rows1**을 확인했고 A/C 실제 ready는 각각1개였다. 이 입력에서 C는 탐색·source에 막히지 않았고, 옛 A 신호가 C를 준비시키거나 새 nonce 수락을 방해하지 않았다.
+- **검증:** 실제 Windows/WebView2 Fixed155.0.4283.62에서 기존 RelWithDebInfo `/W4 /WX` surface 대상만 빌드하고 새 명시적 조건 **1회·exit0 통과**. 기존15초 await·CTest 제한은 그대로다. 기본 surface 시나리오·DOCUMENT 보류·ACK 유실·redraw/reapproval/early-first·전체51/385·실계정/물리 투컴·설치/패키징·Actions·배포는 실행/반복하지 않았다. 독립 읽기 리뷰와 diff 검사도 통과했다.
+- **한계/제품 변경:** 이 검사는 실제 메시지 전달 중 권한 교체의 통제된 회귀다. 제품 `tick()`이 자연적으로 이 순서에 끼어들었거나 #483이 이 조건이었다는 증거는 아니다. **재현된 제품 결함이 없어 제품 코드·timeout/retry는 수정하지 않았다.** nonce 전 초기 렌더의 예외 가능성을 소스에서 대조했지만 실제 예외는 관측하지 못했다. 외부 script/import 대기는 없고, 현재 폰트/ResizeObserver는 #483 이후 변경이므로 과거 원인으로 연결하지 않는다.
+- **남은 #483/반영:** 해당 로그는 복구 후 현재 surface 미준비·잔여1062ms를 증명하지만 탐색/nonce/source와 복구 전 상태가 없어 세 단계 중 하나로 소급 확정할 수 없다. 준비 복구와 ACK 복구가 같은 카운터0 상태를 만들므로 “첫 게시 전” 단정도 유지하지 않는다. 이번에는 **새 전환 검사와 짧은 결과만** `[skip actions]`로 OBS에 보존·일반 fast-forward push하고 원격 SHA/Actions0을 확인한다. 새 자연 실패의 기존 단계 기록이나 다른 구체적 입력 근거가 생길 때만 다음 검사를 정한다.
 
-직전 `bfcff10`은 실패 순간의 제품 기한을 고정하는 진단 수정과 DOCUMENT 보류 조건2건을 검증했다. 해제 조건은 남은4063ms 중157ms 뒤 ACK, 보류 조건은4063ms까지 미준비였고 둘 다 원래15초 실패·native exit1을 보존했다. 이는 당시 실행 결과로 유지하며 이번에 반복하지 않았다.
+직전 `aa9711c`는 복구 전 분기 보존과 첫 ACK handler 유실 조건1건을 검증했다. 기존1회 복구 뒤 첫 빈 ACK·원래 마감·승인·Stop을 확인했다. `bfcff10`의 DOCUMENT 해제 조건은 남은4063ms 중157ms 뒤 ACK, 보류 조건은4063ms까지 미준비였고 원래15초 실패·native exit1을 보존했다. 당시 실행 결과를 유지하며 이번에 반복하지 않았다.
 
 ## 직전 완료 작업: HUD 크기 변경 시 최신 채팅 추적과 읽던 위치 유지 (로컬 검증 완료·원격 미반영)
 

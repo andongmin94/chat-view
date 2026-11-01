@@ -4,13 +4,14 @@
 
 `[x]`는 명시한 좁은 개발 범위다. 로컬 검사, Windows routine, 실제 OBS 전체 흐름, 실계정, 물리 투컴, 배포 qualification은 서로 대체하지 않는다. OBS만 변경한다.
 
-## 현재 작업: D1 첫 표시 대기의 최소 readiness 진단 (로컬 검증 완료·원격 미반영)
+## 현재 작업: readiness 진단을 포함한 D1 로컬 재현 (10회에서 미재현)
 
-2026-11-01 `OBS` 로컬 HEAD `935581f346594f9b16e4fece9236993292614a28`, 미커밋 변경 없음에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일했다. 기존 D1 실패의 탐색 시작·nonce handshake·현재 source 일치 여부를 구분하도록 기존 실패 출력만 보강했다.
+2026-11-01 `OBS` 로컬 HEAD `dbe326654cec51084efdbcdb14d62b882bee43ea`, 미커밋 변경 없음에서 시작했다. 원격 OBS는 `dd0816e75b51e683d2e06f7030e3a9b13b5d28f7`로 동일했다. 추가한 readiness 진단을 포함한 기존 실행 파일과 Node driver로 `companion-chat-video redraw`만 최대 10회·첫 실패 시 중단 조건으로 순차 실행했다.
 
 - **진단:** `Companion first chat phase`에 `surface_attached`(활성 수신기가 현재 호스트의 소유 문서에 연결됨), `navigation_started`(해당 문서의 own NavigationStarting 수락), `nonce_handshake`(현재 유효한 nonce handshake 수신), `source_matches`(실제 source 조회 성공 및 own URL 일치) boolean 4개를 추가했다. 기존 `surface_ready`는 같은 조회의 네 조건 AND로 출력한다. 비공개 friend 진단 조회만 사용하며 URL·nonce 값·탐색 ID·본문·자격정보는 출력하지 않는다. 실제 `ready()` 판정·권한·timeout·retry와 실패 후 원래 deadline 관측 분기는 그대로다.
-- **이번 검증:** 기존 CMake 대상과 동일한 소스·링크로 MSVC **14.51 `/W4 /WX`** 직접 빌드 통과. WebView2 **156.0.4314.50**에서 기존 native surface 검사 **1/1 통과**: 문서 없음의 네 조건 false, 실제 nonce-ready의 네 조건 true, 실제 setup DOM 교체 뒤 source 불일치를 확인했다. Node **26.13.0**의 기존 `companion-chat-video redraw` **1/1 통과**. `git diff --check` 통과. D1 실패가 재현되지 않아 실패 로그 출력·실패 후 deadline 관측 분기는 이번 실행에서 미실행이다.
-- **남은 범위·종료:** 직전 로컬 재현 시도의 redraw **4/4**, redraw-revoked-black **1/1**, early-first **1/1** 통과와 과거 #482/#483 실패를 그대로 유지하며 D1 해결로 계산하지 않는다. 새 플래그는 현재 문서 상태이며 무효화/교체 전 문서의 이력을 복원하지 않는다. 다음 같은 실패에서 attached 여부를 먼저 보고, 탐색 시작 미수락·handshake 미수신·source 불일치를 원래 deadline 결과와 함께 구분한다. 전체 51개·385개, Actions·push·배포·설치/패키징·qualification은 실행하지 않았으며 D1과 기존 미완료 항목은 유지한다.
+- **이번 재현:** **10/10 통과·실패 0건·재현 0건**, 각 driver 실행 **6.348~6.474초**. 최초 빈 DOM부터 redraw 이후 전체 고정 phase까지 기존 조건으로 통과했다. 실행 파일의 네 진단 필드 포함을 확인했으나, 실패 로그 출력·실패 후 원래 deadline 관측 분기는 미실행이다. 이번에 빌드나 통과한 다른 검사는 반복하지 않았다. `git diff --check` 통과.
+- **기존 검증·환경 차이:** 진단 구현 시 MSVC **14.51 `/W4 /WX`** 직접 빌드, native surface **1/1**, redraw **1/1** 통과는 이전 결과다. 현재 Node **26.13.0**·WebView2 Runtime **156.0.4314.50**·Windows build **26300.9711**과 과거 실패 #483의 Node **24.22.1**·Runtime **155.0.4283.62**·Windows Server build **26100**은 다르다. 당시에는 다른 CTest들 뒤에 redraw를 실행했고 이번에는 단독 반복했다. 각 실행의 새 임시 프로필·메시지 펌프·15초 최초 대기·45초 부모 제한은 동일하며, 환경/순서 차이가 원인이라는 증거는 없다.
+- **남은 범위·종료:** 관측된 결함이 없어 제품·테스트·timeout·retry는 수정하지 않고 이번 결과만 보존한다. 과거 #482/#483 실패와 D1 미해결 상태를 유지한다. 플래그는 현재 문서 상태이며 이전 문서 이력을 복원하지 않는다. 같은 실패가 재현돼야 attached 여부와 탐색 시작·handshake·source를 원래 deadline 결과와 함께 구분할 수 있다. 전체 검사·Actions·push·배포·qualification은 실행하지 않았다.
 
 ## 직전 완료 작업: HUD 크기 변경 시 최신 채팅 추적과 읽던 위치 유지 (로컬 검증 완료·원격 미반영)
 
